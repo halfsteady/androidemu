@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Test ROMs are not distributed with this repository. See core/tests/roms/README.md
+core/tests/roms/*
+!core/tests/roms/README.md
+
+# Android
+.gradle/
+local.properties
+*.apk
+*.aab
+app/build/
+build/
+.idea/
+.cxx/

@@ -1,0 +1,9 @@
+[package]
+name = "nes-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless runner for the NES core - CI harness and debugging"
+
+[dependencies]
+nes-core = { path = "../core", features = ["trace"] }

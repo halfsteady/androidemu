@@ -1,0 +1,13 @@
+[package]
+name = "nes-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cycle-accurate NES emulation core"
+
+[dependencies]
+
+[features]
+default = []
+# Emits a per-instruction execution trace. Costs a branch per instruction; off in release builds.
+trace = []
