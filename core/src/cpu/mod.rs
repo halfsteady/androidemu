@@ -70,6 +70,8 @@ pub struct Cpu {
     nmi_prev: bool,
     nmi_pending: bool,
     irq_pending: bool,
+    nmi_ready: bool,
+    irq_ready: bool,
 
     /// True once a KIL/JAM opcode has locked the processor.
     pub jammed: bool,
@@ -94,6 +96,8 @@ impl Cpu {
             nmi_prev: false,
             nmi_pending: false,
             irq_pending: false,
+            nmi_ready: false,
+            irq_ready: false,
             jammed: false,
         }
     }
@@ -139,6 +143,10 @@ impl Cpu {
 
     /// Sampled at the end of every cycle, exactly as the hardware latches the lines.
     fn sample_interrupts<B: Bus>(&mut self, bus: &B) {
+        // Interrupt polling uses the signal from the preceding cycle, so an
+        // edge on the final cycle waits through the next instruction.
+        self.nmi_ready = self.nmi_pending;
+        self.irq_ready = self.irq_pending && !self.flag(flags::I);
         let nmi = bus.nmi_line();
         if nmi && !self.nmi_prev {
             self.nmi_pending = true;
@@ -231,7 +239,13 @@ impl Cpu {
         // already catch it - but a line driven from outside the CPU (a test, a
         // debugger, a netplay resync) would otherwise go unseen for an instruction.
         // The NMI edge detector makes this idempotent.
-        self.sample_interrupts(bus);
+        let nmi = bus.nmi_line();
+        if nmi && !self.nmi_prev { self.nmi_pending = true; self.nmi_ready = true; }
+        self.nmi_prev = nmi;
+        if bus.irq_line() != self.irq_pending {
+            self.irq_pending = bus.irq_line();
+            self.irq_ready = self.irq_pending && !self.flag(flags::I);
+        }
 
         if self.jammed {
             // A jammed CPU still burns cycles on the bus.
@@ -239,12 +253,13 @@ impl Cpu {
             return self.cycles - start;
         }
 
-        if self.nmi_pending {
+        if self.nmi_ready {
             self.nmi_pending = false;
+            self.nmi_ready = false;
             self.interrupt(bus, NMI_VECTOR, false);
             return self.cycles - start;
         }
-        if self.irq_pending && !self.flag(flags::I) {
+        if self.irq_ready {
             self.interrupt(bus, IRQ_VECTOR, false);
             return self.cycles - start;
         }
@@ -357,3 +372,5 @@ fn page_crossed(a: u16, b: u16) -> bool {
 }
 
 mod exec;
+
+crate::state::state_fields!(Cpu, pc, a, x, y, s, p, cycles, nmi_prev, nmi_pending, irq_pending, nmi_ready, irq_ready, jammed);

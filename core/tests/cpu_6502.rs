@@ -397,9 +397,14 @@ fn irq_is_masked_by_the_i_flag() {
     cpu.step(&mut bus);
     assert_ne!(cpu.pc, 0x0400, "IRQ must be masked while I is set");
 
-    cpu.p &= !flags::I;
+    // CLI changes I after interrupt polling, so one more instruction runs.
+    bus.mem[cpu.pc as usize] = 0x58;
     cpu.step(&mut bus);
-    assert_eq!(cpu.pc, 0x0400, "IRQ should fire once I is clear");
+    assert_eq!(cpu.p & flags::I, 0);
+    cpu.step(&mut bus);
+    assert_ne!(cpu.pc, 0x0400, "CLI must delay IRQ through the next instruction");
+    cpu.step(&mut bus);
+    assert_eq!(cpu.pc, 0x0400, "IRQ should fire after CLI's delay");
 }
 
 #[test]

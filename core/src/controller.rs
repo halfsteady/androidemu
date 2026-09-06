@@ -17,7 +17,7 @@ impl Buttons {
     pub const RIGHT: u8 = 1 << 7;
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Controller {
     state: u8,
     shift: u8,
@@ -51,3 +51,5 @@ impl Controller {
         bit
     }
 }
+
+crate::state::state_fields!(Controller, state, shift, strobe);

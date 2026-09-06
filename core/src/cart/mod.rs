@@ -32,11 +32,13 @@ pub enum CartError {
     TooShort,
     BadMagic,
     UnsupportedMapper(u16),
+    InvalidHeader(&'static str),
 }
 
 impl core::fmt::Display for CartError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            CartError::InvalidHeader(message) => f.write_str(message),
             CartError::TooShort => write!(f, "file is too short to be a ROM"),
             CartError::BadMagic => write!(f, "not an iNES file (missing NES\\x1A magic)"),
             CartError::UnsupportedMapper(n) => write!(f, "mapper {n} is not implemented yet"),
@@ -66,6 +68,7 @@ pub struct Header {
     pub hash: u64,
 }
 
+#[derive(Clone)]
 pub struct Cartridge {
     pub header: Header,
     pub mapper: Box<dyn Mapper>,
@@ -96,6 +99,8 @@ impl Cartridge {
 
         let mut prg_banks = bytes[4] as usize;
         let mut chr_banks = bytes[5] as usize;
+        let mut prg_exponent = None;
+        let mut chr_exponent = None;
         let mut mapper = ((flags7 & 0xF0) as u16) | ((flags6 >> 4) as u16);
         let mut submapper = 0u8;
         let mut prg_ram_size = 8 * 1024;
@@ -112,12 +117,12 @@ impl Cartridge {
             let prg_hi = (hi & 0x0F) as usize;
             let chr_hi = (hi >> 4) as usize;
             if prg_hi == 0x0F {
-                prg_banks = exponent_size(bytes[4]) / (16 * 1024);
+                prg_exponent = Some(exponent_size(bytes[4])?);
             } else {
                 prg_banks |= prg_hi << 8;
             }
             if chr_hi == 0x0F {
-                chr_banks = exponent_size(bytes[5]) / (8 * 1024);
+                chr_exponent = Some(exponent_size(bytes[5])?);
             } else {
                 chr_banks |= chr_hi << 8;
             }
@@ -137,8 +142,11 @@ impl Cartridge {
             mapper &= 0x0F;
         }
 
-        let prg_rom_size = prg_banks * 16 * 1024;
-        let chr_rom_size = chr_banks * 8 * 1024;
+        let prg_rom_size = prg_exponent.unwrap_or(prg_banks * 16 * 1024);
+        let chr_rom_size = chr_exponent.unwrap_or(chr_banks * 8 * 1024);
+        if !nes2 && bytes[9] & 1 != 0 {
+            region = Region::Pal;
+        }
         let trainer = flags6 & 0x04 != 0;
         let battery = flags6 & 0x02 != 0;
 
@@ -150,13 +158,21 @@ impl Cartridge {
             Mirroring::Horizontal
         };
 
-        let mut off = 16;
+        let mut off: usize = 16;
         if trainer {
             off += 512;
         }
-        if bytes.len() < off + prg_rom_size {
+        let payload_end = off
+            .checked_add(prg_rom_size)
+            .and_then(|end| end.checked_add(chr_rom_size))
+            .ok_or(CartError::InvalidHeader("ROM size overflow"))?;
+        if payload_end > bytes.len() {
             return Err(CartError::TooShort);
         }
+        if prg_rom_size == 0 {
+            return Err(CartError::InvalidHeader("Game has no program ROM"));
+        }
+        let payload_start = off;
 
         let prg = bytes[off..off + prg_rom_size].to_vec();
         off += prg_rom_size;
@@ -165,14 +181,14 @@ impl Cartridge {
         let chr = if chr_rom_size == 0 {
             Vec::new()
         } else {
-            let end = (off + chr_rom_size).min(bytes.len());
+            let end = off + chr_rom_size;
             bytes[off..end].to_vec()
         };
         if chr_rom_size == 0 && chr_ram_size == 0 {
             chr_ram_size = 8 * 1024;
         }
 
-        let hash = fnv1a(&bytes[16..]);
+        let hash = fnv1a(&bytes[payload_start..payload_end]);
 
         let header = Header {
             mapper,
@@ -195,10 +211,13 @@ impl Cartridge {
 }
 
 /// NES 2.0 exponent-notation size: `2^exponent * (multiplier*2 + 1)` bytes.
-fn exponent_size(b: u8) -> usize {
+fn exponent_size(b: u8) -> Result<usize, CartError> {
     let exponent = (b >> 2) as u32;
     let multiplier = (b & 0x03) as usize * 2 + 1;
-    (1usize << exponent) * multiplier
+    1usize
+        .checked_shl(exponent)
+        .and_then(|v| v.checked_mul(multiplier))
+        .ok_or(CartError::InvalidHeader("ROM size overflow"))
 }
 
 /// NES 2.0 shift-notation RAM size: `64 << n` bytes, or zero.

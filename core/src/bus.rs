@@ -15,6 +15,7 @@ use crate::controller::Controller;
 use crate::cpu::Bus;
 use crate::ppu::Ppu;
 
+#[derive(Clone)]
 pub struct NesBus {
     pub ram: [u8; 2048],
     pub ppu: Ppu,
@@ -26,8 +27,11 @@ pub struct NesBus {
     open_bus: u8,
 
     /// Cycles the CPU is stalled by an in-progress OAM DMA. Drained by [`crate::nes::Nes`]
-    /// after each instruction; the copy itself has already happened by then.
+    /// after each instruction, interleaving the actual copy with device clocks.
     pub dma_stall: u32,
+    pub(crate) dma_page: u8,
+    cycles: u64,
+    pub(crate) extra_cycles: u32,
 }
 
 impl NesBus {
@@ -40,34 +44,47 @@ impl NesBus {
             controllers: Default::default(),
             open_bus: 0,
             dma_stall: 0,
+            dma_page: 0,
+            cycles: 0,
+            extra_cycles: 0,
         }
     }
 
     /// Advance the rest of the system by one CPU cycle. The PPU runs at three dots
     /// per CPU cycle on NTSC.
     fn tick(&mut self) {
-        for _ in 0..3 {
-            self.ppu.tick();
+        self.begin_cycle();
+        self.ppu.tick(self.cart.mapper.as_mut());
+    }
+
+    fn begin_cycle(&mut self) {
+        self.cycles = self.cycles.wrapping_add(1);
+        for _ in 0..2 {
+            self.ppu.tick(self.cart.mapper.as_mut());
         }
         self.apu.tick();
         self.cart.mapper.tick();
     }
 
-    /// $4014: copy 256 bytes from CPU page `page` into OAM.
-    ///
-    /// On hardware the CPU is halted and the copy is interleaved with the PPU over
-    /// 513 or 514 cycles. Here the copy is performed at once and the stall is
-    /// reported to the caller, which keeps the PPU catch-up correct to within the
-    /// alignment cycle. Cycle-exact interleaving lands with the renderer in Phase 1.
+    /// Queue OAM DMA. The assembled machine interleaves reads and writes with
+    /// PPU/APU clocks after the writing instruction completes.
     fn oam_dma(&mut self, page: u8) {
-        let base = (page as u16) << 8;
-        for i in 0..256u16 {
-            let v = self.read_pure(base + i);
-            let addr = self.ppu.oam_addr;
-            self.ppu.oam[addr as usize] = v;
-            self.ppu.oam_addr = addr.wrapping_add(1);
+        self.dma_page = page;
+        self.dma_stall = 513 + (self.cycles as u32 & 1);
+    }
+
+    fn dmc_dma(&mut self) {
+        if let Some(addr) = self.apu.dmc_request() {
+            // DMA halts on a CPU read. Exact DMC/OAM collision arbitration and
+            // repeated controller reads still need hardware-suite validation.
+            for _ in 0..3 {
+                self.tick();
+            }
+            let byte = self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus);
+            self.apu.supply_dmc(byte);
+            self.tick();
+            self.extra_cycles += 4;
         }
-        self.dma_stall = 513;
     }
 
     /// A read with no side effects on the PPU or APU, for DMA and for debuggers.
@@ -83,10 +100,11 @@ impl NesBus {
 
 impl Bus for NesBus {
     fn read(&mut self, addr: u16) -> u8 {
-        self.tick();
+        self.dmc_dma();
+        self.begin_cycle();
         let v = match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
-            0x2000..=0x3FFF => self.ppu.read_register(addr),
+            0x2000..=0x3FFF => self.ppu.read_register(addr, self.cart.mapper.as_mut()),
             0x4015 => self.apu.read_register(addr),
             0x4016 => (self.open_bus & 0xE0) | self.controllers[0].read(),
             0x4017 => (self.open_bus & 0xE0) | self.controllers[1].read(),
@@ -95,15 +113,18 @@ impl Bus for NesBus {
             0x4020..=0xFFFF => self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus),
         };
         self.open_bus = v;
+        self.ppu.tick(self.cart.mapper.as_mut());
         v
     }
 
     fn write(&mut self, addr: u16, val: u8) {
-        self.tick();
+        self.begin_cycle();
         self.open_bus = val;
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = val,
-            0x2000..=0x3FFF => self.ppu.write_register(addr, val),
+            0x2000..=0x3FFF => self
+                .ppu
+                .write_register(addr, val, self.cart.mapper.as_mut()),
             0x4014 => self.oam_dma(val),
             0x4016 => {
                 self.controllers[0].write_strobe(val);
@@ -113,6 +134,7 @@ impl Bus for NesBus {
             0x4018..=0x401F => {}
             0x4020..=0xFFFF => self.cart.mapper.cpu_write(addr, val),
         }
+        self.ppu.tick(self.cart.mapper.as_mut());
     }
 
     fn nmi_line(&self) -> bool {
@@ -121,5 +143,40 @@ impl Bus for NesBus {
 
     fn irq_line(&self) -> bool {
         self.apu.irq_line() || self.cart.mapper.irq()
+    }
+}
+
+impl NesBus {
+    pub(crate) fn save_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.ram.encode(out);
+        self.ppu.encode(out);
+        self.apu.encode(out);
+        self.controllers.encode(out);
+        self.open_bus.encode(out);
+        self.dma_stall.encode(out);
+        self.dma_page.encode(out);
+        self.cycles.encode(out);
+        self.extra_cycles.encode(out);
+    }
+    pub(crate) fn load_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::{Codec, StateError};
+        self.ram = Codec::decode(input)?;
+        self.ppu = Codec::decode(input)?;
+        self.apu = Codec::decode(input)?;
+        self.controllers = Codec::decode(input)?;
+        self.open_bus = Codec::decode(input)?;
+        self.dma_stall = Codec::decode(input)?;
+        self.dma_page = Codec::decode(input)?;
+        self.cycles = Codec::decode(input)?;
+        self.extra_cycles = Codec::decode(input)?;
+        if !self.ppu.valid_state()
+            || !self.apu.valid_state()
+            || self.dma_stall > 514
+            || self.extra_cycles > 4096
+        {
+            return Err(StateError("Invalid machine state"));
+        }
+        Ok(())
     }
 }

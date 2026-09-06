@@ -6,6 +6,7 @@
 use super::super::{Header, Mirroring};
 use super::Mapper;
 
+#[derive(Clone)]
 pub struct Nrom {
     prg: Vec<u8>,
     chr: Vec<u8>,
@@ -35,6 +36,32 @@ impl Nrom {
 }
 
 impl Mapper for Nrom {
+    fn clone_box(&self) -> Box<dyn Mapper> {
+        Box::new(self.clone())
+    }
+    fn save_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.prg_ram.encode(out);
+        if self.chr_is_ram {
+            self.chr.encode(out);
+        }
+    }
+    fn load_state(&mut self, input: &mut &[u8]) -> Result<(), crate::state::StateError> {
+        use crate::state::{Codec, StateError};
+        let ram = Vec::<u8>::decode(input)?;
+        if ram.len() != self.prg_ram.len() {
+            return Err(StateError("Invalid PRG RAM"));
+        }
+        self.prg_ram = ram;
+        if self.chr_is_ram {
+            let chr = Vec::<u8>::decode(input)?;
+            if chr.len() != self.chr.len() {
+                return Err(StateError("Invalid CHR RAM"));
+            }
+            self.chr = chr;
+        }
+        Ok(())
+    }
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => {

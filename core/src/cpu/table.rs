@@ -159,6 +159,7 @@ impl Op {
 
 impl Mode {
     /// Total instruction length in bytes, opcode included.
+    #[allow(clippy::len_without_is_empty)] // Instruction byte width, not a collection.
     pub fn len(self) -> u16 {
         match self {
             Imp | Acc => 1,

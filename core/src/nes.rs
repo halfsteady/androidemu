@@ -56,6 +56,7 @@ impl Trace {
     }
 }
 
+#[derive(Clone)]
 pub struct Nes {
     pub cpu: Cpu,
     pub bus: NesBus,
@@ -68,6 +69,9 @@ impl Nes {
             cpu: Cpu::new(),
             bus: NesBus::new(cart),
         };
+        // Power-on begins at S=$00; the reset sequence decrements it to $FD.
+        // Later resets continue decrementing the current stack pointer.
+        nes.cpu.s = 0;
         nes.reset();
         Ok(nes)
     }
@@ -84,19 +88,25 @@ impl Nes {
     pub fn step(&mut self) -> u64 {
         let mut cycles = self.cpu.step(&mut self.bus);
         cycles += self.drain_dma();
+        let extra = core::mem::take(&mut self.bus.extra_cycles) as u64;
+        self.cpu.cycles += extra;
+        cycles += extra;
         cycles
     }
 
-    /// An OAM DMA halts the CPU. The copy has already been performed by the bus, so
-    /// what is left is to burn the cycles and let the PPU catch up.
+    /// Clock both halves of each DMA byte transfer, preserving OAMADDR wrapping.
     fn drain_dma(&mut self) -> u64 {
         let stall = core::mem::take(&mut self.bus.dma_stall);
         if stall == 0 {
             return 0;
         }
-        for _ in 0..stall {
-            // Reading open bus advances the system by one cycle without side effects.
-            self.bus.read(0x4020);
+        for _ in 0..stall - 512 {
+            self.bus.read(self.cpu.pc);
+        }
+        let base = (self.bus.dma_page as u16) << 8;
+        for i in 0..256 {
+            let byte = self.bus.read(base + i);
+            self.bus.write(0x2004, byte);
         }
         self.cpu.cycles += stall as u64;
         stall as u64
@@ -129,6 +139,7 @@ impl Nes {
 
     /// Run until the PPU completes a frame. Returns the indexed framebuffer.
     pub fn step_frame(&mut self) -> &[u8] {
+        self.bus.apu.clear_samples();
         let target = self.bus.ppu.frame + 1;
         // A frame is ~29,780 CPU cycles; the bound is a safety net against a jammed
         // CPU spinning here forever.

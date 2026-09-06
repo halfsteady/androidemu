@@ -33,8 +33,15 @@ impl Cpu {
                 self.apply_read(op, v);
             }
             Access::Write => {
-                let v = self.write_value(op, addr);
-                self.write(bus, addr, v);
+                let unstable = matches!(op, Op::Ahx | Op::Shx | Op::Shy | Op::Tas);
+                let base = if unstable {
+                    addr.wrapping_sub(if mode == Mode::AbsX { self.x } else { self.y } as u16)
+                } else { addr };
+                let v = self.write_value(op, base);
+                let target = if unstable && page_crossed(base, addr) {
+                    ((v as u16) << 8) | (addr & 0xff)
+                } else { addr };
+                self.write(bus, target, v);
             }
             Access::Rmw => {
                 let old = self.read(bus, addr);

@@ -18,3 +18,7 @@ pub use cart::{Cartridge, Mirroring, Region};
 pub use controller::Buttons;
 pub use cpu::Cpu;
 pub use nes::{Nes, Trace};
+
+pub mod state;
+
+mod audio_filter;

@@ -1,6 +1,5 @@
 /target
 **/*.rs.bk
-Cargo.lock
 
 # Test ROMs are not distributed with this repository. See core/tests/roms/README.md
 core/tests/roms/*
@@ -15,3 +14,8 @@ app/build/
 build/
 .idea/
 .cxx/
+
+# Generated Android native libraries
+android/app/src/main/jniLibs/
+
+.harness/

@@ -10,7 +10,10 @@ fn ines(prg_banks: u8, chr_banks: u8, flags6: u8, flags7: u8) -> Vec<u8> {
     v[5] = chr_banks;
     v[6] = flags6;
     v[7] = flags7;
-    v.resize(16 + prg_banks as usize * 16384 + chr_banks as usize * 8192, 0);
+    v.resize(
+        16 + prg_banks as usize * 16384 + chr_banks as usize * 8192,
+        0,
+    );
     v
 }
 
@@ -26,25 +29,34 @@ fn parses_mapper_number_from_both_nibbles() {
     let rom = ines(1, 1, 0x00, 0x00);
     assert_eq!(Cartridge::load(&rom).unwrap().header.mapper, 0);
 
-    // Mapper 4 would be flags6 = $40; it is not implemented yet, so this asserts
+    // Mapper 5 would be flags6 = $50; it is not implemented yet, so this asserts
     // the number is decoded rather than that the board works.
-    let rom = ines(1, 1, 0x40, 0x00);
+    let rom = ines(1, 1, 0x50, 0x00);
     match Cartridge::load(&rom) {
-        Err(nes_core::cart::CartError::UnsupportedMapper(n)) => assert_eq!(n, 4),
-        other => panic!("expected UnsupportedMapper(4), got {other:?}"),
+        Err(nes_core::cart::CartError::UnsupportedMapper(n)) => assert_eq!(n, 5),
+        other => panic!("expected UnsupportedMapper(5), got {other:?}"),
     }
 }
 
 #[test]
 fn reads_mirroring_and_battery_from_flags6() {
     let rom = ines(1, 1, 0x00, 0x00);
-    assert_eq!(Cartridge::load(&rom).unwrap().header.mirroring, Mirroring::Horizontal);
+    assert_eq!(
+        Cartridge::load(&rom).unwrap().header.mirroring,
+        Mirroring::Horizontal
+    );
 
     let rom = ines(1, 1, 0x01, 0x00);
-    assert_eq!(Cartridge::load(&rom).unwrap().header.mirroring, Mirroring::Vertical);
+    assert_eq!(
+        Cartridge::load(&rom).unwrap().header.mirroring,
+        Mirroring::Vertical
+    );
 
     let rom = ines(1, 1, 0x08, 0x00);
-    assert_eq!(Cartridge::load(&rom).unwrap().header.mirroring, Mirroring::FourScreen);
+    assert_eq!(
+        Cartridge::load(&rom).unwrap().header.mirroring,
+        Mirroring::FourScreen
+    );
 
     let rom = ines(1, 1, 0x02, 0x00);
     assert!(Cartridge::load(&rom).unwrap().header.battery);
@@ -59,7 +71,10 @@ fn detects_nes2_and_decodes_its_extra_fields() {
     // Mapper 256 is not implemented; what matters is that the field was decoded.
     match cart {
         Err(nes_core::cart::CartError::UnsupportedMapper(n)) => {
-            assert_eq!(n, 256, "the mapper high nibble from byte 8 should be applied")
+            assert_eq!(
+                n, 256,
+                "the mapper high nibble from byte 8 should be applied"
+            )
         }
         other => panic!("expected UnsupportedMapper(256), got {other:?}"),
     }
@@ -81,7 +96,11 @@ fn a_16k_prg_image_mirrors_into_both_halves() {
     rom[16 + 0x3FFD] = 0xC0;
     let mut cart = Cartridge::load(&rom).unwrap();
     assert_eq!(cart.mapper.cpu_read(0x8000), Some(0xAA));
-    assert_eq!(cart.mapper.cpu_read(0xC000), Some(0xAA), "16 KB PRG must mirror");
+    assert_eq!(
+        cart.mapper.cpu_read(0xC000),
+        Some(0xAA),
+        "16 KB PRG must mirror"
+    );
     assert_eq!(cart.mapper.cpu_read(0xFFFC), Some(0x00));
     assert_eq!(cart.mapper.cpu_read(0xFFFD), Some(0xC0));
 }
@@ -102,12 +121,20 @@ fn chr_ram_is_writable_and_chr_rom_is_not() {
     let rom = ines(1, 0, 0x00, 0x00);
     let mut cart = Cartridge::load(&rom).unwrap();
     cart.mapper.ppu_write(0x0000, 0x5A);
-    assert_eq!(cart.mapper.ppu_read(0x0000), 0x5A, "CHR RAM should accept writes");
+    assert_eq!(
+        cart.mapper.ppu_read(0x0000),
+        0x5A,
+        "CHR RAM should accept writes"
+    );
 
     let rom = ines(1, 1, 0x00, 0x00);
     let mut cart = Cartridge::load(&rom).unwrap();
     cart.mapper.ppu_write(0x0000, 0x5A);
-    assert_eq!(cart.mapper.ppu_read(0x0000), 0x00, "CHR ROM should ignore writes");
+    assert_eq!(
+        cart.mapper.ppu_read(0x0000),
+        0x00,
+        "CHR ROM should ignore writes"
+    );
 }
 
 #[test]
@@ -127,4 +154,16 @@ fn rom_hash_ignores_the_header() {
     let ha = Cartridge::load(&a).unwrap().header.hash;
     let hb = Cartridge::load(&b).unwrap().header.hash;
     assert_eq!(ha, hb, "the hash must identify the payload, not the header");
+}
+
+#[test]
+fn rejects_truncated_chr_empty_prg_and_overflowing_exponents() {
+    let mut rom = ines(1, 1, 0, 0);
+    rom.pop();
+    assert!(Cartridge::load(&rom).is_err());
+    assert!(Cartridge::load(&ines(0, 1, 0, 0)).is_err());
+    let mut rom = ines(1, 0, 0, 8);
+    rom[4] = 0xff;
+    rom[9] = 0x0f;
+    assert!(Cartridge::load(&rom).is_err());
 }

@@ -300,6 +300,34 @@ An emulator without a test harness is a rumour.
 | **6 — Multiplayer** | Local 2P → Four Score 4P → LAN rollback → online relay | ~2–3 weeks |
 | **7 — Long tail** | MMC5, VRC6/7, Namco 163, FDS, accuracy suite expansion, perf and latency tuning | ongoing |
 
+### Implementation progress
+
+Phase 1 has an installable preview: tier-1 mappers, five-channel audio, PPU
+rendering, a Compose shell, GLES video, AAudio output, standard controller/touch
+input, ROM import, savestates and SRAM persistence. The 39-ROM regression set and
+nestest pass. **Phase 1 remains open until device acceptance passes.** See
+[the implementation and acceptance record](docs/PHASE-1.md) for measured results,
+known limits and the outstanding gates.
+
+### Savestate and UI/UX acceptance
+
+Savestates and a polished UI are required Phase 1 deliverables, not optional extras:
+
+- Ten manual slots with screenshots and timestamps; separate automatic resume state.
+- Save/load without leaving the game flow; explicit confirmation before overwriting
+  an occupied slot, and no silent replacement of another game's progress.
+- Atomic persistence on pause/background, validated state loads, and useful recovery
+  messages when a file is damaged or belongs to a different game/version.
+- A clear game shelf with a helpful empty state, large touch targets, responsive
+  portrait/landscape layout, readable contrast and accessible control labels.
+- Obvious pause/resume and save controls, progress feedback during file operations,
+  controller disconnect handling, and no stuck inputs when focus is lost.
+- Verify this flow on-device: import → play → pause → save → load → background →
+  reopen → resume. Measure frame pacing, audio latency and input latency before
+  calling the phase complete.
+
+Phase 2 still adds rewind, the dedicated kid-mode lock and richer box-art handling.
+
 Phases 1 and 2 together are the point at which Amelia stops using anything else. Everything after that is upside.
 
 ---

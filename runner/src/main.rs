@@ -12,7 +12,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
-        eprintln!("usage: nes-runner <info|trace|frames> <rom> [args]");
+        eprintln!("usage: nes-runner <info|trace|frames|rom-test> <rom> [args]");
         return ExitCode::from(2);
     }
 
@@ -67,6 +67,44 @@ fn main() -> ExitCode {
             for _ in 0..n {
                 println!("{}", nes.step_traced().format());
             }
+        }
+        "rom-test" => {
+            let limit: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1800);
+            let mut started = false;
+            for _ in 0..limit {
+                nes.step_frame();
+                let signature = [
+                    nes.bus.read_pure(0x6001),
+                    nes.bus.read_pure(0x6002),
+                    nes.bus.read_pure(0x6003),
+                ];
+                if signature != [0xde, 0xb0, 0x61] {
+                    continue;
+                }
+                let status = nes.bus.read_pure(0x6000);
+                if status == 0x80 {
+                    started = true;
+                    continue;
+                }
+                if status == 0x81 {
+                    nes.reset();
+                    continue;
+                }
+                if started && status < 0x80 {
+                    let bytes: Vec<_> = (0x6004..0x6800)
+                        .map(|a| nes.bus.read_pure(a))
+                        .take_while(|&b| b != 0)
+                        .collect();
+                    println!("{}", String::from_utf8_lossy(&bytes));
+                    return if status == 0 {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(1)
+                    };
+                }
+            }
+            eprintln!("Test did not complete within {limit} frames");
+            return ExitCode::from(1);
         }
         "frames" => {
             let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(60);

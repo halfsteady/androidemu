@@ -1,80 +1,89 @@
 # androidemu
 
-A NES emulator for the OnePlus Pad 3, written from scratch. No ads, nothing locked,
-no crackle, and USB controllers that actually work.
+A NES emulator for the OnePlus Pad 3, written from scratch in Rust with an Android
+Compose shell. No ads, accounts, feature locks, bundled ROMs or network permission.
 
-See **[PLAN.md](PLAN.md)** for the full feature and build plan.
+[PLAN.md](PLAN.md) is the full plan. [Phase 1 acceptance](docs/PHASE-1.md) records
+what is implemented, tested and still needs device validation.
+
+## Status
+
+**Phase 1 preview builds are available; device acceptance is pending.**
+
+| Component | Current implementation |
+|---|---|
+| CPU and bus | All opcodes, cycle-based accesses, interrupt polling, OAM and DMC DMA |
+| Cartridges | iNES/NES 2.0, payload identity, mappers 0/1/2/3/4/7, battery RAM |
+| PPU | Background/sprite pixels, scrolling, clipping, priority, sprite 0 hit, NTSC timing |
+| APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
+| Persistence | Versioned deterministic states, validated transactional restore, SRAM |
+| Android | Game shelf, ROM import, GLES video, AAudio, touch and two controller ports |
+| Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave and resume |
+
+The 39-ROM CPU/APU/PPU/MMC3 regression set and the real `nestest` trace pass.
+Device performance and latency are not yet measured. Sprite evaluation, some DMA
+edge cases, PAL/Dendy, raw HID adapters and other board variants need more work.
 
 ## Layout
 
 ```
-core/     nes-core  - the emulation core. No I/O, no threads, no per-frame allocation.
-runner/   nes-runner - headless CLI: header info, execution traces, frame hashing.
+core/       nes-core: no I/O, threads or frame-time allocation
+runner/     nes-runner: traces, frame hashes and automated ROM tests
+native/     nes-android: JNI boundary and AAudio output
+android/    Compose library, play view, controls and save UI
+scripts/    native builds and external ROM regression runner
 ```
 
-The core is a pure function of `(state, input) -> (state, framebuffer, samples)`.
-That property is what makes rewind, deterministic replay and rollback netplay cheap
-to add later, and it is why the core is written rather than wrapped.
-
-## Status
-
-**Phase 0 — spike.** Complete and tested.
-
-| Component | State |
-|---|---|
-| 6502 CPU | Complete: all documented and undocumented opcodes, cycle-accurate |
-| Cartridge / iNES / NES 2.0 | Complete, with hash identification |
-| Mapper 0 (NROM) | Complete |
-| System bus, OAM DMA, controllers | Complete |
-| PPU | Registers, frame timing, vblank/NMI. **Rendering is Phase 1.** |
-| APU | Registers and frame-counter IRQ. **Sound is Phase 1.** |
-
-### Timing model
-
-Every cycle of a real 6502 is a bus cycle. This core mirrors that: `Bus::read` and
-`Bus::write` each advance the whole system by one CPU cycle, and every cycle of
-every instruction goes through one of them — dummy accesses included.
-
-Cycle counts are therefore **emergent, not tabulated**. There is no instruction
-timing table to get wrong, and PPU/APU accesses land on the same cycles they would
-on hardware, which is what mid-scanline register writes and MMC3 IRQ timing depend
-on. `cycle_counts_match_hardware` checks the emergent counts against the canonical
-6502 timings for every addressing mode.
-
-## Building
+## Build and test
 
 ```sh
-cargo test --workspace           # 33 tests, no ROMs required
-cargo run -p nes-runner -- info   <rom>
-cargo run -p nes-runner -- trace  <rom> [n] [--pc=C000]
+cargo test --workspace
+cargo run -p nes-runner -- info <rom>
+cargo run -p nes-runner -- trace <rom> [n] [--pc=C000]
 cargo run -p nes-runner -- frames <rom> <n>
+cargo run --release -p nes-runner -- rom-test <rom> [max-frames]
+
+rustup target add aarch64-linux-android x86_64-linux-android
+export JAVA_HOME="$HOME/.local/jdk"
+export ANDROID_HOME="$HOME/Android/Sdk"
+./android/gradlew -p android assembleDebug assemblePreview lintDebug testDebugUnitTest
 ```
 
-Cross-compiling for the tablet:
+Gradle builds and packages Rust automatically. `app-preview.apk` is an arm64
+personal preview signed with the local debug key; `app-debug.apk` also contains
+x86_64 for emulator testing. Outputs are under `android/app/build/outputs/apk/`.
+Use the same signing key for subsequent updates to preserve Android app data.
+Set `-PbuildNumber=<integer> -PbuildLabel=<version>` to stamp a published build.
+
+With a functioning emulator or connected tablet:
 
 ```sh
-rustup target add aarch64-linux-android
-cargo build -p nes-core --release --target aarch64-linux-android
+./android/gradlew -p android connectedDebugAndroidTest
 ```
 
-### Toolchain
+The JNI unit tests run the real Rust bridge on the host JVM. Instrumentation tests
+exercise play/pause/save/load and lifecycle behavior; they require a stable Android
+device and have not yet passed in this environment.
 
-| Tool | Version | Location |
-|---|---|---|
-| Rust | 1.98.1 | `~/.cargo` |
-| Android NDK | 28.2.13676358 | `~/Android/Sdk/ndk` |
-| Android SDK | platform 36, build-tools 36.0.0 | `~/Android/Sdk` |
-| JDK | Temurin 21 | `~/.local/jdk` |
+External test ROMs are not committed or shipped. See
+[the test-ROM instructions](core/tests/roms/README.md). To run the broader suite:
 
-The NDK linker paths are wired up in `.cargo/config.toml`, pinned to Android API 29.
+```sh
+python3 scripts/check-roms.py /path/to/nes-test-roms --report /tmp/accuracy.json
+```
 
-## Testing
+The machine uses Rust, JDK 21, Android SDK 36 and NDK 28.2.13676358. Linker paths in
+`.cargo/config.toml` target Android API 29 and currently match Bradley's SDK path.
 
-Tests run with no external files. Test ROMs (nestest, blargg's suites, Holy
-Mapperel) are not committed; drop them into `core/tests/roms/` and the
-corresponding tests switch themselves on. See
-[`core/tests/roms/README.md`](core/tests/roms/README.md).
+## Publishing personal previews
 
-The nestest harness compares **parsed register state**, not log text — matching text
-would test the formatter, and would report every failure as "line differs" rather
-than naming the register that went wrong.
+After the builds and checks pass, publish both installable APKs with:
+
+```sh
+JAVA_HOME="$HOME/.local/jdk" python3 scripts/publish-apks.py
+```
+
+The script verifies signing and 16 KB APK alignment, reads version metadata from
+both APKs, and copies them with descriptive sidecars into `.harness/artifacts/`.
+They appear on [Controlplaine /stuff](https://bradley-desktop.tailc9ee0f.ts.net/stuff/).
+Test APKs and downloaded ROMs are not published.

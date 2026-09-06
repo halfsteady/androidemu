@@ -25,7 +25,7 @@ struct Expected {
 fn parse_line(line: &str) -> Option<Expected> {
     let field = |key: &str| -> Option<&str> {
         let i = line.find(key)? + key.len();
-        Some(line[i..].split_whitespace().next()?)
+        line[i..].split_whitespace().next()
     };
     Some(Expected {
         pc: u16::from_str_radix(line.get(0..4)?, 16).ok()?,
