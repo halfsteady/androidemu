@@ -1,3 +1,7 @@
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
+
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
     namespace = "dev.androidemu"
@@ -6,8 +10,15 @@ android {
         applicationId = "dev.androidemu"
         minSdk = 29
         targetSdk = 36
-        versionCode = providers.gradleProperty("buildNumber").orElse("1").get().toInt()
-        versionName = providers.gradleProperty("buildLabel").orElse("0.1.0-dev").get()
+        // An unlabelled build still has to sort above whatever is already on the
+        // tablet, or Android refuses the update. Days since the project epoch,
+        // shifted four places, leaves room for the HHMM that a published build
+        // passes in explicitly, and only changes once a day so incremental
+        // builds stay up to date.
+        val buildDate = LocalDate.now(ZoneOffset.UTC)
+        val buildDay = ChronoUnit.DAYS.between(LocalDate.of(2018, 7, 9), buildDate)
+        versionCode = providers.gradleProperty("buildNumber").orElse((buildDay * 10000).toString()).get().toInt()
+        versionName = providers.gradleProperty("buildLabel").orElse("0.1.0+$buildDate").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

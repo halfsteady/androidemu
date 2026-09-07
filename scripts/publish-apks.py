@@ -32,7 +32,7 @@ for variant, label, architecture in [("preview", "tablet preview", "arm64 for th
         raise SystemExit(f"Refusing to replace an unrecognized artifact: {target}")
     shutil.copyfile(source, staging / name)
     digest = hashlib.sha256((staging / name).read_bytes()).hexdigest()
-    metadata = {"title": f"AndroidEmu {label} — {version}", "summary": f"{architecture}. Version code {code}. Phase 1 preview: library, video/audio, touch/controllers, 10 savestate slots, thumbnails, autosave and SRAM. 54 Rust tests, 39 accuracy ROMs and Kotlin/JNI tests pass. Device UI and latency acceptance remain pending. SHA-256: {digest}", "tags": ["android", "apk", "nes", "preview"]}
+    metadata = {"title": f"AndroidEmu {label} — {version}", "summary": f"{architecture}. Version code {code}. Phase 1 preview: library, video/audio, NTSC/PAL/Dendy, mappers 0/1/2/3/4/7/66, touch and controllers with a per-device button-mapping wizard, full screen, 10 savestate slots, thumbnails, autosave and SRAM. 60 Rust tests, 39 accuracy ROMs and Kotlin/JNI tests pass. Device UI and latency acceptance remain pending. SHA-256: {digest}", "tags": ["android", "apk", "nes", "preview"]}
     (staging / sidecar.name).write_text(json.dumps(metadata, indent=2) + "\n")
     os.replace(staging / name, target)
     os.replace(staging / sidecar.name, sidecar)
