@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -35,7 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,23 +43,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private lateinit var library: Library
@@ -79,30 +85,40 @@ class MainActivity : ComponentActivity() {
     // equal across a reload, and a lazy grid is entitled to skip an equal item.
     private var covers by mutableIntStateOf(0)
     private var artFor: Game? = null
-    private var rewinding by mutableStateOf(false)
+    /**
+     * Where the time control is: 0 is ordinary play, negative runs the game
+     * backwards that many frames per displayed frame, positive runs it forward.
+     * One value, because rewind and fast-forward are one control.
+     */
+    private var scrub by mutableIntStateOf(0)
     private var rewindAtStart by mutableStateOf(false)
-    private var forwarding by mutableStateOf(false)
-    // Rewinding plays no new audio, so the stream is stopped rather than left
-    // to drain into an underrun, and started again when normal play resumes.
-    private fun applyRewinding(active: Boolean) {
-        if (rewinding == active || game == null || (active && forwarding)) return
-        rewinding = active
-        if (active) rewindAtStart = false
-        surface.rewinding = active
-        input.clear()
-        surface.task { Native.audio(!active && surface.playing && !backgrounded) }
+    /** Frames the rewind chain holds, polled while a game is open. */
+    private var rewindDepth by mutableIntStateOf(0)
+    private fun applyScrub(speed: Int) {
+        if (scrub == speed || game == null) return
+        val wasSilent = scrub != 0
+        scrub = speed
+        // Rewinding must not carry a held button into the past. Fast-forward must
+        // carry it, or holding a direction while skipping ahead does nothing.
+        if (speed < 0) { rewindAtStart = false; input.clear() }
+        surface.scrub = speed
+        // Neither direction plays new audio, so the stream stops rather than
+        // draining into an underrun or chipmunking along at four times the pitch.
+        // Only the crossing matters: dragging changes the speed constantly.
+        if (wasSilent != (speed != 0)) surface.task { Native.audio(speed == 0 && surface.playing && !backgrounded) }
     }
     /**
-     * Fast-forward runs several emulated frames per displayed frame for as long as
-     * the button is held. Audio stops rather than playing back at four times the
-     * pitch, and the held input carries through — unlike rewind, which clears it,
-     * because holding right through a fast-forward is exactly the point.
+     * A fixed jump back, which is a different gesture from the track: one tap, a
+     * known distance, no holding. Greyed out by the caller when the chain is too
+     * short to honour it.
      */
-    private fun applyForwarding(active: Boolean) {
-        if (forwarding == active || game == null || (active && rewinding)) return
-        forwarding = active
-        surface.speed = if (active) settings.fastForward else 1
-        surface.task { Native.audio(!active && surface.playing && !backgrounded) }
+    private fun skipBack(seconds: Int) {
+        if (game == null || busy) return
+        rewindAtStart = false
+        surface.skipBack(surface.framesFor(seconds)) { stepped ->
+            rewindDepth = surface.depth
+            if (stepped == 0) rewindAtStart = true
+        }
     }
     private var fullscreen by mutableStateOf(false)
     private var fullscreenTouch by mutableStateOf(false)
@@ -119,6 +135,62 @@ class MainActivity : ComponentActivity() {
     }
     private fun startMapping() { if (game != null && !paused) pause(); mappedKeys.clear(); mappingStep = 0; mappingName = ""; mapping = true; input.clear() }
     private var overwrite by mutableStateOf<Int?>(null)
+    // What the settings preview draws, and the result. The sample is a whole
+    // framebuffer; the image is that framebuffer through the current shader.
+    private var previewSample by mutableStateOf<ByteBuffer?>(null)
+    private var previewImage by mutableStateOf<ImageBitmap?>(null)
+    /**
+     * Opens settings and lines up something to preview: the frame the game is
+     * sitting on, else the newest saved moment on the shelf, else a built pattern
+     * chosen to show what the filters do.
+     */
+    private fun openSettings() {
+        previewImage = null
+        showSettings = true
+        if (game != null && surface.loaded) {
+            surface.task {
+                Native.frame(shot, 0, 0, false)
+                val copy = ByteBuffer.allocateDirect(shot.capacity()).order(ByteOrder.nativeOrder())
+                shot.position(0); copy.put(shot); copy.position(0); shot.position(0)
+                runOnUiThread { previewSample = copy }
+            }
+        } else {
+            previewSample = savedMoment() ?: framebufferOf(SampleFrame.pixels())
+        }
+    }
+    /** Lets go of the preview buffers; the next open captures a fresh sample. */
+    private fun closeSettings() { showSettings = false; previewImage = null; previewSample = null }
+    private fun framebufferOf(pixels: ByteArray): ByteBuffer =
+        ByteBuffer.allocateDirect(pixels.size).order(ByteOrder.nativeOrder()).put(pixels).also { it.position(0) }
+    /** The newest thumbnail on the shelf, scaled to a framebuffer. */
+    private fun savedMoment(): ByteBuffer? {
+        val file = games.asSequence().map { library.thumbnail(it, -1) }.firstOrNull { it.exists() } ?: return null
+        val decoded = runCatching { BitmapFactory.decodeFile(file.path) }.getOrNull() ?: return null
+        val scaled = if (decoded.width == Picture.WIDTH && decoded.height == Picture.HEIGHT) decoded
+            else Bitmap.createScaledBitmap(decoded, Picture.WIDTH, Picture.HEIGHT, true)
+        val out = ByteBuffer.allocateDirect(Picture.WIDTH * Picture.HEIGHT * 4).order(ByteOrder.nativeOrder())
+        scaled.copyPixelsToBuffer(out)
+        if (scaled !== decoded) scaled.recycle()
+        decoded.recycle()
+        out.position(0)
+        return out
+    }
+    /**
+     * Draws the sample through the real shader off-screen and keeps the result.
+     * The preview box is 4:3, so a narrower shape shows its own side bars — which
+     * is the difference worth seeing.
+     */
+    private fun renderPreview() {
+        val sample = previewSample ?: return
+        surface.preview(sample, settings.filter, settings.aspect, settings.trimEdges, PREVIEW_WIDTH, PREVIEW_HEIGHT) { bytes ->
+            val raw = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888)
+            raw.copyPixelsFromBuffer(ByteBuffer.wrap(bytes))
+            // GL reads rows bottom-up.
+            val upright = Bitmap.createBitmap(raw, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT, Matrix().apply { postScale(1f, -1f) }, false)
+            raw.recycle()
+            previewImage = upright.asImageBitmap()
+        }
+    }
     @Volatile private var backgrounded = false
     @Volatile private var activeGame: Game? = null
     // Elapsed-time clock for playtime. Wall clock would count a paused game if
@@ -262,7 +334,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun pause() {
         surface.playing = false; paused = true; input.clear()
-        applyForwarding(false)
+        applyScrub(0)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val selected = game ?: return
         if (!surface.loaded) return
@@ -369,14 +441,19 @@ class MainActivity : ComponentActivity() {
             }
             return true
         }
-        // Shoulder buttons drive the two time controls, so a controller session
-        // never has to reach for the screen to skip a cutscene or undo a fall.
+        // Shoulder buttons drive the time control, so a controller session never
+        // has to reach for the screen to skip a cutscene or undo a fall. Bumpers
+        // nudge, triggers race — the same "further means faster" as the track.
         if (game != null && !paused && !busy && event.repeatCount == 0) {
             val held = event.action == KeyEvent.ACTION_DOWN
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_R2 -> { applyForwarding(held); return true }
-                KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_L2 -> { applyRewinding(held); return true }
+            val speed = when (event.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_R1 -> 2
+                KeyEvent.KEYCODE_BUTTON_R2 -> 6
+                KeyEvent.KEYCODE_BUTTON_L1 -> -2
+                KeyEvent.KEYCODE_BUTTON_L2 -> -6
+                else -> 0
             }
+            if (speed != 0) { applyScrub(if (held) speed else 0); return true }
         }
         if (game != null && !paused && input.key(event)) return true
         // Start resumes from the pause panel, so a session driven entirely from
@@ -394,7 +471,7 @@ class MainActivity : ComponentActivity() {
         BackHandler(game != null || showSettings || showProblems) {
             when {
                 showProblems -> showProblems = false
-                showSettings -> showSettings = false
+                showSettings -> closeSettings()
                 fullscreen -> applyFullscreen(false)
                 !paused -> pause()
                 busy -> Unit
@@ -404,9 +481,18 @@ class MainActivity : ComponentActivity() {
         }
         // Presentation lives in settings and belongs to the GL context, so it is
         // pushed across whenever it changes — including once on first composition.
-        LaunchedEffect(settings.aspect, settings.trimEdges, settings.scanlines) {
-            surface.setPicture(settings.aspect, settings.trimEdges, settings.scanlines)
+        LaunchedEffect(settings.aspect, settings.trimEdges, settings.filter) {
+            surface.setPicture(settings.aspect, settings.trimEdges, settings.filter)
         }
+        // The skip-back buttons grey out when the chain is too short to honour
+        // them, so the depth has to be known while a game is open.
+        LaunchedEffect(game) {
+            while (game != null) { rewindDepth = surface.depth; delay(250) }
+            rewindDepth = 0
+        }
+        // The end-of-tape notice says its piece and goes, rather than sitting
+        // there until the next rewind.
+        LaunchedEffect(rewindAtStart) { if (rewindAtStart) { delay(2200); rewindAtStart = false } }
         Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onSurface) {
         Box(Modifier.fillMaxSize().safeDrawingPadding()) {
             // Keep the GL thread attached while the library is visible so imports
@@ -416,8 +502,6 @@ class MainActivity : ComponentActivity() {
                     Text(game!!.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
                     BarButton(Icons.Filled.List, "Save states", !busy) { pause(); showSlots = true }
                     BarButton(ENTER_FULLSCREEN, "Full screen", !busy) { applyFullscreen(true) }
-                    RewindBarButton()
-                    ForwardBarButton()
                     BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 }
                 AndroidView(factory = { surface }, modifier = Modifier.weight(1f).fillMaxWidth())
@@ -427,8 +511,16 @@ class MainActivity : ComponentActivity() {
                 BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 BarButton(null, if (fullscreenTouch) "Hide controls" else "Touch controls") { fullscreenTouch = !fullscreenTouch }
                 BarButton(EXIT_FULLSCREEN, "Exit full screen") { applyFullscreen(false) }
-                RewindBarButton()
-                ForwardBarButton()
+            }
+            // Full screen with the controls hidden still needs the time control,
+            // so it gets a compact copy of the same track.
+            if (game != null && fullscreen && !fullscreenTouch && !paused) Row(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SkipBack(5, 46); SkipBack(15, 46)
+                TimeScrubber(Modifier.width(240.dp), 52)
             }
             if (game == null) Shelf()
             if (game != null && paused) PausePanel()
@@ -441,8 +533,7 @@ class MainActivity : ComponentActivity() {
             // that isn't following the buttons still explains itself.
             val notice = when {
                 rewindAtStart -> "That's as far back as this goes."
-                forwarding -> "Fast-forward ${settings.fastForward}×"
-                rewinding -> "Rewinding"
+                scrub != 0 -> Scrub.label(scrub)
                 else -> null
             }
             notice?.let {
@@ -480,36 +571,99 @@ class MainActivity : ComponentActivity() {
         }
         overwrite?.let { slot -> AlertDialog(onDismissRequest = { overwrite = null }, title = { Text("Replace slot ${slot + 1}?") }, text = { Text("This replaces the progress saved in this slot. Your other slots stay available.") }, confirmButton = { TextButton(onClick = { overwrite = null; saveSlot(slot) }) { Text("Replace save") } }, dismissButton = { TextButton(onClick = { overwrite = null }) { Text("Keep it") } }) }
     }
-    // Held, not tapped: the game runs backwards for as long as a finger is
-    // down. Framed as "Undo" because that is what it is to the player.
-    @Composable private fun RewindButton(side: Int) {
-        Box(Modifier.size(side.dp).semantics {
-            role = Role.Button
-            contentDescription = "Undo. Hold to rewind the game."
-            stateDescription = if (rewinding) "Rewinding" else "Released"
-        }.clip(RoundedCornerShape(28.dp)).background(if (rewinding) Color(0xffffd9a0) else Color(0xffe0b877)).pointerInput(game) {
-            hold({ applyRewinding(it) })
-        }, contentAlignment = Alignment.Center) { Text("Undo", color = Color(0xff33240c), fontSize = (side * 0.2f).sp, fontWeight = FontWeight.Bold) }
-    }
-    @Composable private fun ForwardButton(side: Int) {
-        Box(Modifier.size(side.dp).semantics {
-            role = Role.Button
-            contentDescription = "Fast-forward. Hold to skip ahead."
-            stateDescription = if (forwarding) "Fast-forwarding" else "Released"
-        }.clip(RoundedCornerShape(28.dp)).background(if (forwarding) Color(0xffc9d9ff) else Color(0xff9db4e0)).pointerInput(game) {
-            hold({ applyForwarding(it) })
-        }, contentAlignment = Alignment.Center) { Text("▶▶", color = Color(0xff10203a), fontSize = (side * 0.24f).sp, fontWeight = FontWeight.Bold) }
-    }
-    @Composable private fun RewindBarButton() = HoldBarButton("Undo", "Rewinding", rewinding, Icons.Filled.Refresh) { applyRewinding(it) }
-    @Composable private fun ForwardBarButton() = HoldBarButton("Fast-forward", "${settings.fastForward}×", forwarding, null) { applyForwarding(it) }
-    @Composable private fun HoldBarButton(label: String, active: String, on: Boolean, icon: ImageVector?, apply: (Boolean) -> Unit) {
-        TextButton(onClick = {}, modifier = Modifier.pointerInput(game) { hold(apply) }
-            .semantics { contentDescription = "$label. Hold to use." }) {
-            if (icon != null) {
-                Icon(icon, contentDescription = null, Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
+    /**
+     * One control for time in both directions. Drag left of centre to run the game
+     * backwards, right to run it forward, and the further from centre the faster it
+     * goes; let go and the thumb springs back to the middle and play resumes. This
+     * replaced a pair of hold buttons: two things that were really one axis.
+     *
+     * The centre is dead ([Scrub.DEAD_ZONE]) so a thumb resting slightly off
+     * centre does not creep the game along.
+     */
+    @Composable private fun TimeScrubber(modifier: Modifier = Modifier, side: Int = 68) {
+        var fraction by remember { mutableFloatStateOf(0f) }
+        val speed = scrub
+        val tint = when {
+            speed < 0 -> Color(0xffffd9a0)
+            speed > 0 -> Color(0xffc9d9ff)
+            else -> Color(0xffb8c6d6)
+        }
+        BoxWithConstraints(
+            modifier.height(side.dp).clip(RoundedCornerShape((side / 2).dp)).background(Color(0xff1b2430))
+                .pointerInput(game) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        try {
+                            var x = down.position.x
+                            do {
+                                val f = ((x / size.width) * 2f - 1f).coerceIn(-1f, 1f)
+                                fraction = f
+                                applyScrub(Scrub.speed(f))
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                change.consume(); x = change.position.x
+                            } while (change.pressed)
+                        } finally { fraction = 0f; applyScrub(0) }
+                    }
+                }
+                .semantics {
+                    role = Role.Button
+                    contentDescription = "Time control. Drag left to rewind, right to fast-forward. The further from the middle, the faster."
+                    stateDescription = Scrub.label(speed)
+                    customActions = listOf(
+                        CustomAccessibilityAction("Back five seconds") { skipBack(5); true },
+                        CustomAccessibilityAction("Back fifteen seconds") { skipBack(15); true },
+                    )
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            val thumb = (side - 12).dp
+            // The lambda offset overload, because the thumb moves on every touch
+            // sample: this way the drag re-runs layout rather than recomposition.
+            val travel = with(LocalDensity.current) { ((maxWidth - thumb) / 2).toPx() }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("◀◀", color = Color(0xff5c6b7d), fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text("▶▶", color = Color(0xff5c6b7d), fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
             }
-            Text(if (on) active else label)
+            // The centre, so "stopped" is somewhere you can aim for.
+            Box(Modifier.width(2.dp).height((side * 0.34f).dp).background(Color(0xff3d4c5e)))
+            Box(
+                Modifier.offset { IntOffset((travel * fraction).roundToInt(), 0) }
+                    .size(thumb).clip(RoundedCornerShape(thumb / 2)).background(tint),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (speed == 0) "▮▮" else "${if (speed < 0) -speed else speed}×",
+                    color = Color(0xff17222e),
+                    fontSize = (side * (if (speed == 0) 0.2f else 0.26f)).sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+    /**
+     * A known jump backwards. Dimmed and inert when the chain is shorter than the
+     * jump, because offering to undo fifteen seconds that were never recorded is
+     * a promise the rewind buffer cannot keep.
+     */
+    @Composable private fun SkipBack(seconds: Int, side: Int) {
+        val ready = !busy && rewindDepth >= surface.framesFor(seconds)
+        Surface(
+            onClick = { skipBack(seconds) },
+            enabled = ready,
+            shape = RoundedCornerShape((side * 0.36f).dp),
+            color = if (ready) Color(0xff35485c) else Color(0xff232c36),
+            modifier = Modifier.size(side.dp).semantics { contentDescription = "Back $seconds seconds" },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    "↺$seconds",
+                    color = if (ready) Color(0xffdce8f5) else Color(0xff56646f),
+                    fontSize = (side * 0.28f).sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
     }
     @Composable private fun BarButton(icon: ImageVector?, label: String, enabled: Boolean = true, onClick: () -> Unit) {
@@ -554,9 +708,13 @@ class MainActivity : ComponentActivity() {
         }
     }
     /**
-     * One settings panel, reachable from the shelf and from a paused game. Opening
-     * it mid-game is deliberate: picture changes apply live, so you can see what
-     * 8:7 or a trimmed edge actually does to the game in front of you.
+     * One settings panel, reachable from the shelf and from a paused game, with a
+     * preview of every choice that changes what the screen looks like.
+     *
+     * The preview is not a mock-up: it is the real shader, drawn by the real
+     * renderer into an off-screen buffer and read back, so it cannot drift from
+     * what the game will look like. Mid-game it previews the frame you paused on;
+     * from the shelf it uses the newest saved moment, or a built pattern.
      */
     @Composable private fun SettingsPanel() {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)).padding(24.dp), contentAlignment = Alignment.Center) {
@@ -564,23 +722,50 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     SectionLabel("Picture")
-                    SettingRow("Shape", settings.aspect.label) {
-                        settings.aspect = Aspect.entries[(settings.aspect.ordinal + 1) % Aspect.entries.size]
+                    // Redrawn whenever a choice that affects it changes.
+                    LaunchedEffect(previewSample, settings.aspect, settings.trimEdges, settings.filter) { renderPreview() }
+                    Box(
+                        Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp)).background(Color.Black),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val shown = previewImage
+                        if (shown != null) Image(shown, "Preview of the current picture settings", Modifier.fillMaxSize())
+                        else Text("Preparing a preview…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    Text(
+                        "The shape and look below, drawn by the same shader the game uses.",
+                        Modifier.padding(top = 8.dp, bottom = 6.dp),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    ChoiceRow("Shape", Aspect.entries.map { it.label }, settings.aspect.ordinal) { settings.aspect = Aspect.entries[it] }
+                    ChoiceRow("Look", Filter.entries.map { it.label }, settings.filter.ordinal) { settings.filter = Filter.entries[it] }
+                    Text(
+                        settings.filter.note,
+                        Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     SettingRow("Trim the edges", onOff(settings.trimEdges), "Hides the ${Picture.TRIM} rows a television lost to overscan") {
                         settings.trimEdges = !settings.trimEdges
                     }
-                    SettingRow("Scanlines", onOff(settings.scanlines), "A soft dark band between each row, the way a CRT drew them") {
-                        settings.scanlines = !settings.scanlines
-                    }
                     SectionLabel("Controls")
-                    SettingRow("Big controls", onOff(settings.bigControls), "Larger touch targets") { settings.bigControls = !settings.bigControls }
-                    SettingRow("Fast-forward speed", "${settings.fastForward}×", "How fast the fast-forward button runs") { settings.cycleFastForward() }
-                    SettingRow("Controller buttons", "Set up", "Map A, B, Select and Start for a controller") { showSettings = false; startMapping() }
+                    SettingRow("Controller buttons", "Set up", "Map A, B, Select and Start for a controller") { closeSettings(); startMapping() }
                     SectionLabel("This device")
                     SettingRow("Problem log", "Open", "What went wrong, and why") { showProblems = true }
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { showSettings = false }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Done") }
+                    Button(onClick = { closeSettings() }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Done") }
+                }
+            }
+        }
+    }
+    /** A labelled row of choices. Chips rather than a cycling row, so the preview is one tap from any option. */
+    @Composable private fun ChoiceRow(label: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Text(label, Modifier.padding(start = 12.dp, bottom = 6.dp), fontWeight = FontWeight.SemiBold)
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                options.forEachIndexed { index, option ->
+                    FilterChip(selected = index == selected, onClick = { onPick(index) }, label = { Text(option) })
                 }
             }
         }
@@ -617,7 +802,7 @@ class MainActivity : ComponentActivity() {
             Text("Pick a game. Play a little. Come back anytime.", color = Color(0xffabb8a9), modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
             Button(enabled = !busy, onClick = { importGame.launch(arrayOf("*/*")) }) { Text("＋ Add a game") }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { showSettings = true }) { Text("Settings") }
+                TextButton(onClick = { openSettings() }) { Text("Settings") }
                 TextButton(onClick = { startMapping() }) { Text("Set up controller buttons") }
             }
             if (games.isEmpty()) {
@@ -674,7 +859,7 @@ class MainActivity : ComponentActivity() {
                     Button(enabled = !busy, onClick = { resumeGame() }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Resume game", fontSize = 18.sp) }
                     OutlinedButton(enabled = !busy, onClick = { showSlots = !showSlots }, modifier = Modifier.fillMaxWidth()) { Text(if (showSlots) "Back to pause" else "Save states · 10 slots") }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(enabled = !busy, onClick = { showSettings = true }) { Text("Settings") }
+                        TextButton(enabled = !busy, onClick = { openSettings() }) { Text("Settings") }
                         TextButton(enabled = !busy, onClick = { screenshot() }) { Text("Screenshot") }
                         TextButton(onClick = { applyFullscreen(!fullscreen) }) { Text(if (fullscreen) "Exit full screen" else "Full screen") }
                     }
@@ -688,22 +873,35 @@ class MainActivity : ComponentActivity() {
         input.touch = input.touch or bit
         surface.postDelayed({ input.touch = input.touch and bit.inv() }, 150)
     }
-    // Bigger buttons are easier on a 13" screen, so this is a setting rather than
-    // a mode. Narrow widths grow less, because a layout that overflows helps nobody.
+    // Control size follows the screen rather than a setting: a 13" tablet in
+    // landscape has room for large targets, a narrow window does not, and asking
+    // the player to decide was one question too many.
     @Composable private fun TouchControls() {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
             val compact = maxWidth < 600.dp
-            val scale = if (!settings.bigControls) 1f else if (compact) 1.15f else 1.4f
+            val scale = (maxWidth / 900.dp).coerceIn(1f, 1.45f)
             fun size(base: Int) = (base * scale).toInt()
             Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Dpad(size(144))
-                    if (!compact) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { HoldButton("Select", 4, size(64)); HoldButton("Start", 8, size(64)) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ForwardButton(size(64)); RewindButton(size(76)); HoldButton("B", 2, size(68)); HoldButton("A", 1, size(76))
+                    if (!compact) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HoldButton("Select", 4, size(64)); HoldButton("Start", 8, size(64))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { HoldButton("B", 2, size(68)); HoldButton("A", 1, size(76)) }
+                }
+                // Time sits on its own row under the pad, because it is a wide
+                // gesture and it belongs to neither hand in particular.
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SkipBack(5, size(56)); SkipBack(15, size(56))
+                    TimeScrubber(Modifier.weight(1f), size(60))
+                    if (compact) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HoldButton("Select", 4, size(52)); HoldButton("Start", 8, size(52))
                     }
                 }
-                if (compact) Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.Center) { HoldButton("Select", 4, size(64)); Spacer(Modifier.width(12.dp)); HoldButton("Start", 8, size(64)) }
             }
         }
     }
@@ -745,25 +943,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Runs [apply] with true while a finger is down and false when it lifts, however
- * the gesture ends. Rewind and fast-forward are both this shape, and a release
- * that gets missed leaves the game running at the wrong speed.
- */
-private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.hold(apply: (Boolean) -> Unit) {
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        try {
-            apply(true)
-            do {
-                val event = awaitPointerEvent()
-                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                change.consume()
-            } while (change.pressed)
-        } finally { apply(false) }
-    }
-}
-
 /** Playtime worth showing. Under a minute is noise on a shelf. */
 private fun playtime(seconds: Long): String? = when {
     seconds < 60 -> null
@@ -773,6 +952,11 @@ private fun playtime(seconds: Long): String? = when {
 
 /** Box art is decoded to fill a tile a few hundred dp wide; this is ample. */
 private const val ART_MAX_EDGE = 1024f
+
+// The settings preview buffer. 4:3, and tall enough that pixel-perfect reaches a
+// second whole multiple rather than showing a postage stamp in a wide border.
+private const val PREVIEW_WIDTH = 640
+private const val PREVIEW_HEIGHT = 480
 
 private fun cornerIcon(name: String, path: String): ImageVector = ImageVector.Builder(
     name = name,

@@ -75,27 +75,65 @@ class PlayFlowTest {
         }
     }
 
-    /** Picture and control settings are reachable from the shelf and stick. */
-    @Test fun settingsCycleAndPersist() {
+    /** Picture settings preview, apply and persist. */
+    @Test fun pictureSettingsPreviewAndPersist() {
         val settings = Settings(context)
         settings.aspect = Aspect.Television
-        settings.scanlines = false
+        settings.filter = Filter.None
+        settings.trimEdges = false
         ActivityScenario.launch(MainActivity::class.java).use {
             awaitText("Your next adventure")
             compose.onNodeWithText("Settings").performClick()
             awaitText("Shape")
-            compose.onNodeWithText(Aspect.Television.label).performClick()
-            compose.waitUntil(10_000) { showing(Aspect.Hardware.label) }
-            compose.onNodeWithText("Scanlines").performClick()
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("On").fetchSemanticsNodes().isNotEmpty() }
+            // The preview is drawn by the GL thread, so the placeholder has to go.
+            compose.waitUntil(30_000) { compose.onAllNodesWithText("Preparing a preview…").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithContentDescription("Preview of the current picture settings").assertIsDisplayed()
+            // Chips, so any shape or look is one tap from the preview.
+            compose.onNodeWithText(Aspect.Hardware.label).performClick()
+            compose.onNodeWithText(Filter.GameBoy.label).performClick()
+            compose.waitUntil(10_000) { showing(Filter.GameBoy.note) }
+            compose.onNodeWithText("Trim the edges").performClick()
             compose.onNodeWithText("Done").performClick()
         }
         // A new reader sees what the panel wrote, not the value it started with.
         val reloaded = Settings(context)
         assertEquals(Aspect.Hardware, reloaded.aspect)
-        assertTrue(reloaded.scanlines)
+        assertEquals(Filter.GameBoy, reloaded.filter)
+        assertTrue(reloaded.trimEdges)
         reloaded.aspect = Aspect.Television
-        reloaded.scanlines = false
+        reloaded.filter = Filter.None
+        reloaded.trimEdges = false
+    }
+
+    /** The scanlines switch the first release shipped becomes the scanlines look. */
+    @Test fun anOldScanlinesSwitchBecomesTheScanlinesLook() {
+        val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        preferences.edit().clear().putBoolean("scanlines", true).commit()
+        assertEquals(Filter.Scanlines, Settings(context).filter)
+        // Once a look is chosen explicitly, the old switch stops speaking for it.
+        Settings(context).filter = Filter.Sepia
+        assertEquals(Filter.Sepia, Settings(context).filter)
+        preferences.edit().clear().commit()
+        assertEquals(Filter.None, Settings(context).filter)
+    }
+
+    /** The skip-back buttons only offer what the rewind chain can actually honour. */
+    @Test fun skipBackIsOfferedOnlyWhenThereIsSomethingToGoBackTo() {
+        val library = Library(context)
+        val bytes = rom(); val id = Native.load(bytes)
+        library.add(id, "Skip Test", bytes)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitText("Skip Test")
+            compose.onNodeWithText("Skip Test").performClick()
+            awaitText("Menu")
+            val back5 = compose.onNodeWithContentDescription("Back 5 seconds")
+            // A fresh game has no history, so the jump is inert until it does.
+            back5.assertIsNotEnabled()
+            compose.waitUntil(60_000) { runCatching { back5.assertIsEnabled() }.isSuccess }
+            back5.performClick()
+            compose.onNodeWithContentDescription("Time control. Drag left to rewind, right to fast-forward. The further from the middle, the faster.")
+                .assertIsDisplayed()
+        }
     }
 
     /** Box art outranks the screenshot, and removing it falls back rather than blanks. */

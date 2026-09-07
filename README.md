@@ -25,8 +25,8 @@ is built, tested, signed and published by GitHub Actions — see
 | APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
 | Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard |
-| Time controls | Hold-to-undo rewind and hold-to-skip fast-forward (2×/4×/8×), on screen and on the shoulder buttons |
-| Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, scanlines — applied live |
+| Time controls | One draggable control for rewind and fast-forward, further from centre is faster, plus 5 s / 15 s jumps back; shoulder buttons drive it too |
+| Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, and eight looks — previewed in settings by the real shader |
 | Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave on pause, background and low battery |
 | Shelf | Chosen box art per game, last-played ordering, playtime, screenshots to the device gallery, a readable problem log |
 
@@ -85,6 +85,15 @@ External test ROMs are not committed or shipped. See
 
 ```sh
 python3 scripts/check-roms.py /path/to/nes-test-roms --report /tmp/accuracy.json
+```
+
+The GLSL lives in a Kotlin string, so the Kotlin compiler cannot see it and a
+broken shader is a black screen on hardware. This compiles it without a device,
+using `glslangValidator` from `PATH` or the Android SDK's emulator, and skips if
+neither is present:
+
+```sh
+python3 scripts/check-shaders.py
 ```
 
 The build needs Rust, a JDK 17 or newer, Android SDK 36 and NDK 28.2.13676358.

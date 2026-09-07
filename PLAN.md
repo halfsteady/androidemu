@@ -252,8 +252,9 @@ asking. What made kid mode good is kept as how the app just works:
 
 - A shelf of box art. One tap opens a game and resumes exactly where it stopped.
 - Progress is never lost — autosave on pause, on background, and on battery warning.
-- A big obvious **rewind** button, framed as "undo", next to fast-forward.
-- Large touch targets, and a **big controls** setting that makes them larger still.
+- One **time control**: drag it left to rewind, right to fast-forward, further for
+  faster. Fixed jumps back sit beside it, dimmed when the buffer cannot honour them.
+- Large touch targets, sized from the screen rather than from a setting.
 - Failures say one plain sentence and keep the real reason in a log that can be read
   back later, rather than showing a mapper name to somebody who didn't ask.
 - Settings are one panel: no file paths or hex on the way to a game, and nothing
@@ -267,7 +268,7 @@ reachable by anyone holding the tablet.
 
 ## 10. Quality of life
 
-- Rewind (hold), fast-forward (hold, 2×/4×/8×/uncapped), slow motion, frame advance
+- Rewind and fast-forward on one draggable control — further from centre is faster — plus fixed jumps back. Slow motion and frame advance still to come.
 - 10 savestate slots with screenshot thumbnails, plus rotating auto-slots
 - Screenshot, GIF export, MediaCodec video capture
 - External display output over USB-C — NES on the TV
@@ -318,12 +319,14 @@ unmeasured, so Phase 1 is playable but not yet fully signed off. See
 and what remains.
 
 Phase 2 is implemented, and deliberately without the separate kid mode §9 first
-called for: a box-art shelf ordered by what was played last, one-tap resume,
-hold-to-undo rewind beside a hold-to-skip fast-forward, chosen box art per game,
-picture settings (4:3 / 8:7 / pixel-perfect, overscan trim, scanlines), large
-touch targets, screenshots to the device gallery, playtime, plain one-sentence
-failures with the real reason kept in a readable log, and autosave on pause, on
-background and on a low battery. See [the Phase 2 record](docs/PHASE-2.md).
+called for: a box-art shelf ordered by what was played last, one-tap resume, one
+draggable time control covering rewind and fast-forward with fixed jumps back
+beside it, chosen box art per game, picture settings (4:3 / 8:7 / pixel-perfect,
+overscan trim) and eight looks from scanlines to a four-shade handheld screen —
+each previewed in settings by the real shader — screenshots to the device gallery,
+playtime, plain one-sentence failures with the real reason kept in a readable log,
+and autosave on pause, on background and on a low battery. Control size follows
+the screen; there is no setting for it. See [the Phase 2 record](docs/PHASE-2.md).
 
 ### Savestate and UI/UX acceptance
 
