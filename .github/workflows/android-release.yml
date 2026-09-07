@@ -155,8 +155,18 @@ jobs:
           # upload to it if present, otherwise create it. --clobber keeps
           # re-runs idempotent.
           files="dist/emulia-$NAME.aab dist/emulia-$NAME.apk dist/SHA256SUMS.txt"
+          # A semver pre-release version carries a hyphen: v0.2.1-rc1 is a
+          # candidate, v0.2.1 is the real thing. Marking it keeps "Latest
+          # release" - what a sideloader lands on - pointing at the last
+          # finished build rather than at a candidate.
+          case "$NAME" in
+            *-*) prerelease="--prerelease" ;;
+            *) prerelease="" ;;
+          esac
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # An existing release keeps whatever flag it was created with; only
+            # its assets are replaced.
             gh release upload "$TAG" $files --clobber
           else
-            gh release create "$TAG" $files --title "$TAG" --generate-notes
+            gh release create "$TAG" $files --title "$TAG" --generate-notes $prerelease
           fi
