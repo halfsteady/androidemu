@@ -14,8 +14,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * A game on the shelf. [played] and [seconds] arrived after the first release, so
- * they are read with defaults: an index written by an older build still loads.
+ * A game on the shelf. [played], [seconds] and [archived] arrived after the first
+ * release, so they are read with defaults: an index written by an older build
+ * still loads.
  */
 data class Game(
     val id: String,
@@ -23,6 +24,12 @@ data class Game(
     val added: Long,
     val played: Long = 0,
     val seconds: Long = 0,
+    /**
+     * Off the shelf, but not gone. Nothing on disk is touched — the ROM, the
+     * battery save, every save state and the box art all stay exactly where they
+     * were — so bringing a game back returns it mid-adventure.
+     */
+    val archived: Boolean = false,
 )
 data class SaveSlot(val number: Int, val time: Long, val thumbnail: File)
 
@@ -31,14 +38,23 @@ class Library(private val context: Context) {
     private val root = File(context.filesDir, "library").apply { mkdirs() }
     private val index = File(root, "index.json")
     private val problems = File(root, "problems.log")
-    /** Most recently played first, falling back to when it was added. */
-    fun games(): List<Game> = read().sortedByDescending { maxOf(it.played, it.added) }
+    /** The shelf: most recently played first, falling back to when it was added. */
+    fun games(): List<Game> = read().filterNot { it.archived }.sortedByDescending { maxOf(it.played, it.added) }
+    /** Put away rather than deleted, newest first. */
+    fun archived(): List<Game> = read().filter { it.archived }.sortedByDescending { maxOf(it.played, it.added) }
     private fun read(): List<Game> {
         if (!index.exists()) return emptyList()
         val items = JSONArray(AtomicFile(index).openRead().bufferedReader().use { it.readText() })
         return (0 until items.length()).map {
             val g = items.getJSONObject(it)
-            Game(g.getString("id"), g.getString("title"), g.getLong("added"), g.optLong("played"), g.optLong("seconds"))
+            Game(
+                g.getString("id"),
+                g.getString("title"),
+                g.getLong("added"),
+                g.optLong("played"),
+                g.optLong("seconds"),
+                g.optBoolean("archived"),
+            )
         }
     }
     private fun write(games: List<Game>) {
@@ -46,10 +62,30 @@ class Library(private val context: Context) {
         games.forEach {
             json.put(
                 JSONObject().put("id", it.id).put("title", it.title).put("added", it.added)
-                    .put("played", it.played).put("seconds", it.seconds)
+                    .put("played", it.played).put("seconds", it.seconds).put("archived", it.archived)
             )
         }
         atomic(index, json.toString().toByteArray())
+    }
+    /**
+     * Takes a game off the shelf, or puts it back. Reversible on purpose: this is
+     * the everyday action, and nothing it does loses a save.
+     */
+    fun setArchived(game: Game, archived: Boolean) {
+        val games = read().toMutableList()
+        val at = games.indexOfFirst { it.id == game.id }
+        if (at < 0) return
+        games[at] = games[at].copy(archived = archived)
+        write(games)
+    }
+    /**
+     * The one that does not come back: the game's whole directory and its index
+     * row. Kept behind archiving and its own confirmation, because this is where
+     * a save state from three months ago goes.
+     */
+    fun forget(game: Game) {
+        write(read().filterNot { it.id == game.id })
+        directory(game.id).deleteRecursively()
     }
     /**
      * Records a finished stretch of play. Called on every pause and background, so

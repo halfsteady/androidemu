@@ -25,8 +25,10 @@ class PlayFlowTest {
         return rom
     }
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private fun showing(text: String) = compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
-    private fun awaitText(text: String) = compose.waitUntil(60_000) { showing(text) }
+    private fun showing(text: String, substring: Boolean = false) =
+        compose.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
+    private fun awaitText(text: String, substring: Boolean = false) =
+        compose.waitUntil(60_000) { showing(text, substring) }
 
     @Test fun nativeStateRoundTripAndRejectedCorruption() {
         Native.load(rom())
@@ -178,6 +180,61 @@ class PlayFlowTest {
             compose.onRoot().performTouchInput { click() }
             awaitText("Exit full screen")
         }
+    }
+
+    /**
+     * Putting a game away takes it off the shelf and loses nothing; bringing it
+     * back returns it mid-adventure. Deleting is the only thing that removes a
+     * save, and it lives behind its own confirmation.
+     */
+    @Test fun puttingAGameAwayKeepsEverythingAndBringingItBackRestoresIt() {
+        val library = Library(context)
+        val bytes = rom(); val id = Native.load(bytes)
+        val game = library.add(id, "Archive Test", bytes)
+        library.setArchived(game, false)
+        // A save state, to prove archiving does not touch what is on disk.
+        Library.atomic(library.state(game, 3), byteArrayOf(1, 2, 3))
+
+        assertTrue(library.games().any { it.id == id })
+        assertFalse(library.archived().any { it.id == id })
+
+        library.setArchived(game, true)
+        assertFalse("an archived game is off the shelf", library.games().any { it.id == id })
+        assertTrue(library.archived().any { it.id == id })
+        assertTrue("archiving must not delete a save", library.state(game, 3).exists())
+        assertTrue(File(library.directory(id), "game.nes").exists())
+
+        library.setArchived(game, false)
+        assertTrue(library.games().any { it.id == id })
+        assertTrue(library.state(game, 3).exists())
+
+        // Deleting is the one that does take it all.
+        library.forget(game)
+        assertFalse(library.games().any { it.id == id })
+        assertFalse(library.archived().any { it.id == id })
+        assertFalse(File(library.directory(id), "game.nes").exists())
+    }
+
+    /** The shelf puts a game away and brings it back, and only offers the cupboard when it holds something. */
+    @Test fun theShelfPutsAGameAwayAndBringsItBack() {
+        val library = Library(context)
+        library.archived().forEach { library.setArchived(it, false) }
+        val bytes = rom(); val id = Native.load(bytes)
+        library.add(id, "Shelf Archive", bytes)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitText("Shelf Archive")
+            compose.onNodeWithText("Put away").performClick()
+            awaitText("is put away.", substring = true)
+            compose.onNodeWithText("Got it").performClick()
+            compose.waitUntil(10_000) { !showing("Shelf Archive") }
+            compose.onNodeWithText("Put away (1)").performClick()
+            awaitText("Bring back")
+            compose.onNodeWithText("Bring back").performClick()
+            awaitText("is back on the shelf", substring = true)
+            compose.onNodeWithText("Got it").performClick()
+            awaitText("Shelf Archive")
+        }
+        library.games().firstOrNull { it.id == id }?.let { library.forget(it) }
     }
 
     /** Box art outranks the screenshot, and removing it falls back rather than blanks. */
