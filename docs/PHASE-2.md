@@ -97,24 +97,29 @@ app behaves, with the depth one panel away rather than behind a code.
 ## Not verified here
 
 The shaders compile — against `glslangValidator` and against a real GLES 3.2
-driver, where every look has also been rendered off-screen and looked at — but
-**nobody has seen any of it on the panel**. Whether the aperture grille reads as a
-CRT or as shimmer at this scale, whether the curvature is pleasant or seasick,
-whether the neon bloom is fun or garish, and whether Cartoon's ink is confident or
-heavy on small sprites are all judgements that need eyes on hardware. Cartoon's
-two off-screen passes are 61k and 246k fragments against the roughly 7.7 million a
-full-screen pass covers, so they should be far inside the frame budget — but that
-is arithmetic, not a measurement. The cost of 8× fast-forward and of an 8× rewind
-is also unmeasured.
+driver, where every look is also rendered off-screen and looked at. The looks
+have now been seen on the panel too: `v0.2.1-rc5` was played on the tablet and
+Cartoon passed by eye (owner report, 2026-09-07).
+
+What that does not cover is numbers. Cartoon's two off-screen passes are 61k and
+246k fragments against the roughly 7.7 million a full-screen pass covers on this
+panel, so they should sit far inside the frame budget — but that is arithmetic,
+not a measurement, and a look that costs frames would show up as pacing rather
+than as a bad picture. The cost of 8× fast-forward and of an 8× rewind is also
+unmeasured. Nor does it cover motion: edge-directed smoothing can shimmer on a
+scrolling background as the classification flips between frames, and a still
+frame cannot show that.
 
 Settings written by an older build are migrated, not reset: the scanlines switch
 the first release shipped becomes the scanlines look, and that path has a test.
 
 ## Remaining
 
-- [ ] Look at the eight looks on the tablet and cut the ones that do not earn
-  their place. Measure 8× in both directions, and measure Cartoon's two extra
-  passes rather than trusting the fragment counts.
+- [x] Look at the eight looks on the tablet and cut the ones that do not earn
+  their place. Black and white went; Cartoon arrived in its place.
+- [ ] Measure 8× in both directions, and measure Cartoon's two extra passes
+  rather than trusting the fragment counts. Watch Cartoon on a scrolling
+  background for shimmer.
 - [ ] The accurate end of §3 — the NTSC composite filter and the CRT shader ports
   — is real work and is not pretending to be here. The smoothing engine now
   exists (Cartoon rides it), so an unstylised **Smooth** is nearly free.
