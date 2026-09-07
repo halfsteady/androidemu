@@ -14,7 +14,9 @@ name: Android release build
 #   ANDROIDEMU_UPLOAD_KEYSTORE_BASE64  base64 of android/upload-keystore.jks
 #   ANDROIDEMU_UPLOAD_STORE_PASSWORD   keystore (store) password
 #   ANDROIDEMU_UPLOAD_KEY_PASSWORD     key password (same value here)
-#   ANDROIDEMU_UPLOAD_KEY_ALIAS        amelianes-upload
+#   ANDROIDEMU_UPLOAD_KEY_ALIAS        amelianes-upload (the key predates the
+#                                      rename; the alias is internal, and
+#                                      rotating a signing key would be worse)
 # See docs/RELEASING.md for the one-time `gh secret set` commands.
 
 on:
@@ -103,9 +105,9 @@ jobs:
         run: |
           mkdir -p dist
           cp android/app/build/outputs/bundle/release/app-release.aab \
-             "dist/amelias-nes-${{ steps.ver.outputs.name }}.aab"
+             "dist/emulia-${{ steps.ver.outputs.name }}.aab"
           cp android/app/build/outputs/apk/release/app-release.apk \
-             "dist/amelias-nes-${{ steps.ver.outputs.name }}.apk"
+             "dist/emulia-${{ steps.ver.outputs.name }}.apk"
           (cd dist && sha256sum ./* > SHA256SUMS.txt)
           ls -lh dist
 
@@ -119,11 +121,11 @@ jobs:
         run: |
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort | tail -1)
           apk_digest=$("$apksigner" verify --print-certs \
-            "dist/amelias-nes-${{ steps.ver.outputs.name }}.apk" \
+            "dist/emulia-${{ steps.ver.outputs.name }}.apk" \
             | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
           # An AAB is JAR-signed, so keytool is the tool that reads it.
           aab_digest=$("$JAVA_HOME/bin/keytool" -printcert -jarfile \
-            "dist/amelias-nes-${{ steps.ver.outputs.name }}.aab" \
+            "dist/emulia-${{ steps.ver.outputs.name }}.aab" \
             | sed -n 's/.*SHA256: //p' | head -1 | tr -d ': ' | tr 'A-Z' 'a-z')
           echo "apk $apk_digest"
           echo "aab $aab_digest"
@@ -137,7 +139,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: amelias-nes-${{ steps.ver.outputs.name }}
+          name: emulia-${{ steps.ver.outputs.name }}
           path: dist/*
           if-no-files-found: error
 
@@ -152,7 +154,7 @@ jobs:
           # the release (and tag) BEFORE this tag-triggered run starts. So
           # upload to it if present, otherwise create it. --clobber keeps
           # re-runs idempotent.
-          files="dist/amelias-nes-$NAME.aab dist/amelias-nes-$NAME.apk dist/SHA256SUMS.txt"
+          files="dist/emulia-$NAME.aab dist/emulia-$NAME.apk dist/SHA256SUMS.txt"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           else

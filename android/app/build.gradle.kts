@@ -24,7 +24,7 @@ android {
     // Lets AGP find llvm-strip, so the Rust .so ships stripped.
     ndkVersion = "28.2.13676358"
     defaultConfig {
-        applicationId = "com.bsteinfeld.amelianes"
+        applicationId = "com.bsteinfeld.emulia"
         minSdk = 29
         targetSdk = 36
         // An unlabelled build still has to sort above whatever is already on the

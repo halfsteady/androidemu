@@ -54,7 +54,7 @@ class Library(private val context: Context) {
             while (true) {
                 val count = input.read(chunk)
                 if (count < 0) break
-                require(output.size() + count <= 16 * 1024 * 1024) { "This file is too large to be an NES game" }
+                require(output.size() + count <= 16 * 1024 * 1024) { "This file is too large to be a game" }
                 output.write(chunk, 0, count)
             }
             return output.toByteArray()

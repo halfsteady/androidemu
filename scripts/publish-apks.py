@@ -29,7 +29,7 @@ date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 # Rows this script owns, and may therefore replace or prune, identified by the
 # sidecar title it wrote. Someone else's entry is never touched.
-OWNED_TITLE_PREFIXES = ("Amelia’s NES", "AndroidEmu ")
+OWNED_TITLE_PREFIXES = ("Emulia", "Amelia’s NES", "AndroidEmu ")
 RELEASES_URL = "https://github.com/bsteinfeld/androidemu/releases"
 
 # Defaults to what Gradle just built. Pass a path to shelve the artifact a
@@ -64,7 +64,7 @@ certificate = subprocess.check_output(
 if "CN=Android Debug" in certificate:
     raise SystemExit(f"Refusing to publish a debug-signed artifact: {source}")
 
-name = f"{date}-amelias-nes-{version}.apk"
+name = f"{date}-emulia-{version}.apk"
 target = shelf / name
 sidecar = shelf / (name + ".json")
 if target.exists() and not owned(target):
@@ -80,9 +80,9 @@ summary = (
 (staging / sidecar.name).write_text(
     json.dumps(
         {
-            "title": f"Amelia’s NES — {version}",
+            "title": f"Emulia — {version}",
             "summary": summary,
-            "tags": ["android", "apk", "nes", "amelias-nes"],
+            "tags": ["android", "apk", "nes", "emulia"],
         },
         indent=2,
     )
@@ -95,14 +95,14 @@ print(json.dumps({"file": str(target), "version": version, "sha256": digest}))
 # The releases page carries every version, the AAB and the checksums. It needs
 # a GitHub login, which the APK row above does not, so it complements that row
 # rather than replacing it.
-link = shelf / "amelias-nes-releases.link.json"
+link = shelf / "emulia-releases.link.json"
 link.write_text(
     json.dumps(
         {
-            "title": "Amelia’s NES releases",
+            "title": "Emulia releases",
             "url": RELEASES_URL,
             "summary": "Every tagged release, with its APK, Play bundle and checksums. Private repository, so downloading needs a GitHub login.",
-            "tags": ["android", "nes", "amelias-nes", "source"],
+            "tags": ["android", "nes", "emulia", "source"],
         },
         indent=2,
     )

@@ -1,12 +1,17 @@
-# Releasing Amelia's NES
+# Releasing Emulia
 
 One workflow produces everything: `.github/workflows/android-release.yml` builds
 a signed **AAB** (what Play Console wants) and a signed **APK** (what you
 sideload onto the tablet) from the same commit, so the two can never disagree.
 
-- **App name:** Amelia's NES
-- **Package (`applicationId`):** `com.bsteinfeld.amelianes`
-- **Dev builds** install alongside it as `com.bsteinfeld.amelianes.debug`.
+- **App name:** Emulia
+- **Package (`applicationId`):** `com.bsteinfeld.emulia`
+- **Dev builds** install alongside it as `com.bsteinfeld.emulia.debug`.
+
+The name carries no third-party trademark, which is the point: "NES" is
+Nintendo's, and using it as a store name is the most common way an emulator
+listing gets pulled. [docs/PLAY-LISTING.md](PLAY-LISTING.md) has the listing
+copy and the rest of the store checklist.
 
 The Kotlin package stays `dev.androidemu`. It is the JNI symbol prefix — every
 `Java_dev_androidemu_Native_*` export in `native/` depends on it — and it is
@@ -15,12 +20,12 @@ independent of the package name users see.
 ## Cutting a release
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The tag push builds, tests, signs, and publishes a GitHub Release carrying
-`amelias-nes-0.1.0.aab`, `amelias-nes-0.1.0.apk` and `SHA256SUMS.txt`. To get
+`emulia-0.2.0.aab`, `emulia-0.2.0.apk` and `SHA256SUMS.txt`. To get
 artifacts without cutting a release, run the workflow manually from the Actions
 tab; they attach to the run instead.
 
@@ -49,7 +54,7 @@ Local signed builds read `android/keystore.properties`:
 ```
 storeFile=upload-keystore.jks
 storePassword=<generated>
-keyAlias=amelianes-upload
+keyAlias=amelianes-upload   # predates the rename; an alias is internal
 keyPassword=<generated>
 ```
 

@@ -357,7 +357,7 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun Shelf() {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp)) {
-            Text("AMELIA’S NES", color = MaterialTheme.colorScheme.primary, letterSpacing = 3.sp, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text("EMULIA", color = MaterialTheme.colorScheme.primary, letterSpacing = 3.sp, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(BuildConfig.VERSION_NAME, color = Color(0xffabb8a9), fontSize = 11.sp)
             Spacer(Modifier.height(12.dp))
             Text("Your next adventure", fontSize = 32.sp, fontWeight = FontWeight.Bold)
@@ -368,7 +368,7 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("A shelf full of possibilities", fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Add an NES (.nes) file from your tablet to begin.\nGames stay on this device. No account needed.", modifier = Modifier.padding(16.dp), color = Color(0xffabb8a9))
+                        Text("Add a game file (.nes) from your tablet to begin.\nGames stay on this device. No account needed.", modifier = Modifier.padding(16.dp), color = Color(0xffabb8a9))
                     }
                 }
             } else LazyVerticalGrid(columns = GridCells.Adaptive(220.dp), contentPadding = PaddingValues(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
