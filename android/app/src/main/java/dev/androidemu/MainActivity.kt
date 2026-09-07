@@ -87,6 +87,32 @@ class MainActivity : ComponentActivity() {
     // equal across a reload, and a lazy grid is entitled to skip an equal item.
     private var covers by mutableIntStateOf(0)
     private var artFor: Game? = null
+    /** The shelf can show what has been put away, so it can be brought back. */
+    private var showArchive by mutableStateOf(false)
+    private var archived by mutableStateOf(emptyList<Game>())
+    private var forgetting by mutableStateOf<Game?>(null)
+    private fun refreshLibrary() {
+        games = runCatching { library.games() }.getOrDefault(games)
+        archived = runCatching { library.archived() }.getOrDefault(archived)
+    }
+    /** Off the shelf, nothing on disk touched. Reversible, so no confirmation. */
+    private fun archive(selected: Game) {
+        library.setArchived(selected, true)
+        refreshLibrary()
+        message = "${selected.title} is put away. Tap Put away on the shelf to bring it back."
+    }
+    private fun unarchive(selected: Game) {
+        library.setArchived(selected, false)
+        refreshLibrary()
+        if (library.archived().isEmpty()) showArchive = false
+        message = "${selected.title} is back on the shelf, exactly where you left it."
+    }
+    private fun forget(selected: Game) {
+        library.forget(selected)
+        refreshLibrary()
+        if (archived.isEmpty()) showArchive = false
+        message = "${selected.title} and its saves are gone from this device."
+    }
     /**
      * Where the time control is: 0 is ordinary play, negative runs the game
      * backwards that many frames per displayed frame, positive runs it forward.
@@ -280,7 +306,7 @@ class MainActivity : ComponentActivity() {
         settings = Settings(this)
         input = ControllerInput(this) { if (game != null) pause(); message = "Controller disconnected. Your game is paused." }
         surface = GameSurface(this, input::buttons, { rewindAtStart = true }) { detail -> report("This game stopped.", detail); paused = true; busy = false }
-        runCatching { games = library.games() }.onFailure { report("Your shelf couldn't be opened.", it.message) }
+        runCatching { refreshLibrary() }.onFailure { report("Your shelf couldn't be opened.", it.message) }
         ContextCompat.registerReceiver(this, batteryLow, IntentFilter(Intent.ACTION_BATTERY_LOW), ContextCompat.RECEIVER_NOT_EXPORTED)
         // Every slot a Material component actually reads is set here. The
         // defaults are purple-tinted, and any one left unset shows up as an
@@ -339,7 +365,7 @@ class MainActivity : ComponentActivity() {
         activeGame = selected
         surface.loaded = true
         runOnUiThread {
-            game = selected; games = library.games(); slots = library.slots(selected); message = null
+            game = selected; refreshLibrary(); slots = library.slots(selected); message = null
             warning?.let { report(it, detail) }
             if (!backgrounded && warning == null) resumeGame() else paused = true
         }
@@ -366,7 +392,7 @@ class MainActivity : ComponentActivity() {
         work("Saving progress", "Your progress couldn't be saved.") {
             save(selected, -1)
             library.record(selected, seconds)
-            runOnUiThread { slots = library.slots(selected); games = library.games() }
+            runOnUiThread { slots = library.slots(selected); refreshLibrary() }
         }
     }
     /** The framebuffer as a PNG. Reused by save thumbnails and by screenshots. */
@@ -441,7 +467,7 @@ class MainActivity : ComponentActivity() {
         done.await(1500, TimeUnit.MILLISECONDS)
         super.onPause()
     }
-    override fun onResume() { super.onResume(); backgrounded = false; games = runCatching { library.games() }.getOrDefault(games) }
+    override fun onResume() { super.onResume(); backgrounded = false; refreshLibrary() }
     override fun onDestroy() { input.close(); unregisterReceiver(batteryLow); super.onDestroy() }
     // Capture controller buttons before focused Compose widgets consume them.
     @SuppressLint("RestrictedApi")
@@ -492,10 +518,11 @@ class MainActivity : ComponentActivity() {
     override fun onGenericMotionEvent(event: MotionEvent) = if (game != null && !paused && input.motion(event)) true else super.onGenericMotionEvent(event)
 
     @Composable private fun App() {
-        BackHandler(game != null || showSettings || showProblems) {
+        BackHandler(game != null || showSettings || showProblems || showArchive) {
             when {
                 showProblems -> showProblems = false
                 showSettings -> closeSettings()
+                showArchive -> showArchive = false
                 fullscreen -> applyFullscreen(false)
                 !paused -> pause()
                 busy -> Unit
@@ -616,6 +643,25 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 confirmButton = { TextButton(onClick = { showProblems = false }) { Text("Close") } },
+            )
+        }
+        forgetting?.let { selected ->
+            AlertDialog(
+                onDismissRequest = { forgetting = null },
+                title = { Text("Delete ${selected.title}?") },
+                text = {
+                    Text(
+                        "This removes the game, its battery save and all ten of its save states " +
+                            "from this device. It cannot be undone.\n\n" +
+                            "To take it off the shelf without losing anything, leave it put away instead."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { val doomed = selected; forgetting = null; forget(doomed) }) {
+                        Text("Delete forever", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = { TextButton(onClick = { forgetting = null }) { Text("Keep it") } },
             )
         }
         overwrite?.let { slot -> AlertDialog(onDismissRequest = { overwrite = null }, title = { Text("Replace slot ${slot + 1}?") }, text = { Text("This replaces the progress saved in this slot. Your other slots stay available.") }, confirmButton = { TextButton(onClick = { overwrite = null; saveSlot(slot) }) { Text("Replace save") } }, dismissButton = { TextButton(onClick = { overwrite = null }) { Text("Keep it") } }) }
@@ -818,6 +864,22 @@ class MainActivity : ComponentActivity() {
                     SectionLabel("Controls")
                     SettingRow("Controller buttons", "Set up", "Map A, B, Select and Start for a controller") { closeSettings(); startMapping() }
                     SectionLabel("This device")
+                    // Polled only while the panel is open. The plan asks for a
+                    // measurable audio figure rather than a claim, so it is on
+                    // screen where it can be read off the tablet.
+                    var audio by remember { mutableStateOf(FloatArray(5)) }
+                    LaunchedEffect(showSettings) {
+                        while (showSettings) {
+                            audio = runCatching { Native.audioStats() }.getOrDefault(FloatArray(5))
+                            delay(500)
+                        }
+                    }
+                    SettingRow(
+                        "Audio delay",
+                        if (audio[2] <= 0f) "—" else "%.1f ms".format(audio[2]),
+                        "%.1f ms queued + %.1f ms in the device, holding %.1f ms · %d underruns"
+                            .format(audio[0], audio[1], audio[3], audio[4].toInt()),
+                    ) {}
                     SettingRow("Problem log", "Open", "What went wrong, and why") { showProblems = true }
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = { closeSettings() }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Done") }
@@ -864,14 +926,31 @@ class MainActivity : ComponentActivity() {
             Text("EMULIA", color = MaterialTheme.colorScheme.primary, letterSpacing = 3.sp, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(BuildConfig.VERSION_NAME, color = Color(0xffabb8a9), fontSize = 11.sp)
             Spacer(Modifier.height(12.dp))
-            Text("Your next adventure", fontSize = 32.sp, fontWeight = FontWeight.Bold)
-            Text("Pick a game. Play a little. Come back anytime.", color = Color(0xffabb8a9), modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
-            Button(enabled = !busy, onClick = { importGame.launch(arrayOf("*/*")) }) { Text("＋ Add a game") }
+            Text(
+                if (showArchive) "Put away" else "Your next adventure",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (showArchive) "Off the shelf, and nothing lost. Every save is still here."
+                else "Pick a game. Play a little. Come back anytime.",
+                color = Color(0xffabb8a9),
+                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+            )
+            if (!showArchive) Button(enabled = !busy, onClick = { importGame.launch(arrayOf("*/*")) }) { Text("＋ Add a game") }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { openSettings() }) { Text("Settings") }
-                TextButton(onClick = { startMapping() }) { Text("Set up controller buttons") }
+                if (showArchive) {
+                    TextButton(onClick = { showArchive = false }) { Text("← Back to the shelf") }
+                } else {
+                    TextButton(onClick = { openSettings() }) { Text("Settings") }
+                    TextButton(onClick = { startMapping() }) { Text("Set up controller buttons") }
+                    // Only offered when there is something in it, so an empty
+                    // shelf does not advertise an empty cupboard.
+                    if (archived.isNotEmpty()) TextButton(onClick = { showArchive = true }) { Text("Put away (${archived.size})") }
+                }
             }
-            if (games.isEmpty()) {
+            val shown = if (showArchive) archived else games
+            if (shown.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("A shelf full of possibilities", fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
@@ -879,21 +958,33 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } else LazyVerticalGrid(columns = GridCells.Adaptive(220.dp), contentPadding = PaddingValues(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(games, key = { it.id }) { selected ->
-                    Card(onClick = { open(selected) }, enabled = !busy, shape = RoundedCornerShape(24.dp)) {
+                items(shown, key = { it.id }) { selected ->
+                    // A put-away game does not open on a tap: the whole card
+                    // would otherwise be a trap next to "Bring back".
+                    Card(
+                        onClick = { if (!showArchive) open(selected) },
+                        enabled = !busy && !showArchive,
+                        shape = RoundedCornerShape(24.dp),
+                    ) {
                         Column {
                             Cover(selected.title, library.cover(selected), Modifier.fillMaxWidth().aspectRatio(4f/3f), covers)
                             Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
                                 Text(selected.title, fontWeight = FontWeight.Bold, fontSize = 19.sp)
-                                Text(
+                                if (!showArchive) Text(
                                     if (library.state(selected, -1).exists()) "Resume your adventure  →" else "Ready to play  →",
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(top = 8.dp),
                                 )
                                 playtime(selected.seconds)?.let { Text(it, fontSize = 12.sp, color = Color(0xffabb8a9), modifier = Modifier.padding(top = 4.dp)) }
-                                Row {
+                                if (showArchive) Row {
+                                    TextButton(enabled = !busy, onClick = { unarchive(selected) }) { Text("Bring back") }
+                                    TextButton(enabled = !busy, onClick = { forgetting = selected }) {
+                                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                                    }
+                                } else Row {
                                     TextButton(onClick = { artFor = selected; importArt.launch(arrayOf("image/*")) }) { Text("Box art") }
                                     if (library.art(selected).exists()) TextButton(onClick = { clearArt(selected) }) { Text("Clear") }
+                                    TextButton(enabled = !busy, onClick = { archive(selected) }) { Text("Put away") }
                                 }
                             }
                         }

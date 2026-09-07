@@ -82,8 +82,12 @@ a number, plus the paths that need particular hardware or particular ROMs.
   XOR-encoded, roughly 95 KB a frame before encoding, and neither the CPU cost
   nor the real depth of the 64 MB window has been measured on device.
 - [ ] Measure underruns/output latency, test output-route changes and long sessions.
-  The frame-fed audio queue currently targets roughly 20 ms, so the original
-  sub-10 ms end-to-end audio target is **not achieved or claimed**.
+  The figure is now on screen in Settings and comes out of `Native.audioStats()`,
+  so this gate is down to reading it off the tablet. The queue target adapts and
+  is measured in frames of audio: about 12-14 ms end to end, down from 20.8 ms.
+  The sub-10 ms target is **not achieved**, and [the audio note](AUDIO.md) records
+  why it needs emulation paced against the audio clock rather than a smaller
+  constant.
 - [ ] Broaden accuracy checks for secondary OAM/overflow quirks, OAM decay,
   DMC/OAM collision arbitration and repeated controller reads. MMC6 and other
   board revisions are not covered by the common MMC3 implementation.

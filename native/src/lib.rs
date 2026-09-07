@@ -1,7 +1,7 @@
 //! Android JNI boundary. The machine has one owner and never runs in the audio callback.
 use jni::{
     objects::{JByteArray, JByteBuffer, JClass},
-    sys::{jboolean, jbyteArray, jfloat, jint, jobjectArray, jstring},
+    sys::{jboolean, jbyteArray, jfloat, jfloatArray, jint, jobjectArray, jstring},
     JNIEnv,
 };
 use nes_core::{rewind::Rewind, Buttons, Nes};
@@ -253,11 +253,47 @@ pub extern "system" fn Java_dev_androidemu_Native_audio(
     playing: jboolean,
 ) {
     #[cfg(target_os = "android")]
-    if let Err(e) = audio::set_playing(playing != 0) {
-        error(&mut env, e);
+    {
+        // The queue target is measured in frames of audio, so the region's frame
+        // rate has to be known before the first burst is asked for.
+        if playing != 0 {
+            if let Some(nes) = MACHINE.lock().unwrap().as_ref() {
+                audio::set_frame_rate(nes.bus.cart.header.region.frame_rate() as f32);
+            }
+        }
+        if let Err(e) = audio::set_playing(playing != 0) {
+            error(&mut env, e);
+        }
     }
     #[cfg(not(target_os = "android"))]
     let _ = (&mut env, playing);
+}
+
+/// Where the audio latency actually is, in milliseconds, plus the underrun count.
+///
+/// Four floats: the queue, the device ring, the two added together, and the
+/// target the controller settled on. Underruns are the fifth. The plan asks for
+/// a measurable audio figure rather than a claim, and this is it.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_audioStats(
+    env: JNIEnv,
+    _: JClass,
+) -> jfloatArray {
+    #[cfg(target_os = "android")]
+    let (queue, buffer, underruns, target) = {
+        let (queue, buffer, underruns) = audio::stats();
+        (queue, buffer, underruns, audio::target_ms())
+    };
+    #[cfg(not(target_os = "android"))]
+    let (queue, buffer, underruns, target) = (0.0f32, 0.0f32, 0u32, 0.0f32);
+    let values = [queue, buffer, queue + buffer, target, underruns as f32];
+    match env.new_float_array(values.len() as i32) {
+        Ok(array) => {
+            let _ = env.set_float_array_region(&array, 0, &values);
+            array.into_raw()
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 #[no_mangle]

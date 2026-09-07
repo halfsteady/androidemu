@@ -65,8 +65,9 @@ The core is a pure function of `(state, input) -> (state, framebuffer, samples)`
 ### Mappers
 Priority order — the first tier is roughly 90 % of the commercial library:
 
-- **Tier 1:** 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM)
-- **Tier 2:** 9/10 (MMC2/4), 11, 66, 69 (Sunsoft FME-7), 71
+- **Tier 1:** 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM) — built
+- **Tier 2:** 9/10 (MMC2/4), 11, 66, 69 (Sunsoft FME-7), 71 — built. The 5B's
+  expansion audio is not: only Gimmick! uses it, and only for three extra channels.
 - **Tier 3:** 5 (MMC5), VRC2/4/6/7, Namco 163, FDS
 - **Tier 4:** the long tail, driven by whatever fails to boot
 
@@ -84,8 +85,8 @@ This is where emulators actually lose. The Pad 3 has vastly more CPU than a NES 
 
 - **Refresh rate:** the NES runs at 60.0988 Hz. The Pad 3's panel runs at 144 Hz, which is *not* a clean multiple of 60 (144/60 = 2.4). Request a true 60 Hz display mode via `Surface.setFrameRate(60.0988f, FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)` so frames land on real vsyncs instead of judder-stuttering every third frame.
 - **Frame pacing:** driven by `Choreographer`. Emulate just-in-time before vsync rather than a frame ahead, to cut a full frame of latency.
-- **Audio:** Oboe / AAudio in low-latency exclusive mode, target buffer 5–10 ms.
-- **Dynamic rate control:** resample the APU output to the device rate with a feedback loop that nudges the resample ratio based on output buffer fill. This is the trick that eliminates crackle *without* buying latency with a fat buffer — it's why most Android emulators either pop or feel mushy, and it costs about forty lines.
+- **Audio:** AAudio in low-latency exclusive mode, target buffer 5–10 ms. **Not met, and structurally so:** audio is pushed a whole frame at a time by the display-driven frame call, which forces a queue of at least half a frame. Now ~12–14 ms, down from 20.8 ms, and measurable on screen. Sub-10 ms needs emulation paced against the audio clock rather than the display — see [the audio note](docs/AUDIO.md).
+- **Dynamic rate control:** resample the APU output to the device rate with a feedback loop that nudges the resample ratio based on output buffer fill. Built, and the target adapts: it rises on any underrun and creeps back toward the sawtooth floor, so the buffer is what this device needs rather than a guess.
 - **Latency budget:** measurable target of ≤ 3 frames input-to-photon. There's a built-in measurement tool (§6) so this is a number, not a vibe.
 
 ---

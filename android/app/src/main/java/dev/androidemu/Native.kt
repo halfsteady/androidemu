@@ -18,4 +18,10 @@ object Native {
     external fun snapshot(battery: Boolean): ByteArray
     external fun restore(bytes: ByteArray, battery: Boolean)
     external fun audio(playing: Boolean)
+    /**
+     * Where the audio latency is, in milliseconds: the queue, the device ring,
+     * the two added, the target the controller settled on, and then the underrun
+     * count. A number rather than a claim — see docs/AUDIO.md.
+     */
+    external fun audioStats(): FloatArray
 }

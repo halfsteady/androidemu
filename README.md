@@ -20,9 +20,10 @@ is built, tested, signed and published by GitHub Actions — see
 | Component | Current implementation |
 |---|---|
 | CPU and bus | All opcodes, cycle-based accesses, interrupt polling, OAM and DMC DMA |
-| Cartridges | iNES/NES 2.0, payload identity, header repair and override table, mappers 0/1/2/3/4/7/66, battery RAM |
+| Cartridges | iNES/NES 2.0, payload identity, header repair and override table, mappers 0/1/2/3/4/7/9/10/11/66/69/71, battery RAM |
 | PPU | Background/sprite pixels, scrolling, clipping, priority, sprite 0 hit, NTSC/PAL/Dendy timing |
 | APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
+| Audio out | AAudio low-latency, adaptive queue target, dynamic rate control, latency shown in Settings (~12–14 ms; [why not less](docs/AUDIO.md)) |
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
 | Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard |
 | Time controls | One draggable control for rewind and fast-forward, further from centre is faster, plus 5 s / 15 s jumps back; shoulder buttons drive it too |
@@ -33,6 +34,8 @@ is built, tested, signed and published by GitHub Actions — see
 The 39-ROM CPU/APU/PPU/MMC3 regression set and the real `nestest` trace pass.
 Device performance and latency are not yet measured. Sprite evaluation, some DMA
 edge cases, PAL/Dendy, raw HID adapters and other board variants need more work.
+Tier-2 boards are implemented and unit-tested but have not been run against
+commercial games; the FME-7's 5B expansion audio is not implemented.
 
 ## Layout
 
