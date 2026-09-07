@@ -44,11 +44,15 @@ source = next(
 
 
 def owned(entry):
-    """True when a shelf row came from this script, by its sidecar's title."""
-    sidecar = entry.with_name(entry.name + ".json")
-    if not sidecar.exists():
+    """True when a shelf row came from this script, by the title it wrote.
+
+    A link row is a bare `*.link.json` that describes itself; every other row
+    is a file with a `<name>.<ext>.json` sidecar beside it.
+    """
+    describing = entry if entry.name.endswith(".link.json") else entry.with_name(entry.name + ".json")
+    if not describing.exists():
         return False
-    return json.loads(sidecar.read_text()).get("title", "").startswith(OWNED_TITLE_PREFIXES)
+    return json.loads(describing.read_text()).get("title", "").startswith(OWNED_TITLE_PREFIXES)
 
 
 manifest = subprocess.check_output([str(build_tools / "aapt2"), "dump", "badging", str(source)], text=True)
@@ -113,9 +117,14 @@ print(json.dumps({"file": str(link), "url": RELEASES_URL}))
 # Prune what this script published before. Keeping one build per session turns
 # the shelf into a changelog nobody asked for.
 for stale in sorted(shelf.iterdir()):
-    if stale.is_dir() or stale.suffix == ".json" or stale in (target, link):
+    # Sidecars go with the file they describe. A link row has no separate
+    # sidecar, so skipping every .json would strand one under its old name
+    # across a rename - which is exactly what happened at the Emulia rename.
+    is_link = stale.name.endswith(".link.json")
+    if stale.is_dir() or stale in (target, link) or (stale.suffix == ".json" and not is_link):
         continue
     if owned(stale):
-        stale.with_name(stale.name + ".json").unlink()
+        if not is_link:
+            stale.with_name(stale.name + ".json").unlink()
         stale.unlink()
         print(json.dumps({"pruned": stale.name}))
