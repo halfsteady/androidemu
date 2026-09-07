@@ -1,7 +1,9 @@
 # Phase 1 — implementation and acceptance
 
-The first installable preview is implemented. Phase 1 is **not yet signed off**:
-physical-device play, controllers, pacing and audio latency still need validation.
+The first installable preview is implemented and confirmed playing on the tablet
+by hand on 2026-09-07. Phase 1 is **not yet signed off**: the gates below that ask
+for a number are still unmeasured, and controllers and the PAL/Dendy paths have not
+been walked through deliberately.
 
 ## Implemented
 
@@ -59,8 +61,13 @@ physical-device play, controllers, pacing and audio latency still need validatio
 
 ## Remaining acceptance gates
 
+Play → pause → save → load → resume, and touch input, are confirmed by hand on the
+OnePlus Pad 3 (owner report, 2026-09-07). What is left is everything that produces
+a number, plus the paths that need particular hardware or particular ROMs.
+
 - [ ] Run the instrumentation play → pause → save → load → resume test on a stable
-  emulator or tablet; review portrait and landscape screenshots and touch input.
+  emulator or tablet; review portrait and landscape screenshots. It has not been
+  executed anywhere yet — the hand check above is not the same evidence.
 - [ ] Play representative, legally supplied games on each tier-1 mapper. Confirm
   sprite rendering against captures; the current sprite selection is scanline-based.
 - [ ] Confirm real USB adapters, Bluetooth reconnects, two-player assignments and
@@ -81,10 +88,11 @@ physical-device play, controllers, pacing and audio latency still need validatio
   DMC/OAM collision arbitration and repeated controller reads. MMC6 and other
   board revisions are not covered by the common MMC3 implementation.
 
-Color emphasis, raw USB HID fallback, D-pad/axis remapping, folder/ZIP import,
-box-art packs, rewind and kid-mode locking remain planned follow-up work. The
-mapping wizard covers the four face/menu buttons; directions still come from the
-standard D-pad and stick handling.
+Color emphasis, raw USB HID fallback, D-pad/axis remapping, folder/ZIP import and
+box-art packs remain planned follow-up work. Rewind, fast-forward, box art and
+picture settings landed in [Phase 2](PHASE-2.md). The mapping wizard covers the
+four face/menu buttons; directions still come from the standard D-pad and stick
+handling, and the shoulder buttons are reserved for the time controls.
 
 ## Save format and recovery
 

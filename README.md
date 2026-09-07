@@ -7,13 +7,14 @@ Ships as **Emulia**, package `com.bsteinfeld.emulia`. `androidemu` is the
 repository, and `dev.androidemu` stays the Kotlin package because it is the JNI
 symbol prefix. The shipping name deliberately carries no third-party trademark.
 
-[PLAN.md](PLAN.md) is the full plan. [Phase 1 acceptance](docs/PHASE-1.md) records
-what is implemented, tested and still needs device validation.
+[PLAN.md](PLAN.md) is the full plan. [Phase 1 acceptance](docs/PHASE-1.md) and
+[the Phase 2 record](docs/PHASE-2.md) record what is implemented, what is tested and
+what still needs device validation.
 
 ## Status
 
-**Signed builds are available; device acceptance is pending.** Every release is
-built, tested, signed and published by GitHub Actions — see
+**Playing on the tablet; the measurements are still outstanding.** Every release
+is built, tested, signed and published by GitHub Actions — see
 [the release runbook](docs/RELEASING.md).
 
 | Component | Current implementation |
@@ -23,8 +24,11 @@ built, tested, signed and published by GitHub Actions — see
 | PPU | Background/sprite pixels, scrolling, clipping, priority, sprite 0 hit, NTSC/PAL/Dendy timing |
 | APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
-| Android | Game shelf, ROM import, GLES video, AAudio, full screen, hold-to-undo rewind, touch and two controller ports with a mapping wizard |
-| Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave and resume |
+| Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard |
+| Time controls | Hold-to-undo rewind and hold-to-skip fast-forward (2×/4×/8×), on screen and on the shoulder buttons |
+| Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, scanlines — applied live |
+| Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave on pause, background and low battery |
+| Shelf | Chosen box art per game, last-played ordering, playtime, screenshots to the device gallery, a readable problem log |
 
 The 39-ROM CPU/APU/PPU/MMC3 regression set and the real `nestest` trace pass.
 Device performance and latency are not yet measured. Sprite evaluation, some DMA
@@ -36,7 +40,7 @@ edge cases, PAL/Dendy, raw HID adapters and other board variants need more work.
 core/       nes-core: no I/O, threads or frame-time allocation
 runner/     nes-runner: traces, frame hashes and automated ROM tests
 native/     nes-android: JNI boundary and AAudio output
-android/    Compose library, play view, controls and save UI
+android/    Compose shelf, play view, picture and control settings, save UI
 scripts/    native builds and external ROM regression runner
 ```
 
@@ -70,9 +74,11 @@ With a functioning emulator or connected tablet:
 ./android/gradlew -p android connectedDebugAndroidTest
 ```
 
-The JNI unit tests run the real Rust bridge on the host JVM. Instrumentation tests
-exercise play/pause/save/load and lifecycle behavior; they require a stable Android
-device and have not yet passed in this environment.
+The JNI unit tests run the real Rust bridge on the host JVM, and the presentation
+geometry is unit-tested apart from the GL code that applies it. Instrumentation
+tests exercise play/pause/save/load, settings persistence, cover precedence and
+playtime; they require a stable Android device and have not yet passed in this
+environment.
 
 External test ROMs are not committed or shipped. See
 [the test-ROM instructions](core/tests/roms/README.md). To run the broader suite:

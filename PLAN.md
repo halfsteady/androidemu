@@ -11,7 +11,7 @@ Every emulator on the Play Store fails at least one of these. This one fails non
 | Ads | No ads. No analytics. No network calls the user didn't ask for. |
 | Locked features | Everything ships unlocked. No tiers, no IAP, no "pro". |
 | Slowdown / audio crackle | Frame-paced to a real 60 Hz output mode, sub-10 ms audio. Non-negotiable. |
-| Too complicated for Amelia | She lands in a shelf of box art. One tap resumes. Nothing else. |
+| Too complicated for Amelia | A shelf of box art. One tap resumes. Everything else is out of the way, not locked away. |
 | Bad USB NES controller support | Raw USB HID fallback + per-device profiles + a remap wizard. |
 
 ## Architecture
@@ -24,7 +24,7 @@ Owning the core is the whole point. Rewind, frame-exact speedrun timing, Game Ge
 
 ```
 ┌─────────────────────────────────────────┐
-│  Compose UI · library · kid mode · HUD  │  Kotlin
+│  Compose UI · library · settings · HUD  │  Kotlin
 ├─────────────────────────────────────────┤
 │  GLES renderer  │  Oboe audio  │  input  │  Kotlin
 ├─────────────────────────────────────────┤
@@ -173,7 +173,7 @@ The stated goal is *easy to find and easy to use*, so the database matters more 
 **Using them**
 - One-tap toggles from an in-game panel that doesn't leave the frame
 - Enabled cheats persist per game
-- Kid mode shows a picture-and-plain-name subset only
+- Pictures and plain names, not hex, so the list is usable by whoever is holding the tablet
 
 ---
 
@@ -201,7 +201,7 @@ Explicitly a pain point today, so it gets real engineering.
 
 **Touch controls**
 - Layout editor: drag, resize, opacity, per-button
-- Presets including a **large-target kid layout**
+- Presets including a **large-target layout**
 - Haptics on press, configurable
 - Optional dead-zone-free D-pad with diagonal assist
 
@@ -244,21 +244,24 @@ Built in three stages, each shippable.
 
 ---
 
-## 9. Two modes
+## 9. One app, simple by default
 
-**Kid mode** — the default landing, and where Amelia lives:
-- Full-bleed box art shelf, huge tap targets, no text smaller than large
-- One tap resumes exactly where she left off (auto-savestate on background/exit)
-- Progress is never lost — autosave on pause, on background, on battery warning
-- A big obvious **rewind** button, framed as "undo"
-- Simplified cheat picker: pictures and plain names
-- No file paths, no mapper names, no hex. Failures say "This game didn't work" and log the real reason elsewhere.
-- No reachable setting that can break playback
+A separate locked-down kid mode was built and then removed. Amelia is trusted with
+the whole app, and a gate turned out to be the wrong answer to a question nobody was
+asking. What made kid mode good is kept as how the app just works:
 
-**Full mode** — behind a long-press plus PIN:
-- Everything above, plus speedrun tooling, cheat finder, filter parameters, input diagnostics, netplay, per-game config, core settings
+- A shelf of box art. One tap opens a game and resumes exactly where it stopped.
+- Progress is never lost — autosave on pause, on background, and on battery warning.
+- A big obvious **rewind** button, framed as "undo", next to fast-forward.
+- Large touch targets, and a **big controls** setting that makes them larger still.
+- Failures say one plain sentence and keep the real reason in a log that can be read
+  back later, rather than showing a mapper name to somebody who didn't ask.
+- Settings are one panel: no file paths or hex on the way to a game, and nothing
+  that has to be configured before the first tap works.
 
-Switching is one gesture, and kid mode is what the app opens into.
+Depth lives one panel deeper, never behind a wall: speedrun tooling, the cheat
+finder, filter parameters, input diagnostics, netplay and per-game config are all
+reachable by anyone holding the tablet.
 
 ---
 
@@ -293,7 +296,7 @@ An emulator without a test harness is a rumour.
 |---|---|---|
 | **0 — Spike** | Rust core skeleton, headless runner, `nestest.log` passing, Donkey Kong renders | ~1 week |
 | **1 — Playable** | PPU/APU accurate, mappers 0/1/2/3/4/7, Compose app, GLES render, Oboe audio, touch + USB input, library, savestates, SRAM | ~3–4 weeks |
-| **2 — Amelia** | Kid mode shelf, resume-on-tap, autosave, rewind button, big-touch preset, box art | ~1 week |
+| **2 — Amelia** | Box-art shelf, resume-on-tap, autosave, rewind and fast-forward, big-touch preset, box art, picture settings | ~1 week |
 | **3 — Speedrun** | Frame timer, splits, auto-splitters, input display, replay record/verify, GIF + video export | ~2 weeks |
 | **4 — Cheats** | Game Genie decoder, bundled offline database, cheat search wizard | ~1 week |
 | **5 — Filters** | Shader pipeline, CRT set, NTSC filter, palettes, presets | ~1–2 weeks |
@@ -308,10 +311,19 @@ output, standard controller/touch input with a per-controller button-mapping
 wizard, a full-screen mode, hold-to-undo rewind, ROM import, savestates and SRAM
 persistence. Releases are built, signed and published by GitHub Actions; see
 [the release runbook](docs/RELEASING.md). The 39-ROM regression set and nestest
-pass.
-**Phase 1 remains open until device acceptance passes.** See
-[the implementation and acceptance record](docs/PHASE-1.md) for measured results,
-known limits and the outstanding gates.
+pass. Play on the tablet is confirmed by hand as of 2026-09-07; the numbers —
+frame pacing, input-to-photon latency, audio underruns, rewind cost — are still
+unmeasured, so Phase 1 is playable but not yet fully signed off. See
+[the implementation and acceptance record](docs/PHASE-1.md) for what is confirmed
+and what remains.
+
+Phase 2 is implemented, and deliberately without the separate kid mode §9 first
+called for: a box-art shelf ordered by what was played last, one-tap resume,
+hold-to-undo rewind beside a hold-to-skip fast-forward, chosen box art per game,
+picture settings (4:3 / 8:7 / pixel-perfect, overscan trim, scanlines), large
+touch targets, screenshots to the device gallery, playtime, plain one-sentence
+failures with the real reason kept in a readable log, and autosave on pause, on
+background and on a low battery. See [the Phase 2 record](docs/PHASE-2.md).
 
 ### Savestate and UI/UX acceptance
 
@@ -329,9 +341,6 @@ Savestates and a polished UI are required Phase 1 deliverables, not optional ext
 - Verify this flow on-device: import → play → pause → save → load → background →
   reopen → resume. Measure frame pacing, audio latency and input latency before
   calling the phase complete.
-
-Phase 2 has rewind. It still needs the dedicated kid-mode lock, the large-target
-kid layout and richer box-art handling.
 
 Phases 1 and 2 together are the point at which Amelia stops using anything else. Everything after that is upside.
 
