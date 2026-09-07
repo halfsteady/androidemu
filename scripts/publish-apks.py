@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 if os.environ.get("JAVA_HOME"):
     os.environ["PATH"] = str(Path(os.environ["JAVA_HOME"]) / "bin") + os.pathsep + os.environ.get("PATH", "")
@@ -21,15 +22,25 @@ date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 # The release build is the only artifact worth shelving: it is what a GitHub
 # Release carries and what gets sideloaded, signed with the upload key. The AAB
 # rides along because that is the file Play Console wants.
+# Defaults to what Gradle just built. Pass an APK and an AAB to shelve the
+# artifacts a GitHub Release actually shipped instead, so the shelf and the
+# release are the same bytes rather than two builds of the same commit:
+#   gh release download v0.1.0 -D /tmp/rel
+#   python3 scripts/publish-apks.py /tmp/rel/*.apk /tmp/rel/*.aab
+def chosen(extension, fallback):
+    for argument in sys.argv[1:]:
+        if argument.endswith(extension):
+            return Path(argument).resolve()
+    return root / fallback
+
 outputs = [
-    ("apk", Path("android/app/build/outputs/apk/release/app-release.apk"), "tablet APK", "arm64, sideload onto the OnePlus Pad 3"),
-    ("aab", Path("android/app/build/outputs/bundle/release/app-release.aab"), "Play bundle", "arm64 app bundle for Play Console"),
+    ("apk", chosen(".apk", "android/app/build/outputs/apk/release/app-release.apk"), "tablet APK", "arm64, sideload onto the OnePlus Pad 3"),
+    ("aab", chosen(".aab", "android/app/build/outputs/bundle/release/app-release.aab"), "Play bundle", "arm64 app bundle for Play Console"),
 ]
-manifest = subprocess.check_output([str(build_tools / "aapt2"), "dump", "badging", str(root / outputs[0][1])], text=True)
+manifest = subprocess.check_output([str(build_tools / "aapt2"), "dump", "badging", str(outputs[0][1])], text=True)
 version = re.search(r"versionName='([^']+)'", manifest).group(1)
 code = re.search(r"versionCode='([^']+)'", manifest).group(1)
-for kind, relative, label, architecture in outputs:
-    source = root / relative
+for kind, source, label, architecture in outputs:
     if kind == "apk":
         subprocess.run([str(build_tools / "apksigner"), "verify", str(source)], check=True)
         subprocess.run([str(build_tools / "zipalign"), "-c", "-P", "16", "4", str(source)], check=True)

@@ -109,10 +109,30 @@ jobs:
           (cd dist && sha256sum ./* > SHA256SUMS.txt)
           ls -lh dist
 
+      # Both files, and against the expected fingerprint rather than just
+      # printing one: a debug-signed artifact should fail the job, not sail
+      # through because nobody read the log. A deliberate key rotation is
+      # supposed to require editing this line.
       - name: Verify signer (upload key, not debug)
+        env:
+          EXPECTED: 75fdccb5302705abcc12cf628de634cfb61cd57f735d33393984978dc31a0fd5
         run: |
-          "$JAVA_HOME/bin/keytool" -printcert -jarfile \
-            "dist/amelias-nes-${{ steps.ver.outputs.name }}.aab" | grep -i "SHA256:"
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort | tail -1)
+          apk_digest=$("$apksigner" verify --print-certs \
+            "dist/amelias-nes-${{ steps.ver.outputs.name }}.apk" \
+            | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+          # An AAB is JAR-signed, so keytool is the tool that reads it.
+          aab_digest=$("$JAVA_HOME/bin/keytool" -printcert -jarfile \
+            "dist/amelias-nes-${{ steps.ver.outputs.name }}.aab" \
+            | sed -n 's/.*SHA256: //p' | head -1 | tr -d ': ' | tr 'A-Z' 'a-z')
+          echo "apk $apk_digest"
+          echo "aab $aab_digest"
+          for got in "$apk_digest" "$aab_digest"; do
+            if [ "$got" != "$EXPECTED" ]; then
+              echo "::error::signed with $got, expected the upload key $EXPECTED"
+              exit 1
+            fi
+          done
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
