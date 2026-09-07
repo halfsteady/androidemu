@@ -19,3 +19,9 @@ build/
 android/app/src/main/jniLibs/
 
 .harness/
+
+# Upload signing key and the file holding its password. Losing these means a
+# Play upload-key reset, and leaking them lets someone else sign as this app.
+*.jks
+*.keystore
+android/keystore.properties

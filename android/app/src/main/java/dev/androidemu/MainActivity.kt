@@ -21,6 +21,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,7 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
@@ -187,7 +193,14 @@ class MainActivity : ComponentActivity() {
     // Capture controller buttons before focused Compose widgets consume them.
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (mapping && event.keyCode != KeyEvent.KEYCODE_BACK) {
+        // Volume and power stay with the system; everything else is fair game
+        // while mapping, including Back, because adapters do report Select as
+        // Back. The wizard's own Cancel button is the way out.
+        val systemKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_MUTE ||
+            event.keyCode == KeyEvent.KEYCODE_POWER
+        if (mapping && !systemKey) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
                 (mappedKeys.isEmpty() || mappedKeys.first().first.deviceId == event.deviceId)) {
                 if (mappedKeys.none { it.first.keyCode == event.keyCode && it.first.scanCode == event.scanCode }) {
@@ -220,26 +233,72 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize()) {
                 if (game != null && !fullscreen) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(game!!.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
-                    TextButton(enabled = !busy, onClick = { pause(); showSlots = true }) { Text("Save states") }
-                    TextButton(enabled = !busy, onClick = { applyFullscreen(true) }) { Text("Full screen") }
-                    TextButton(enabled = !busy, onClick = { pause() }) { Text("Pause") }
+                    BarButton(Icons.Filled.List, "Save states", !busy) { pause(); showSlots = true }
+                    BarButton(ENTER_FULLSCREEN, "Full screen", !busy) { applyFullscreen(true) }
+                    BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 }
                 AndroidView(factory = { surface }, modifier = Modifier.weight(1f).fillMaxWidth())
                 if (game != null && (!fullscreen || fullscreenTouch)) TouchControls()
             }
             if (game != null && fullscreen && !paused) Row(Modifier.align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.7f))) {
-                TextButton(onClick = { pause() }) { Text("Menu") }
-                TextButton(onClick = { fullscreenTouch = !fullscreenTouch }) { Text(if (fullscreenTouch) "Hide controls" else "Touch controls") }
-                TextButton(onClick = { applyFullscreen(false) }) { Text("Exit full screen") }
+                BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
+                BarButton(null, if (fullscreenTouch) "Hide controls" else "Touch controls") { fullscreenTouch = !fullscreenTouch }
+                BarButton(EXIT_FULLSCREEN, "Exit full screen") { applyFullscreen(false) }
             }
             if (game == null) Shelf()
             if (game != null && paused) PausePanel()
+            // Drawn here, inside the activity's window, rather than as a
+            // dialog: a dialog has its own window and its own key dispatch, so
+            // dispatchKeyEvent never sees the button the wizard is asking for.
+            if (mapping) MappingPanel()
             if (busy) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         }
         }
-        if (mapping) AlertDialog(onDismissRequest = { mapping = false; input.clear() }, title = { Text("Map controller buttons") }, text = { Text("${if (mappingName.isEmpty()) "On your controller" else mappingName}, press ${mapButtons[minOf(mappingStep, 3)].first}.\n\nStep ${minOf(mappingStep + 1, 4)} of 4. Use a different button for each action. Directions use the pad or stick. Your mapping is remembered for this controller.") }, confirmButton = {}, dismissButton = { TextButton(onClick = { mapping = false; input.clear() }) { Text("Cancel") } })
         message?.let { text -> AlertDialog(onDismissRequest = { message = null }, title = { Text("A quick update") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { message = null }) { Text("Got it") } }) }
         overwrite?.let { slot -> AlertDialog(onDismissRequest = { overwrite = null }, title = { Text("Replace slot ${slot + 1}?") }, text = { Text("This replaces the progress saved in this slot. Your other slots stay available.") }, confirmButton = { TextButton(onClick = { overwrite = null; saveSlot(slot) }) { Text("Replace save") } }, dismissButton = { TextButton(onClick = { overwrite = null }) { Text("Keep it") } }) }
+    }
+    // The wizard lives in the activity's window so dispatchKeyEvent can claim
+    // the button being pressed. It shows progress as it goes, because a step
+    // that silently does nothing is indistinguishable from a broken adapter.
+    @Composable private fun BarButton(icon: ImageVector?, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+        TextButton(enabled = enabled, onClick = onClick) {
+            if (icon != null) {
+                // The label says the same thing, so the icon is decoration.
+                Icon(icon, contentDescription = null, Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(label)
+        }
+    }
+    @Composable private fun MappingPanel() {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)).padding(24.dp), contentAlignment = Alignment.Center) {
+            Surface(shape = RoundedCornerShape(28.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
+                Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Set up your controller", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (mappingName.isEmpty()) "Use the controller you want to play with." else mappingName,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text("Press  ${mapButtons[minOf(mappingStep, mapButtons.size - 1)].first}", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        mapButtons.forEachIndexed { index, button ->
+                            Text(
+                                if (index < mappingStep) "${button.first} ✓" else button.first,
+                                color = if (index < mappingStep) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (index == mappingStep) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                    Text(
+                        "Step ${minOf(mappingStep + 1, mapButtons.size)} of ${mapButtons.size}. Use a different button for each one. " +
+                            "Directions come from the pad or stick, so they are not part of this. " +
+                            "What you choose is remembered for this controller.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { mapping = false; input.clear() }, modifier = Modifier.heightIn(min = 52.dp)) { Text("Cancel") }
+                }
+            }
+        }
     }
     @Composable private fun Shelf() {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp)) {
@@ -359,3 +418,20 @@ class MainActivity : ComponentActivity() {
         }, contentAlignment = Alignment.Center) { Text(label, color = Color(0xff203018), fontSize = if (label.length == 1) 28.sp else 13.sp, fontWeight = FontWeight.Bold) }
     }
 }
+
+private fun cornerIcon(name: String, path: String): ImageVector = ImageVector.Builder(
+    name = name,
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).addPath(PathParser().parsePathString(path).toNodes(), fill = SolidColor(Color.White)).build()
+
+private val ENTER_FULLSCREEN = cornerIcon(
+    "EnterFullscreen",
+    "M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z",
+)
+private val EXIT_FULLSCREEN = cornerIcon(
+    "ExitFullscreen",
+    "M5,16h3v3h2v-5H5V16zM8,8H5v2h5V5H8V8zM14,19h2v-3h3v-2h-5V19zM16,8V5h-2v5h5V8H16z",
+)

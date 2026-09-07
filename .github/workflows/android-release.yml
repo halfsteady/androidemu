@@ -1,0 +1,133 @@
+name: Android release build
+
+# Builds a signed release AAB + APK with the upload key (pulled from repo
+# secrets, since the keystore is gitignored) and makes them downloadable:
+#   • Run manually (Actions ▸ "Android release build" ▸ Run workflow) → the
+#     AAB/APK are attached to the run as downloadable artifacts.
+#   • Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) →
+#     the same files are ALSO published as assets on a GitHub Release.
+#
+# The AAB is what Play Console wants; the APK is what you sideload onto the
+# tablet. Both come out of the same run, so they are always the same build.
+#
+# Required repository secrets (Settings ▸ Secrets and variables ▸ Actions):
+#   ANDROIDEMU_UPLOAD_KEYSTORE_BASE64  base64 of android/upload-keystore.jks
+#   ANDROIDEMU_UPLOAD_STORE_PASSWORD   keystore (store) password
+#   ANDROIDEMU_UPLOAD_KEY_PASSWORD     key password (same value here)
+#   ANDROIDEMU_UPLOAD_KEY_ALIAS        amelianes-upload
+# See docs/RELEASING.md for the one-time `gh secret set` commands.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub Release + upload its assets (tag runs only)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 28.2.13676358
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "ndk;28.2.13676358"
+
+      - name: Set up Rust (stable + Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # A release that fails its own accuracy tests is worse than no release.
+      # The external ROM suites need a checkout this job does not have, so this
+      # is the workspace suite: nestest, the mappers, the regions and the
+      # savestate format.
+      - name: Test the core
+        run: cargo test --workspace --locked
+
+      - name: Decode upload keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROIDEMU_UPLOAD_KEYSTORE_BASE64 }}
+        run: printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+
+      - name: Derive version
+        id: ver
+        run: |
+          code="${{ github.run_number }}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            name="${{ github.ref_name }}"; name="${name#v}"
+          else
+            name="0.1.0-ci.${{ github.run_number }}"
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "versionCode=$code  versionName=$name"
+
+      - name: Build signed AAB + APK
+        working-directory: android
+        env:
+          ANDROIDEMU_UPLOAD_STORE_FILE: ${{ runner.temp }}/upload-keystore.jks
+          ANDROIDEMU_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROIDEMU_UPLOAD_STORE_PASSWORD }}
+          ANDROIDEMU_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROIDEMU_UPLOAD_KEY_ALIAS }}
+          ANDROIDEMU_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROIDEMU_UPLOAD_KEY_PASSWORD }}
+          ANDROIDEMU_VERSION_CODE: ${{ steps.ver.outputs.code }}
+          ANDROIDEMU_VERSION_NAME: ${{ steps.ver.outputs.name }}
+        run: ./gradlew :app:bundleRelease :app:assembleRelease lint --no-daemon --console=plain
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/bundle/release/app-release.aab \
+             "dist/amelias-nes-${{ steps.ver.outputs.name }}.aab"
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             "dist/amelias-nes-${{ steps.ver.outputs.name }}.apk"
+          (cd dist && sha256sum ./* > SHA256SUMS.txt)
+          ls -lh dist
+
+      - name: Verify signer (upload key, not debug)
+        run: |
+          "$JAVA_HOME/bin/keytool" -printcert -jarfile \
+            "dist/amelias-nes-${{ steps.ver.outputs.name }}.aab" | grep -i "SHA256:"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: amelias-nes-${{ steps.ver.outputs.name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release (tag pushes only)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          NAME: ${{ steps.ver.outputs.name }}
+        run: |
+          # The release may already exist: creating one in the GitHub UI makes
+          # the release (and tag) BEFORE this tag-triggered run starts. So
+          # upload to it if present, otherwise create it. --clobber keeps
+          # re-runs idempotent.
+          files="dist/amelias-nes-$NAME.aab dist/amelias-nes-$NAME.apk dist/SHA256SUMS.txt"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $files --clobber
+          else
+            gh release create "$TAG" $files --title "$TAG" --generate-notes
+          fi

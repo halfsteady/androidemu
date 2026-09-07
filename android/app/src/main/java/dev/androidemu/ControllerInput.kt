@@ -42,8 +42,12 @@ class ControllerInput(context: Context, private val disconnected: () -> Unit) : 
     // of the mapping wizard: cheap adapters report buttons the defaults miss.
     fun bitFor(event: KeyEvent): Int =
         preferences.getInt("${profile(event)}/${physical(event)}", 0).takeIf { it != 0 } ?: when (event.keyCode) {
-            KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_1, KeyEvent.KEYCODE_X -> 1
-            KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_2, KeyEvent.KEYCODE_Z -> 2
+            // NES A is the right-hand button, B the left. Android calls the
+            // bottom face button BUTTON_A, and that is where a thumb rests, so
+            // it drives NES B while BUTTON_B drives NES A. Getting this the
+            // other way round makes every game feel backwards.
+            KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_2, KeyEvent.KEYCODE_X -> 1
+            KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_1, KeyEvent.KEYCODE_Z -> 2
             KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_SHIFT_RIGHT -> 4
             KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> 8
             KeyEvent.KEYCODE_DPAD_UP -> 16

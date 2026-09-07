@@ -1,13 +1,30 @@
+import java.io.FileInputStream
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
+import java.util.Properties
 
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
+
+// Upload-key credentials for signed builds, from a gitignored
+// android/keystore.properties or, failing that, ANDROIDEMU_UPLOAD_* environment
+// variables so CI can supply them without a file in the repo.
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) FileInputStream(file).use { load(it) }
+}
+fun signingProp(key: String, env: String): String? = keystoreProps.getProperty(key) ?: System.getenv(env)
+
 android {
+    // The Kotlin package, and so the JNI symbol names in native/. It is
+    // deliberately not the applicationId: renaming it would rename every
+    // Java_dev_androidemu_Native_* export.
     namespace = "dev.androidemu"
     compileSdk = 36
+    // Lets AGP find llvm-strip, so the Rust .so ships stripped.
+    ndkVersion = "28.2.13676358"
     defaultConfig {
-        applicationId = "dev.androidemu"
+        applicationId = "com.bsteinfeld.amelianes"
         minSdk = 29
         targetSdk = 36
         // An unlabelled build still has to sort above whatever is already on the
@@ -17,17 +34,43 @@ android {
         // builds stay up to date.
         val buildDate = LocalDate.now(ZoneOffset.UTC)
         val buildDay = ChronoUnit.DAYS.between(LocalDate.of(2018, 7, 9), buildDate)
-        versionCode = providers.gradleProperty("buildNumber").orElse((buildDay * 10000).toString()).get().toInt()
-        versionName = providers.gradleProperty("buildLabel").orElse("0.1.0+$buildDate").get()
+        versionCode = providers.gradleProperty("buildNumber").orElse(
+            System.getenv("ANDROIDEMU_VERSION_CODE") ?: (buildDay * 10000).toString()
+        ).get().toInt()
+        versionName = providers.gradleProperty("buildLabel").orElse(
+            System.getenv("ANDROIDEMU_VERSION_NAME") ?: "0.1.0+$buildDate"
+        ).get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    signingConfigs {
+        // Only define a real signer when the keystore is actually present.
+        // Pointing storeFile at a missing file fails configuration for every
+        // task, debug included, so absent credentials fall back to debug
+        // signing and a sideloadable - but not publishable - build.
+        val store = signingProp("storeFile", "ANDROIDEMU_UPLOAD_STORE_FILE")?.let { rootProject.file(it) }
+        if (store != null && store.exists()) {
+            create("upload") {
+                storeFile = store
+                storePassword = signingProp("storePassword", "ANDROIDEMU_UPLOAD_STORE_PASSWORD")
+                keyAlias = signingProp("keyAlias", "ANDROIDEMU_UPLOAD_KEY_ALIAS")
+                keyPassword = signingProp("keyPassword", "ANDROIDEMU_UPLOAD_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
-        getByName("debug") { ndk { abiFilters += listOf("arm64-v8a", "x86_64") } }
-        getByName("release") { ndk { abiFilters += "arm64-v8a" } }
-        create("preview") {
-            initWith(getByName("release"))
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += "release"
+        // A distinct id and the debug key, so a dev build never collides with
+        // the signed build installed on the tablet. x86_64 rides along for
+        // emulators, which only run the host CPU's ABI at a usable speed.
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        }
+        // The one shipping artifact: sideloaded from a GitHub Release today and
+        // uploadable to Play as an AAB later, both signed with the upload key.
+        getByName("release") {
+            ndk { abiFilters += "arm64-v8a" }
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
     buildFeatures { compose = true; buildConfig = true }
