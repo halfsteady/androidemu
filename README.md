@@ -25,7 +25,7 @@ is built, tested, signed and published by GitHub Actions — see
 | APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
 | Audio out | AAudio low-latency, adaptive queue target, dynamic rate control, latency shown in Settings (~12–14 ms; [why not less](docs/AUDIO.md)) |
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
-| Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard |
+| Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard, one design system for colour, shape and buttons |
 | Time controls | One draggable control for rewind and fast-forward, further from centre is faster, plus 5 s / 15 s jumps back; shoulder buttons drive it too |
 | Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, ten looks from scanlines to a cel-shaded Cartoon, and a separate choice of colours with `.pal` import — previewed in settings by the real shader |
 | Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave on pause, background and low battery |

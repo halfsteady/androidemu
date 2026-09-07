@@ -305,6 +305,29 @@ Depth lives one panel deeper, never behind a wall: speedrun tooling, the cheat
 finder, filter parameters, input diagnostics, netplay and per-game config are all
 reachable by anyone holding the tablet.
 
+The shell has had a pass over it in that same spirit. What it settled:
+
+- **One home per thing.** Controller setup was on the shelf *and* in Settings. Save
+  states were in the in-game bar *and* in the pause menu, and reaching them from the
+  bar paused the game first — which is exactly what the menu button does, so the
+  extra button bought nothing. Each now has one place.
+- **A card on the shelf is one thing to tap, and tapping it plays.** Box art and
+  putting a game away were three text buttons on the face of every card, one of
+  which took the game off the shelf from directly under the finger aiming to start
+  it. They live behind the card's own menu now — still one tap, no longer in the way.
+- **Deeper is a back arrow.** Save states was the pause panel wearing a second title
+  with a button that toggled between the two. It is its own panel, and every panel —
+  pause, save states, settings, the mapping wizard — is drawn in one frame.
+- **One palette.** The time control and the fixed jumps back were a cold blue-grey
+  against warm green everywhere else; the two directions of time are now told apart
+  by hue *inside* the one family. Every colour, corner radius and button height is
+  decided in `Ui.kt`, the Material scheme included, so a touch button and the
+  theme's own primary cannot drift apart.
+- **A control looks like what it does.** "Trim the edges" was a row reading On or
+  Off; it is a switch. The audio figure was a row that lit up under a finger and did
+  nothing; it is plainly a reading. And a destructive action has one appearance of
+  its own, so "delete" never arrives dressed as "load".
+
 ---
 
 ## 10. Quality of life

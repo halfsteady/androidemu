@@ -33,21 +33,17 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -356,28 +352,8 @@ class MainActivity : ComponentActivity() {
         surface = GameSurface(this, input::buttons, { rewindAtStart = true }) { detail -> report("This game stopped.", detail); paused = true; busy = false }
         runCatching { refreshLibrary() }.onFailure { report("Your shelf couldn't be opened.", it.message) }
         ContextCompat.registerReceiver(this, batteryLow, IntentFilter(Intent.ACTION_BATTERY_LOW), ContextCompat.RECEIVER_NOT_EXPORTED)
-        // Every slot a Material component actually reads is set here. The
-        // defaults are purple-tinted, and any one left unset shows up as an
-        // off-hue label or dialog against this green palette.
-        setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Color(0xffb9e38c),
-                    onPrimary = Color(0xff17300c),
-                    background = Color(0xff111813),
-                    onBackground = Color(0xffedf4e9),
-                    surface = Color(0xff1d2820),
-                    onSurface = Color(0xffedf4e9),
-                    surfaceVariant = Color(0xff2a3a2e),
-                    onSurfaceVariant = Color(0xffc3d1bd),
-                    surfaceContainer = Color(0xff1d2820),
-                    surfaceContainerHigh = Color(0xff243128),
-                    outline = Color(0xff6d7f68),
-                    error = Color(0xffffb4a6),
-                    onError = Color(0xff5f1409),
-                )
-            ) { App() }
-        }
+        // The scheme lives in Ui, with the rest of the colour.
+        setContent { MaterialTheme(colorScheme = Ui.scheme) { App() } }
     }
     private fun work(label: String, plain: String = "$label didn't finish.", action: () -> Unit) {
         if (busy) return
@@ -616,11 +592,14 @@ class MainActivity : ComponentActivity() {
             // Keep the GL thread attached while the library is visible so imports
             // and state operations have a single serialized execution queue.
             Column(Modifier.fillMaxSize()) {
-                if (game != null && !fullscreen) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Two buttons, not four. Save states used to sit here as well as
+                // in the menu, and reaching it always paused the game first —
+                // which is what Menu does, so it was the same two taps wearing
+                // one extra button.
+                if (game != null && !fullscreen) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(game!!.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
-                    BarButton(Icons.Filled.List, "Save states", !busy) { pause(); showSlots = true }
                     BarButton(ENTER_FULLSCREEN, "Full screen", !busy) { applyFullscreen(true) }
-                    BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
+                    BarButton(MENU, "Menu", !busy) { pause() }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
@@ -635,15 +614,23 @@ class MainActivity : ComponentActivity() {
                 }
                 if (game != null && (!fullscreen || fullscreenTouch)) TouchControls()
             }
-            if (game != null && fullscreen && !paused && overlays) Row(Modifier.align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.7f))) {
-                BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
-                BarButton(null, if (fullscreenTouch) "Hide controls" else "Touch controls") { fullscreenTouch = !fullscreenTouch }
+            // A rounded pill on the app's own scrim, so the chrome over the
+            // picture is recognisably the same bar as the one above it rather
+            // than a black rectangle stuck to the corner.
+            if (game != null && fullscreen && !paused && overlays) Row(
+                Modifier.align(Alignment.TopEnd).padding(12.dp)
+                    .clip(RoundedCornerShape(Ui.cornerMedium)).background(Ui.chrome).padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BarButton(MENU, "Menu", !busy) { pause() }
+                BarButton(GAMEPAD, if (fullscreenTouch) "Hide controls" else "Touch controls") { fullscreenTouch = !fullscreenTouch }
                 BarButton(EXIT_FULLSCREEN, "Exit full screen") { applyFullscreen(false) }
             }
             // Full screen with the controls hidden still needs the time control,
             // so it gets a compact copy of the same track.
             if (game != null && fullscreen && !fullscreenTouch && !paused && overlays) Row(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)
+                    .clip(RoundedCornerShape(Ui.cornerLarge)).background(Ui.chrome).padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -651,7 +638,10 @@ class MainActivity : ComponentActivity() {
                 TimeScrubber(Modifier.width(240.dp), 52)
             }
             if (game == null) Shelf()
-            if (game != null && paused) PausePanel()
+            // One panel, one job: the pause menu offers places to go, and save
+            // states is one of them rather than the same panel with a different
+            // title and a button that toggles between the two.
+            if (game != null && paused) if (showSlots) SlotsPanel() else PausePanel()
             // Drawn here, inside the activity's window, rather than as a
             // dialog: a dialog has its own window and its own key dispatch, so
             // dispatchKeyEvent never sees the button the wizard is asking for.
@@ -666,11 +656,11 @@ class MainActivity : ComponentActivity() {
             }
             notice?.let {
                 Box(
-                    Modifier.align(Alignment.TopCenter).padding(top = 12.dp).clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xff33240c)).padding(horizontal = 16.dp, vertical = 8.dp)
-                ) { Text(it, color = Color(0xffffd9a0)) }
+                    Modifier.align(Alignment.TopCenter).padding(top = 12.dp).clip(RoundedCornerShape(Ui.cornerSmall))
+                        .background(Ui.noticeBack).padding(horizontal = 16.dp, vertical = 10.dp)
+                ) { Text(it, color = Ui.noticeText, fontWeight = FontWeight.SemiBold) }
             }
-            if (busy) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            if (busy) Box(Modifier.fillMaxSize().background(Ui.scrim), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         }
         }
         message?.let { text ->
@@ -733,12 +723,12 @@ class MainActivity : ComponentActivity() {
         var fraction by remember { mutableFloatStateOf(0f) }
         val speed = scrub
         val tint = when {
-            speed < 0 -> Color(0xffffd9a0)
-            speed > 0 -> Color(0xffc9d9ff)
-            else -> Color(0xffb8c6d6)
+            speed < 0 -> Ui.backward
+            speed > 0 -> Ui.forward
+            else -> Ui.keyGlyph
         }
         BoxWithConstraints(
-            modifier.height(side.dp).clip(RoundedCornerShape((side / 2).dp)).background(Color(0xff1b2430))
+            modifier.height(side.dp).clip(RoundedCornerShape((side / 2).dp)).background(Ui.well)
                 .pointerInput(game) {
                     // The handle carries a pause glyph, so it pauses: a press on
                     // it that never turns into a drag is a tap on that button.
@@ -786,12 +776,12 @@ class MainActivity : ComponentActivity() {
             // sample: this way the drag re-runs layout rather than recomposition.
             val travel = with(LocalDensity.current) { ((maxWidth - thumb) / 2).toPx() }
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("◀◀", color = Color(0xff5c6b7d), fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
+                Text("◀◀", color = Ui.wellMark, fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                Text("▶▶", color = Color(0xff5c6b7d), fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
+                Text("▶▶", color = Ui.wellMark, fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
             }
             // The centre, so "stopped" is somewhere you can aim for.
-            Box(Modifier.width(2.dp).height((side * 0.34f).dp).background(Color(0xff3d4c5e)))
+            Box(Modifier.width(2.dp).height((side * 0.34f).dp).background(Ui.wellEdge))
             Box(
                 Modifier.offset { IntOffset((travel * fraction).roundToInt(), 0) }
                     .size(thumb).clip(RoundedCornerShape(thumb / 2)).background(tint),
@@ -799,7 +789,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 Text(
                     if (speed == 0) "▮▮" else "${if (speed < 0) -speed else speed}×",
-                    color = Color(0xff17222e),
+                    color = Ui.onTime,
                     fontSize = (side * (if (speed == 0) 0.2f else 0.26f)).sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -817,13 +807,13 @@ class MainActivity : ComponentActivity() {
             onClick = { skipBack(seconds) },
             enabled = ready,
             shape = RoundedCornerShape((side * 0.36f).dp),
-            color = if (ready) Color(0xff35485c) else Color(0xff232c36),
+            color = if (ready) Ui.keyFace else Ui.keyDim,
             modifier = Modifier.size(side.dp).semantics { contentDescription = "Back $seconds seconds" },
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
                     "↺$seconds",
-                    color = if (ready) Color(0xffdce8f5) else Color(0xff56646f),
+                    color = if (ready) Ui.keyGlyph else Ui.keyDimGlyph,
                     fontSize = (side * 0.28f).sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -841,34 +831,40 @@ class MainActivity : ComponentActivity() {
         }
     }
     @Composable private fun MappingPanel() {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)).padding(24.dp), contentAlignment = Alignment.Center) {
-            Surface(shape = RoundedCornerShape(28.dp), modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Set up your controller", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        if (mappingName.isEmpty()) "Use the controller you want to play with." else mappingName,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text("Press  ${mapButtons[minOf(mappingStep, mapButtons.size - 1)].first}", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        mapButtons.forEachIndexed { index, button ->
-                            Text(
-                                if (index < mappingStep) "${button.first} ✓" else button.first,
-                                color = if (index < mappingStep) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = if (index == mappingStep) FontWeight.Bold else FontWeight.Normal,
-                            )
-                        }
+        Panel(
+            "Set up your controller",
+            if (mappingName.isEmpty()) "Use the controller you want to play with." else mappingName,
+            maxWidth = 560.dp,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "Press  ${mapButtons[minOf(mappingStep, mapButtons.size - 1)].first}",
+                    fontSize = 44.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    mapButtons.forEachIndexed { index, button ->
+                        Text(
+                            if (index < mappingStep) "${button.first} ✓" else button.first,
+                            color = if (index < mappingStep) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (index == mappingStep) FontWeight.Bold else FontWeight.Normal,
+                        )
                     }
-                    Text(
-                        "Step ${minOf(mappingStep + 1, mapButtons.size)} of ${mapButtons.size}. Use a different button for each one. " +
-                            "Directions come from the pad or stick, so they are not part of this. " +
-                            "Shoulder buttons stay on rewind and fast-forward. " +
-                            "What you choose is remembered for this controller.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(onClick = { mapping = false; input.clear() }, modifier = Modifier.heightIn(min = 52.dp)) { Text("Cancel") }
                 }
             }
+            Text(
+                "Step ${minOf(mappingStep + 1, mapButtons.size)} of ${mapButtons.size}. Use a different button for each one. " +
+                    "Directions come from the pad or stick, so they are not part of this. " +
+                    "Shoulder buttons stay on rewind and fast-forward. " +
+                    "What you choose is remembered for this controller.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SecondaryAction("Cancel", Modifier.fillMaxWidth()) { mapping = false; input.clear() }
         }
     }
     /**
@@ -881,217 +877,270 @@ class MainActivity : ComponentActivity() {
      * from the shelf it uses the newest saved moment, or a built pattern.
      */
     @Composable private fun SettingsPanel() {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)).padding(24.dp), contentAlignment = Alignment.Center) {
-            Surface(shape = RoundedCornerShape(28.dp), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth()) {
-                Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    SectionLabel("Picture")
-                    // Redrawn whenever a choice that affects it changes.
-                    LaunchedEffect(previewSample, settings.aspect, settings.trimEdges, settings.filter, settings.palette) { renderPreview() }
-                    Box(
-                        Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp)).background(Color.Black),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        val shown = previewImage
-                        if (shown != null) Image(shown, "Preview of the current picture settings", Modifier.fillMaxSize())
-                        else Text("Preparing a preview…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text(
-                        "The shape and look below, drawn by the same shader the game uses.",
-                        Modifier.padding(top = 8.dp, bottom = 6.dp),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    ChoiceRow("Shape", Aspect.entries.map { it.label }, settings.aspect.ordinal) { settings.aspect = Aspect.entries[it] }
-                    ChoiceRow("Look", Filter.entries.map { it.label }, Filter.entries.indexOf(settings.filter)) { settings.filter = Filter.entries[it] }
-                    Text(
-                        settings.filter.note,
-                        Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    // Colour is its own choice, not part of the look: you might
-                    // want Composite with one set of colours and Cartoon with
-                    // another, and folding them together would multiply the list.
-                    ChoiceRow("Colours", Palette.entries.map { it.label }, Palette.entries.indexOf(settings.palette)) { chosen ->
-                        val palette = Palette.entries[chosen]
-                        if (palette == Palette.File && settings.importedPalette == null) importPalette.launch(arrayOf("*/*"))
-                        else { settings.palette = palette; applyPalette() }
-                    }
-                    Text(
-                        settings.palette.note,
-                        Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (settings.palette == Palette.File) {
-                        SettingRow("Palette file", "Replace", "Load a different .pal file") { importPalette.launch(arrayOf("*/*")) }
-                    }
-                    SettingRow("Trim the edges", onOff(settings.trimEdges), "Hides the ${Picture.TRIM} rows a television lost to overscan") {
-                        settings.trimEdges = !settings.trimEdges
-                    }
-                    SectionLabel("Controls")
-                    SettingRow("Controller buttons", "Set up", "Map A, B, Select and Start for a controller") { closeSettings(); startMapping() }
-                    SectionLabel("This device")
-                    // Polled only while the panel is open. The plan asks for a
-                    // measurable audio figure rather than a claim, so it is on
-                    // screen where it can be read off the tablet.
-                    var audio by remember { mutableStateOf(FloatArray(5)) }
-                    LaunchedEffect(showSettings) {
-                        while (showSettings) {
-                            audio = runCatching { Native.audioStats() }.getOrDefault(FloatArray(5))
-                            delay(500)
-                        }
-                    }
-                    SettingRow(
-                        "Audio delay",
-                        if (audio[2] <= 0f) "—" else "%.1f ms".format(audio[2]),
-                        "%.1f ms queued + %.1f ms in the device, holding %.1f ms · %d underruns"
-                            .format(audio[0], audio[1], audio[3], audio[4].toInt()),
-                    ) {}
-                    SettingRow("Problem log", "Open", "What went wrong, and why") { showProblems = true }
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = { closeSettings() }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Done") }
+        Panel("Settings") {
+            SectionLabel("Picture")
+            // Redrawn whenever a choice that affects it changes.
+            LaunchedEffect(previewSample, settings.aspect, settings.trimEdges, settings.filter, settings.palette) { renderPreview() }
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(Ui.cornerMedium)).background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                val shown = previewImage
+                if (shown != null) Image(shown, "Preview of the current picture settings", Modifier.fillMaxSize())
+                else Text("Preparing a preview…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            ChoiceNote("The shape and look below, drawn by the same shader the game uses.")
+            ChoiceRow("Shape", Aspect.entries.map { it.label }, settings.aspect.ordinal) { settings.aspect = Aspect.entries[it] }
+            ChoiceRow("Look", Filter.entries.map { it.label }, Filter.entries.indexOf(settings.filter)) { settings.filter = Filter.entries[it] }
+            ChoiceNote(settings.filter.note)
+            // Colour is its own choice, not part of the look: you might want
+            // Composite with one set of colours and Cartoon with another, and
+            // folding them together would multiply the list.
+            ChoiceRow("Colours", Palette.entries.map { it.label }, Palette.entries.indexOf(settings.palette)) { chosen ->
+                val palette = Palette.entries[chosen]
+                if (palette == Palette.File && settings.importedPalette == null) importPalette.launch(arrayOf("*/*"))
+                else { settings.palette = palette; applyPalette() }
+            }
+            ChoiceNote(settings.palette.note)
+            if (settings.palette == Palette.File) {
+                ValueRow("Palette file", "Replace", "Load a different .pal file") { importPalette.launch(arrayOf("*/*")) }
+            }
+            // A switch, because it is one. It used to be a value row reading
+            // "On" or "Off", which looks like something with more than two
+            // answers hiding behind it.
+            SwitchRow("Trim the edges", settings.trimEdges, "Hides the ${Picture.TRIM} rows a television lost to overscan") {
+                settings.trimEdges = !settings.trimEdges
+            }
+            SectionLabel("Controls")
+            ValueRow("Controller buttons", "Set up", "Map A, B, Select and Start for a controller") { closeSettings(); startMapping() }
+            SectionLabel("This device")
+            // Polled only while the panel is open. The plan asks for a
+            // measurable audio figure rather than a claim, so it is on
+            // screen where it can be read off the tablet.
+            var audio by remember { mutableStateOf(FloatArray(5)) }
+            LaunchedEffect(showSettings) {
+                while (showSettings) {
+                    audio = runCatching { Native.audioStats() }.getOrDefault(FloatArray(5))
+                    delay(500)
                 }
             }
-        }
-    }
-    /** A labelled row of choices. Chips rather than a cycling row, so the preview is one tap from any option. */
-    @Composable private fun ChoiceRow(label: String, options: List<String>, selected: Int, onPick: (Int) -> Unit) {
-        Column(Modifier.padding(vertical = 4.dp)) {
-            Text(label, Modifier.padding(start = 12.dp, bottom = 6.dp), fontWeight = FontWeight.SemiBold)
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                options.forEachIndexed { index, option ->
-                    FilterChip(selected = index == selected, onClick = { onPick(index) }, label = { Text(option) })
-                }
-            }
-        }
-    }
-    private fun onOff(value: Boolean) = if (value) "On" else "Off"
-    @Composable private fun SectionLabel(text: String) {
-        Text(
-            text.uppercase(),
-            Modifier.padding(top = 14.dp, bottom = 2.dp),
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = 12.sp,
-            letterSpacing = 2.sp,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-    /** Label on the left, current value on the right, the whole row a target. */
-    @Composable private fun SettingRow(label: String, value: String, hint: String? = null, onClick: () -> Unit) {
-        Surface(onClick = onClick, color = Color.Transparent, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(label, fontWeight = FontWeight.SemiBold)
-                    if (hint != null) Text(hint, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text(value, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-    @Composable private fun Shelf() {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp)) {
-            Text("EMULIA", color = MaterialTheme.colorScheme.primary, letterSpacing = 3.sp, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Text(BuildConfig.VERSION_NAME, color = Color(0xffabb8a9), fontSize = 11.sp)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                if (showArchive) "Put away" else "Your next adventure",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
+            InfoRow(
+                "Audio delay",
+                if (audio[2] <= 0f) "—" else "%.1f ms".format(audio[2]),
+                "%.1f ms queued + %.1f ms in the device, holding %.1f ms · %d underruns"
+                    .format(audio[0], audio[1], audio[3], audio[4].toInt()),
             )
+            InfoRow("Version", BuildConfig.VERSION_NAME, "Emulia, on this device")
+            ValueRow("Problem log", "Open", "What went wrong, and why") { showProblems = true }
+            Spacer(Modifier.height(8.dp))
+            PrimaryAction("Done", Modifier.fillMaxWidth()) { closeSettings() }
+        }
+    }
+    /**
+     * The shelf. One header row rather than a stacked masthead, so the games
+     * start near the top of the screen instead of below three paragraphs — the
+     * grid is the point of this screen and it should look like it.
+     *
+     * The version moved into Settings. It is a thing you look up once, not a
+     * thing you read every time you sit down to play.
+     */
+    @Composable private fun Shelf() {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 24.dp, vertical = 18.dp)) {
+            // Beside the heading where there is room for it, underneath where
+            // there is not. The tablet this is for is always the first case; a
+            // narrow window should still not push a button off the edge.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 820.dp) Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    ShelfHeading(Modifier.weight(1f))
+                    ShelfActions()
+                } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ShelfHeading()
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) { ShelfActions() }
+                }
+            }
             Text(
                 if (showArchive) "Off the shelf, and nothing lost. Every save is still here."
                 else "Pick a game. Play a little. Come back anytime.",
-                color = Color(0xffabb8a9),
-                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
             )
-            if (!showArchive) Button(enabled = !busy, onClick = { importGame.launch(arrayOf("*/*")) }) { Text("＋ Add a game") }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (showArchive) {
-                    TextButton(onClick = { showArchive = false }) { Text("← Back to the shelf") }
-                } else {
-                    TextButton(onClick = { openSettings() }) { Text("Settings") }
-                    TextButton(onClick = { startMapping() }) { Text("Set up controller buttons") }
-                    // Only offered when there is something in it, so an empty
-                    // shelf does not advertise an empty cupboard.
-                    if (archived.isNotEmpty()) TextButton(onClick = { showArchive = true }) { Text("Put away (${archived.size})") }
-                }
-            }
             val shown = if (showArchive) archived else games
             if (shown.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("A shelf full of possibilities", fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Add a game file (.nes) from your tablet to begin.\nGames stay on this device. No account needed.", modifier = Modifier.padding(16.dp), color = Color(0xffabb8a9))
+                        Text(
+                            "Add a game file (.nes) from your tablet to begin.\nGames stay on this device. No account needed.",
+                            modifier = Modifier.padding(16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
-            } else LazyVerticalGrid(columns = GridCells.Adaptive(220.dp), contentPadding = PaddingValues(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(shown, key = { it.id }) { selected ->
-                    // A put-away game does not open on a tap: the whole card
-                    // would otherwise be a trap next to "Bring back".
-                    Card(
-                        onClick = { if (!showArchive) open(selected) },
-                        enabled = !busy && !showArchive,
-                        shape = RoundedCornerShape(24.dp),
-                    ) {
-                        Column {
-                            Cover(selected.title, library.cover(selected), Modifier.fillMaxWidth().aspectRatio(4f/3f), covers)
-                            Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                                Text(selected.title, fontWeight = FontWeight.Bold, fontSize = 19.sp)
-                                if (!showArchive) Text(
-                                    if (library.state(selected, -1).exists()) "Resume your adventure  →" else "Ready to play  →",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(top = 8.dp),
-                                )
-                                playtime(selected.seconds)?.let { Text(it, fontSize = 12.sp, color = Color(0xffabb8a9), modifier = Modifier.padding(top = 4.dp)) }
-                                if (showArchive) Row {
-                                    TextButton(enabled = !busy, onClick = { unarchive(selected) }) { Text("Bring back") }
-                                    TextButton(enabled = !busy, onClick = { forgetting = selected }) {
-                                        Text("Delete", color = MaterialTheme.colorScheme.error)
-                                    }
-                                } else Row {
-                                    TextButton(onClick = { artFor = selected; importArt.launch(arrayOf("image/*")) }) { Text("Box art") }
-                                    if (library.art(selected).exists()) TextButton(onClick = { clearArt(selected) }) { Text("Clear") }
-                                    TextButton(enabled = !busy, onClick = { archive(selected) }) { Text("Put away") }
-                                }
+            } else LazyVerticalGrid(
+                columns = GridCells.Adaptive(220.dp),
+                contentPadding = PaddingValues(top = 20.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(shown, key = { it.id }) { selected -> GameCard(selected) }
+            }
+        }
+    }
+    @Composable private fun ShelfHeading(modifier: Modifier = Modifier) {
+        Column(modifier) {
+            Text("EMULIA", color = MaterialTheme.colorScheme.primary, letterSpacing = 3.sp, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(if (showArchive) "Put away" else "Your next adventure", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+    @Composable private fun ShelfActions() {
+        if (showArchive) SecondaryAction("Back to the shelf", icon = BACK) { showArchive = false }
+        else {
+            PrimaryAction("Add a game", icon = ADD, enabled = !busy, height = Ui.secondaryHeight) {
+                importGame.launch(arrayOf("*/*"))
+            }
+            // Controller setup used to sit here as well as in Settings. One home
+            // each: this is a shelf, and that is a setting.
+            SecondaryAction("Settings", icon = TUNE) { openSettings() }
+            // Only offered when there is something in it, so an empty shelf does
+            // not advertise an empty cupboard.
+            if (archived.isNotEmpty()) SecondaryAction("Put away (${archived.size})") { showArchive = true }
+        }
+    }
+    /**
+     * A game on the shelf. The whole card is one thing to tap, and what it does
+     * is play — which is the only reason to be on this screen.
+     *
+     * Box art and putting a game away used to be three text buttons on the face
+     * of every card, one of which took the game off the shelf from directly
+     * under the finger aiming to start it. They live behind the card's own menu
+     * now: still one tap away, no longer in the way of the game.
+     */
+    @Composable private fun GameCard(selected: Game) {
+        var menu by remember { mutableStateOf(false) }
+        // A put-away game does not open on a tap: the whole card would
+        // otherwise be a trap next to "Bring back".
+        Card(
+            onClick = { if (!showArchive) open(selected) },
+            enabled = !busy && !showArchive,
+            shape = RoundedCornerShape(Ui.cornerLarge),
+        ) {
+            Column {
+                Box {
+                    Cover(selected.title, library.cover(selected), Modifier.fillMaxWidth().aspectRatio(4f / 3f), covers)
+                    if (!showArchive) Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+                        Surface(color = Ui.chrome, shape = CircleShape, contentColor = Ui.keyGlyph) {
+                            IconButton(onClick = { menu = true }, enabled = !busy) {
+                                Icon(MORE, "More for ${selected.title}", Modifier.size(22.dp))
                             }
                         }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Choose box art") },
+                                onClick = { menu = false; artFor = selected; importArt.launch(arrayOf("image/*")) },
+                            )
+                            if (library.art(selected).exists()) DropdownMenuItem(
+                                text = { Text("Clear box art") },
+                                onClick = { menu = false; clearArt(selected) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Put this away") },
+                                enabled = !busy,
+                                onClick = { menu = false; archive(selected) },
+                            )
+                        }
+                    }
+                }
+                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    Text(selected.title, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                    if (!showArchive) Text(
+                        if (library.state(selected, -1).exists()) "Resume your adventure  →" else "Ready to play  →",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    playtime(selected.seconds)?.let {
+                        Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    if (showArchive) Row(Modifier.padding(top = 4.dp)) {
+                        QuietAction("Bring back", enabled = !busy) { unarchive(selected) }
+                        QuietAction("Delete", enabled = !busy, danger = true) { forgetting = selected }
                     }
                 }
             }
         }
     }
+    /**
+     * The pause menu: resume, or go somewhere. Everything on the way out used to
+     * be a row of text buttons of equal weight, in which "Back to your shelf"
+     * looked exactly like "Screenshot". Tiles of one size, and the way back
+     * drawn as the different kind of thing it is.
+     */
     @Composable private fun PausePanel() {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).padding(24.dp), contentAlignment = Alignment.Center) {
-            Surface(shape = RoundedCornerShape(28.dp), modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
-                Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (showSlots) "Save states" else "Take your time", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text(if (showSlots) "Ten slots, plus a separate automatic save." else "Progress saves automatically when you pause or leave.", color = Color(0xffabb8a9))
-                    if (showSlots) LazyVerticalGrid(columns = GridCells.Adaptive(180.dp), modifier = Modifier.heightIn(max = 360.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(slots, key = { it.number }) { slot ->
-                            Column(Modifier.background(Color(0xff28362b), RoundedCornerShape(16.dp)).padding(12.dp)) {
-                                val image = remember(slot.time) { if (slot.thumbnail.exists()) BitmapFactory.decodeFile(slot.thumbnail.path)?.asImageBitmap() else null }
-                                if (image != null) Image(image, "Save slot ${slot.number + 1}", Modifier.fillMaxWidth().aspectRatio(4f/3f))
-                                Text("Slot ${slot.number + 1}", fontWeight = FontWeight.Bold)
-                                Text(if (slot.time == 0L) "Empty · ready for a moment" else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(slot.time)), fontSize = 12.sp)
-                                Row {
-                                    TextButton(enabled = !busy, onClick = { if (slot.time == 0L) saveSlot(slot.number) else overwrite = slot.number }) { Text("Save") }
-                                    TextButton(enabled = !busy && slot.time != 0L, onClick = { loadSlot(slot.number) }) { Text("Load") }
-                                }
+        Panel("Take your time", "Progress saves automatically when you pause or leave.", maxWidth = 560.dp) {
+            PrimaryAction("Resume game", Modifier.fillMaxWidth(), PLAY, !busy) { resumeGame() }
+            Spacer(Modifier.height(2.dp))
+            // Intrinsic height so a label that wraps in a narrow window takes
+            // its neighbour with it, rather than leaving two tiles of different
+            // sizes side by side.
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ActionTile(SLOTS, "Save states", Modifier.weight(1f).fillMaxHeight(), !busy) { showSlots = true }
+                ActionTile(CAMERA, "Screenshot", Modifier.weight(1f).fillMaxHeight(), !busy) { screenshot() }
+            }
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ActionTile(
+                    if (fullscreen) EXIT_FULLSCREEN else ENTER_FULLSCREEN,
+                    if (fullscreen) "Exit full screen" else "Full screen",
+                    Modifier.weight(1f).fillMaxHeight(),
+                ) { applyFullscreen(!fullscreen) }
+                ActionTile(TUNE, "Settings", Modifier.weight(1f).fillMaxHeight(), !busy) { openSettings() }
+            }
+            Spacer(Modifier.height(2.dp))
+            SecondaryAction("Back to your shelf", Modifier.fillMaxWidth(), SHELF, !busy) {
+                applyFullscreen(false); game = null; showSlots = false
+            }
+        }
+    }
+    /** Save states, as its own panel with its own way back. */
+    @Composable private fun SlotsPanel() {
+        Panel("Save states", "Ten slots, plus a separate automatic save.", onBack = { showSlots = false }, maxWidth = 720.dp) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(180.dp),
+                modifier = Modifier.heightIn(max = 380.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(slots, key = { it.number }) { slot ->
+                    Column(Modifier.background(Ui.keyFace, RoundedCornerShape(Ui.cornerMedium)).padding(12.dp)) {
+                        val image = remember(slot.time) { if (slot.thumbnail.exists()) BitmapFactory.decodeFile(slot.thumbnail.path)?.asImageBitmap() else null }
+                        if (image != null) Image(
+                            image,
+                            "Save slot ${slot.number + 1}",
+                            Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(Ui.cornerSmall)),
+                        )
+                        Text("Slot ${slot.number + 1}", Modifier.padding(top = 6.dp), fontWeight = FontWeight.Bold)
+                        Text(
+                            if (slot.time == 0L) "Empty · ready for a moment"
+                            else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(slot.time)),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            QuietAction("Save", enabled = !busy, compact = true) {
+                                if (slot.time == 0L) saveSlot(slot.number) else overwrite = slot.number
                             }
+                            QuietAction("Load", enabled = !busy && slot.time != 0L, compact = true) { loadSlot(slot.number) }
                         }
                     }
-                    Button(enabled = !busy, onClick = { resumeGame() }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Resume game", fontSize = 18.sp) }
-                    OutlinedButton(enabled = !busy, onClick = { showSlots = !showSlots }, modifier = Modifier.fillMaxWidth()) { Text(if (showSlots) "Back to pause" else "Save states · 10 slots") }
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(enabled = !busy, onClick = { openSettings() }) { Text("Settings") }
-                        TextButton(enabled = !busy, onClick = { screenshot() }) { Text("Screenshot") }
-                        TextButton(onClick = { applyFullscreen(!fullscreen) }) { Text(if (fullscreen) "Exit full screen" else "Full screen") }
-                    }
-                    TextButton(enabled = !busy, onClick = { applyFullscreen(false); game = null; showSlots = false }) { Text("Back to your shelf") }
                 }
             }
+            Spacer(Modifier.height(2.dp))
+            PrimaryAction("Resume game", Modifier.fillMaxWidth(), PLAY, !busy) { resumeGame() }
         }
     }
     private fun pulseTouch(bit: Int) {
@@ -1135,7 +1184,7 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.size(side.dp).semantics {
                 contentDescription = "Directional pad. Slide to move."
                 customActions = listOf("Up" to 16, "Down" to 32, "Left" to 64, "Right" to 128).map { (label, bit) -> CustomAccessibilityAction(label) { pulseTouch(bit); true } }
-            }.clip(RoundedCornerShape(32.dp)).background(Color(0xff28362b)).pointerInput(paused) {
+            }.clip(RoundedCornerShape(Ui.cornerLarge)).background(Ui.keyFace).pointerInput(paused) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     try {
@@ -1149,7 +1198,7 @@ class MainActivity : ComponentActivity() {
                         } while (change.pressed)
                     } finally { input.touch = input.touch and 0xf0.inv() }
                 }
-            }, contentAlignment = Alignment.Center) { Text("✚", fontSize = (side * 0.51f).sp, color = Color(0xffb6c9af)) }
+            }, contentAlignment = Alignment.Center) { Text("✚", fontSize = (side * 0.51f).sp, color = Ui.keyGlyph) }
     }
     @Composable private fun HoldButton(label: String, bit: Int, size: Int) {
         var held by remember { mutableStateOf(false) }
@@ -1157,7 +1206,7 @@ class MainActivity : ComponentActivity() {
             role = Role.Button; contentDescription = "$label button"
             stateDescription = if (held) "Pressed" else "Released"
             onClick { pulseTouch(bit); true }
-        }.clip(RoundedCornerShape(28.dp)).background(if (held) Color(0xffd2f9ac) else Color(0xffb9e38c)).pointerInput(paused) {
+        }.clip(RoundedCornerShape(Ui.cornerLarge)).background(if (held) Ui.buttonHeld else Ui.button).pointerInput(paused) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 try {
@@ -1165,7 +1214,7 @@ class MainActivity : ComponentActivity() {
                     do { val event = awaitPointerEvent(); val change = event.changes.firstOrNull { it.id == down.id } ?: break; change.consume() } while (change.pressed)
                 } finally { input.touch = input.touch and bit.inv(); held = false }
             }
-        }, contentAlignment = Alignment.Center) { Text(label, color = Color(0xff203018), fontSize = (size * if (label.length == 1) 0.37f else 0.2f).sp, fontWeight = FontWeight.Bold) }
+        }, contentAlignment = Alignment.Center) { Text(label, color = Ui.onButton, fontSize = (size * if (label.length == 1) 0.37f else 0.2f).sp, fontWeight = FontWeight.Bold) }
     }
 }
 
@@ -1186,20 +1235,3 @@ private const val OVERLAY_IDLE = 5_000L
 // second whole multiple rather than showing a postage stamp in a wide border.
 private const val PREVIEW_WIDTH = 640
 private const val PREVIEW_HEIGHT = 480
-
-private fun cornerIcon(name: String, path: String): ImageVector = ImageVector.Builder(
-    name = name,
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).addPath(PathParser().parsePathString(path).toNodes(), fill = SolidColor(Color.White)).build()
-
-private val ENTER_FULLSCREEN = cornerIcon(
-    "EnterFullscreen",
-    "M7,14H5v5h5v-2H7V14zM5,10h2V7h3V5H5V10zM17,17h-3v2h5v-5h-2V17zM14,5v2h3v3h2V5H14z",
-)
-private val EXIT_FULLSCREEN = cornerIcon(
-    "ExitFullscreen",
-    "M5,16h3v3h2v-5H5V16zM8,8H5v2h5V5H8V8zM14,19h2v-3h3v-2h-5V19zM16,8V5h-2v5h5V8H16z",
-)

@@ -30,7 +30,7 @@ import java.io.File
         file?.takeIf { it.exists() }?.let { runCatching { BitmapFactory.decodeFile(it.path) }.getOrNull() }?.asImageBitmap()
     }
     Box(
-        modifier.background(Brush.linearGradient(listOf(Color(0xff3b5a43), Color(0xff243349)))),
+        modifier.background(Brush.linearGradient(listOf(Color(0xff3b5a43), Color(0xff21301f)))),
         contentAlignment = Alignment.Center,
     ) {
         if (image != null) Image(image, "$title cover", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)

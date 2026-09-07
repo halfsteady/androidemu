@@ -59,7 +59,7 @@ class PlayFlowTest {
             compose.onNodeWithText("Menu").performClick()
             awaitText("Take your time")
             compose.waitUntil(60_000) { library.state(game, -1).exists() }
-            compose.onNodeWithText("Save states · 10 slots").performClick()
+            compose.onNodeWithText("Save states").performClick()
             compose.onAllNodesWithText("Save")[0].performClick()
             awaitText("Saved to slot 1.")
             compose.onNodeWithText("Got it").performClick()
@@ -133,8 +133,7 @@ class PlayFlowTest {
             back5.assertIsNotEnabled()
             compose.waitUntil(60_000) { runCatching { back5.assertIsEnabled() }.isSuccess }
             back5.performClick()
-            compose.onNodeWithContentDescription("Time control. Drag left to rewind, right to fast-forward. The further from the middle, the faster.")
-                .assertIsDisplayed()
+            compose.onNodeWithContentDescription(timeControl).assertIsDisplayed()
         }
     }
 
@@ -223,7 +222,9 @@ class PlayFlowTest {
         library.add(id, "Shelf Archive", bytes)
         ActivityScenario.launch(MainActivity::class.java).use {
             awaitText("Shelf Archive")
-            compose.onNodeWithText("Put away").performClick()
+            compose.onNodeWithContentDescription("More for Shelf Archive").performClick()
+            awaitText("Put this away")
+            compose.onNodeWithText("Put this away").performClick()
             awaitText("is put away.", substring = true)
             compose.onNodeWithText("Got it").performClick()
             compose.waitUntil(10_000) { !showing("Shelf Archive") }
