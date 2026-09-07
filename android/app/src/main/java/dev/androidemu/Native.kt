@@ -6,6 +6,11 @@ object Native {
     init { System.loadLibrary("nes_android") }
     external fun frameRate(): Float
     external fun load(rom: ByteArray): String
+    /**
+     * Plain sentences for whatever the loaded ROM's header had to have corrected.
+     * Empty when the header was believed as written.
+     */
+    external fun headerNotes(): Array<String>
     external fun frame(buffer: ByteBuffer, p1: Int, p2: Int, advance: Boolean)
     /** Steps one frame back and paints it. False once there is nothing left to undo. */
     external fun rewind(buffer: ByteBuffer): Boolean

@@ -20,7 +20,7 @@ is built, tested, signed and published by GitHub Actions — see
 | Component | Current implementation |
 |---|---|
 | CPU and bus | All opcodes, cycle-based accesses, interrupt polling, OAM and DMC DMA |
-| Cartridges | iNES/NES 2.0, payload identity, mappers 0/1/2/3/4/7/66, battery RAM |
+| Cartridges | iNES/NES 2.0, payload identity, header repair and override table, mappers 0/1/2/3/4/7/66, battery RAM |
 | PPU | Background/sprite pixels, scrolling, clipping, priority, sprite 0 hit, NTSC/PAL/Dendy timing |
 | APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
@@ -94,6 +94,14 @@ neither is present:
 
 ```sh
 python3 scripts/check-shaders.py
+```
+
+Header corrections are generated from ROMs you have rather than shipped as
+unverified data — see [the header database](docs/HEADER-DATABASE.md):
+
+```sh
+python3 scripts/build-header-db.py --self-test
+python3 scripts/build-header-db.py --roms ~/roms --db corrections.tsv
 ```
 
 The build needs Rust, a JDK 17 or newer, Android SDK 36 and NDK 28.2.13676358.

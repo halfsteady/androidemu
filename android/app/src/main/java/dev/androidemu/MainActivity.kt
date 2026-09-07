@@ -30,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
@@ -122,6 +124,21 @@ class MainActivity : ComponentActivity() {
     }
     private var fullscreen by mutableStateOf(false)
     private var fullscreenTouch by mutableStateOf(false)
+    /**
+     * Whether the full-screen chrome is on show. A tap on the picture toggles it,
+     * and it stands down by itself after [OVERLAY_IDLE] of nothing happening, so
+     * a game being played never keeps a menu bar over it.
+     *
+     * This governs the things drawn *over* the picture. The touch controls are a
+     * deliberate choice that takes layout space, so they are not on this timer:
+     * resizing the play area every five seconds would be worse than a bar.
+     */
+    private var overlays by mutableStateOf(true)
+    // Not Compose state on purpose: every pointer event touches this, and waking
+    // a recomposition per touch move to run a timer would be silly.
+    @Volatile private var lastTouch = 0L
+    private fun touched() { lastTouch = SystemClock.uptimeMillis() }
+    private fun showOverlays() { overlays = true; touched() }
     private var mapping by mutableStateOf(false)
     private var mappingStep by mutableStateOf(0)
     private var mappingName by mutableStateOf("")
@@ -129,6 +146,7 @@ class MainActivity : ComponentActivity() {
     private val mapButtons = listOf("A" to 1, "B" to 2, "Select" to 4, "Start" to 8)
     private fun applyFullscreen(value: Boolean) {
         fullscreen = value
+        showOverlays()
         val bars = WindowCompat.getInsetsController(window, window.decorView)
         bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (value) bars.hide(WindowInsetsCompat.Type.systemBars()) else bars.show(WindowInsetsCompat.Type.systemBars())
@@ -310,6 +328,12 @@ class MainActivity : ComponentActivity() {
         if (auto.exists()) runCatching { Native.restore(auto.readBytes(), false) }.onFailure {
             warning = "This game had to start from an earlier point."
             detail = "The automatic save couldn't be opened: ${it.message}. It started from the battery save; manual save slots are unaffected."
+        }
+        // A header that had to be corrected is usually the reason a game looks
+        // wrong, so it is recorded rather than fixed silently. Not shown as a
+        // dialog: the game plays, and this is for whoever goes looking later.
+        runCatching { Native.headerNotes() }.getOrNull()?.forEach {
+            library.logProblem("Header corrected for ${selected.title}.", it)
         }
         surface.setGameFrameRate(Native.frameRate())
         activeGame = selected
@@ -493,8 +517,23 @@ class MainActivity : ComponentActivity() {
         // The end-of-tape notice says its piece and goes, rather than sitting
         // there until the next rewind.
         LaunchedEffect(rewindAtStart) { if (rewindAtStart) { delay(2200); rewindAtStart = false } }
+        // The idle clock. Observed at the Initial pass and never consumed, so
+        // every gesture below still behaves exactly as it did.
+        val watchTouches = Modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) { awaitPointerEvent(PointerEventPass.Initial); touched() }
+            }
+        }
+        // One ticker while the chrome could be up, rather than a coroutine
+        // restarted on every touch move.
+        LaunchedEffect(fullscreen, paused, game) {
+            while (fullscreen && !paused && game != null) {
+                delay(500)
+                if (overlays && SystemClock.uptimeMillis() - lastTouch > OVERLAY_IDLE) overlays = false
+            }
+        }
         Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onSurface) {
-        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding().then(watchTouches)) {
             // Keep the GL thread attached while the library is visible so imports
             // and state operations have a single serialized execution queue.
             Column(Modifier.fillMaxSize()) {
@@ -504,17 +543,27 @@ class MainActivity : ComponentActivity() {
                     BarButton(ENTER_FULLSCREEN, "Full screen", !busy) { applyFullscreen(true) }
                     BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 }
-                AndroidView(factory = { surface }, modifier = Modifier.weight(1f).fillMaxWidth())
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
+                    // In full screen the picture is the control: a tap brings the
+                    // chrome back, and a second tap sends it away again. Only a
+                    // tap, so a stray finger during play does nothing.
+                    if (fullscreen && !paused) Box(
+                        Modifier.fillMaxSize().pointerInput(Unit) {
+                            detectTapGestures { if (overlays) overlays = false else showOverlays() }
+                        }
+                    )
+                }
                 if (game != null && (!fullscreen || fullscreenTouch)) TouchControls()
             }
-            if (game != null && fullscreen && !paused) Row(Modifier.align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.7f))) {
+            if (game != null && fullscreen && !paused && overlays) Row(Modifier.align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.7f))) {
                 BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 BarButton(null, if (fullscreenTouch) "Hide controls" else "Touch controls") { fullscreenTouch = !fullscreenTouch }
                 BarButton(EXIT_FULLSCREEN, "Exit full screen") { applyFullscreen(false) }
             }
             // Full screen with the controls hidden still needs the time control,
             // so it gets a compact copy of the same track.
-            if (game != null && fullscreen && !fullscreenTouch && !paused) Row(
+            if (game != null && fullscreen && !fullscreenTouch && !paused && overlays) Row(
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -578,7 +627,9 @@ class MainActivity : ComponentActivity() {
      * replaced a pair of hold buttons: two things that were really one axis.
      *
      * The centre is dead ([Scrub.DEAD_ZONE]) so a thumb resting slightly off
-     * centre does not creep the game along.
+     * centre does not creep the game along. At rest the handle shows a pause
+     * glyph and tapping it pauses — it read as a pause button before it was one,
+     * which is the kind of lie an interface should not tell.
      */
     @Composable private fun TimeScrubber(modifier: Modifier = Modifier, side: Int = 68) {
         var fraction by remember { mutableFloatStateOf(0f) }
@@ -591,26 +642,41 @@ class MainActivity : ComponentActivity() {
         BoxWithConstraints(
             modifier.height(side.dp).clip(RoundedCornerShape((side / 2).dp)).background(Color(0xff1b2430))
                 .pointerInput(game) {
+                    // The handle carries a pause glyph, so it pauses: a press on
+                    // it that never turns into a drag is a tap on that button.
+                    // Anywhere else on the track is a scrub from the first touch,
+                    // which is why the handle is the only part that can pause.
+                    val handle = (side - 12).dp.toPx() / 2f
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        val onHandle = kotlin.math.abs(down.position.x - size.width / 2f) <= handle
+                        var dragged = false
                         try {
                             var x = down.position.x
                             do {
-                                val f = ((x / size.width) * 2f - 1f).coerceIn(-1f, 1f)
-                                fraction = f
-                                applyScrub(Scrub.speed(f))
+                                if (kotlin.math.abs(x - down.position.x) > viewConfiguration.touchSlop) dragged = true
+                                if (dragged || !onHandle) {
+                                    val f = ((x / size.width) * 2f - 1f).coerceIn(-1f, 1f)
+                                    fraction = f
+                                    applyScrub(Scrub.speed(f))
+                                }
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 change.consume(); x = change.position.x
                             } while (change.pressed)
-                        } finally { fraction = 0f; applyScrub(0) }
+                        } finally {
+                            fraction = 0f
+                            applyScrub(0)
+                            if (onHandle && !dragged) pause()
+                        }
                     }
                 }
                 .semantics {
                     role = Role.Button
-                    contentDescription = "Time control. Drag left to rewind, right to fast-forward. The further from the middle, the faster."
+                    contentDescription = "Time control. Drag left to rewind, right to fast-forward — the further from the middle, the faster. Tap the handle to pause."
                     stateDescription = Scrub.label(speed)
                     customActions = listOf(
+                        CustomAccessibilityAction("Pause") { pause(); true },
                         CustomAccessibilityAction("Back five seconds") { skipBack(5); true },
                         CustomAccessibilityAction("Back fifteen seconds") { skipBack(15); true },
                     )
@@ -952,6 +1018,9 @@ private fun playtime(seconds: Long): String? = when {
 
 /** Box art is decoded to fill a tile a few hundred dp wide; this is ample. */
 private const val ART_MAX_EDGE = 1024f
+
+/** How long the full-screen chrome waits before standing down. */
+private const val OVERLAY_IDLE = 5_000L
 
 // The settings preview buffer. 4:3, and tall enough that pixel-perfect reaches a
 // second whole multiple rather than showing a postage stamp in a wide border.

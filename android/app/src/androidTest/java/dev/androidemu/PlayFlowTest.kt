@@ -136,6 +136,50 @@ class PlayFlowTest {
         }
     }
 
+    private val timeControl =
+        "Time control. Drag left to rewind, right to fast-forward — the further from the middle, the faster. Tap the handle to pause."
+
+    /**
+     * The handle carries a pause glyph, so tapping it has to pause. It read as a
+     * pause button before it was one, which is the bug this pins shut.
+     */
+    @Test fun tappingTheTimeControlHandlePauses() {
+        val library = Library(context)
+        val bytes = rom(); val id = Native.load(bytes)
+        library.add(id, "Handle Test", bytes)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitText("Handle Test")
+            compose.onNodeWithText("Handle Test").performClick()
+            // Opening a game resumes it, so the pause panel is not up yet.
+            awaitText("Menu")
+            compose.onAllNodesWithText("Take your time").assertCountEquals(0)
+            // A tap lands at the node centre, which at rest is the handle.
+            compose.onNodeWithContentDescription(timeControl).performTouchInput { click() }
+            awaitText("Take your time")
+        }
+    }
+
+    /** In full screen the picture is the control: a tap shows the chrome, a tap hides it. */
+    @Test fun tappingTheScreenTogglesTheFullScreenChrome() {
+        val library = Library(context)
+        val bytes = rom(); val id = Native.load(bytes)
+        library.add(id, "Chrome Test", bytes)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitText("Chrome Test")
+            compose.onNodeWithText("Chrome Test").performClick()
+            awaitText("Full screen")
+            compose.onNodeWithText("Full screen").performClick()
+            // The full-screen chrome starts up, so there is something to hide.
+            awaitText("Exit full screen")
+            compose.onNodeWithContentDescription(timeControl).assertIsDisplayed()
+            // The tap layer sits over the picture, which is the centre of the root.
+            compose.onRoot().performTouchInput { click() }
+            compose.waitUntil(10_000) { !showing("Exit full screen") }
+            compose.onRoot().performTouchInput { click() }
+            awaitText("Exit full screen")
+        }
+    }
+
     /** Box art outranks the screenshot, and removing it falls back rather than blanks. */
     @Test fun chosenBoxArtOutranksTheSavedScreenshot() {
         val library = Library(context)

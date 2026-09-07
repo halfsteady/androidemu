@@ -51,6 +51,17 @@ fn main() -> ExitCode {
             println!("battery      {}", h.battery);
             println!("region       {:?}", h.region);
             println!("hash         {:016x}", h.hash);
+            println!("identity     {:016x}", h.identity);
+            // The header a ROM ships with is often not the board it came off, so
+            // say what had to be corrected rather than quietly correcting it.
+            if h.fixes.is_empty() {
+                println!("header       as written");
+            } else {
+                println!("header       corrected:");
+                for label in h.fixes.labels() {
+                    println!("             - {label}");
+                }
+            }
         }
         "trace" => {
             let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100);

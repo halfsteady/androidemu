@@ -1,7 +1,7 @@
 //! Android JNI boundary. The machine has one owner and never runs in the audio callback.
 use jni::{
     objects::{JByteArray, JByteBuffer, JClass},
-    sys::{jboolean, jbyteArray, jfloat, jint, jstring},
+    sys::{jboolean, jbyteArray, jfloat, jint, jobjectArray, jstring},
     JNIEnv,
 };
 use nes_core::{rewind::Rewind, Buttons, Nes};
@@ -45,6 +45,52 @@ const PALETTE: [u32; 64] = [
     0xfbc2ff, 0xfec4ea, 0xfeccc5, 0xf7d8a5, 0xe4e594, 0xcfef96, 0xbdf4ab, 0xb3f3cc, 0xb5ebf2,
     0xb8b8b8, 0, 0,
 ];
+/// What the loaded ROM's header had to have corrected, one plain sentence each.
+///
+/// A repaired header is usually the reason a game looks wrong, so the app keeps
+/// these in its problem log rather than fixing things silently.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_headerNotes(
+    mut env: JNIEnv,
+    _: JClass,
+) -> jobjectArray {
+    let notes: Vec<&'static str> = match MACHINE.lock().unwrap().as_ref() {
+        Some(nes) => nes.bus.cart.header.fixes.labels().collect(),
+        None => Vec::new(),
+    };
+    let class = match env.find_class("java/lang/String") {
+        Ok(class) => class,
+        Err(e) => {
+            error(&mut env, e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let empty = match env.new_string("") {
+        Ok(s) => s,
+        Err(e) => {
+            error(&mut env, e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let array = match env.new_object_array(notes.len() as i32, &class, &empty) {
+        Ok(array) => array,
+        Err(e) => {
+            error(&mut env, e.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    for (at, note) in notes.iter().enumerate() {
+        match env.new_string(note).and_then(|s| env.set_object_array_element(&array, at as i32, s)) {
+            Ok(()) => {}
+            Err(e) => {
+                error(&mut env, e.to_string());
+                return std::ptr::null_mut();
+            }
+        }
+    }
+    array.into_raw()
+}
+
 #[no_mangle]
 pub extern "system" fn Java_dev_androidemu_Native_load(
     mut env: JNIEnv,

@@ -58,7 +58,7 @@ The core is a pure function of `(state, input) -> (state, framebuffer, samples)`
 
 ### Cartridges
 - iNES + NES 2.0 header parsing
-- **Header override database** keyed by ROM hash — a large fraction of ROMs in the wild have wrong headers, and this is the difference between "works" and "the graphics are garbage"
+- **Header override database** keyed by ROM hash — a large fraction of ROMs in the wild have wrong headers, and this is the difference between "works" and "the graphics are garbage". Built: repairs the file itself proves are always applied and reported; the hash-keyed table ships empty and is generated from ROMs you have. See [the header database](docs/HEADER-DATABASE.md).
 - Battery-backed SRAM persisted per game
 - Region detect: NTSC / PAL / Dendy, with per-game override
 

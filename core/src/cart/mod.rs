@@ -1,12 +1,14 @@
 //! Cartridge loading: iNES / NES 2.0 header parsing and mapper construction.
 //!
 //! A large fraction of ROMs in circulation carry wrong headers. Everything the
-//! header claims is therefore treated as a *hint*: `Cartridge::load` records the
-//! ROM hash so a future override table (see PLAN.md §1) can correct it before the
-//! mapper is built.
+//! header claims is therefore treated as a *hint*: it is read, then repaired
+//! against the file's own evidence, then corrected against the override database
+//! — see [`fixup`] — and only then is the mapper built from it.
 
+pub mod fixup;
 pub mod mapper;
 
+use fixup::Fixes;
 use mapper::Mapper;
 
 /// Nametable arrangement. The names are the ones the hardware docs use: `Horizontal`
@@ -74,9 +76,21 @@ pub struct Header {
     pub trainer: bool,
     pub region: Region,
     pub nes2: bool,
-    /// FNV-1a over the PRG+CHR payload, excluding the header. Stable identity for a
-    /// ROM regardless of how badly its header is mangled.
+    /// FNV-1a over the PRG+CHR payload, excluding the header.
+    ///
+    /// This is what savestates carry, so its meaning is fixed: changing it would
+    /// reject every state already on the tablet. It covers exactly the bytes the
+    /// final header describes, so a size correction does change it — which is
+    /// right, because the state then belongs to a differently configured machine.
     pub hash: u64,
+    /// FNV-1a over everything after the header and any trainer.
+    ///
+    /// The key the override database is matched on. Unlike [`Header::hash`] it
+    /// does not depend on the sizes the header claims, which matters because a
+    /// lying size is one of the things being corrected.
+    pub identity: u64,
+    /// What had to be corrected to get here.
+    pub fixes: Fixes,
 }
 
 #[derive(Clone)]
@@ -148,10 +162,9 @@ impl Cartridge {
             if prg_ram_size == 0 {
                 prg_ram_size = 8 * 1024;
             }
-        } else if flags7 & 0x0C == 0x04 {
-            // Archaic iNES: bytes 7-15 are garbage from a long-dead ripping tool.
-            mapper &= 0x0F;
         }
+        // Archaic headers are detected and corrected in one place, by
+        // `fixup::repair`, so that every correction gets reported.
 
         let prg_rom_size = prg_exponent.unwrap_or(prg_banks * 16 * 1024);
         let chr_rom_size = chr_exponent.unwrap_or(chr_banks * 8 * 1024);
@@ -169,39 +182,15 @@ impl Cartridge {
             Mirroring::Horizontal
         };
 
-        let mut off: usize = 16;
-        if trainer {
-            off += 512;
-        }
-        let payload_end = off
-            .checked_add(prg_rom_size)
-            .and_then(|end| end.checked_add(chr_rom_size))
-            .ok_or(CartError::InvalidHeader("ROM size overflow"))?;
-        if payload_end > bytes.len() {
+        let payload_start: usize = if trainer { 16 + 512 } else { 16 };
+        if payload_start > bytes.len() {
             return Err(CartError::TooShort);
         }
-        if prg_rom_size == 0 {
-            return Err(CartError::InvalidHeader("Game has no program ROM"));
-        }
-        let payload_start = off;
+        // Computed before anything is corrected, and over the whole remainder of
+        // the file, so it identifies the ROM no matter what its header claims.
+        let identity = fnv1a(&bytes[payload_start..]);
 
-        let prg = bytes[off..off + prg_rom_size].to_vec();
-        off += prg_rom_size;
-
-        // A CHR ROM size of zero means the board carries CHR *RAM* instead.
-        let chr = if chr_rom_size == 0 {
-            Vec::new()
-        } else {
-            let end = off + chr_rom_size;
-            bytes[off..end].to_vec()
-        };
-        if chr_rom_size == 0 && chr_ram_size == 0 {
-            chr_ram_size = 8 * 1024;
-        }
-
-        let hash = fnv1a(&bytes[payload_start..payload_end]);
-
-        let header = Header {
+        let mut header = Header {
             mapper,
             submapper,
             prg_rom_size,
@@ -213,8 +202,39 @@ impl Cartridge {
             trainer,
             region,
             nes2,
-            hash,
+            hash: 0,
+            identity,
+            fixes: Fixes::NONE,
         };
+
+        // What the file itself proves, then what only a database can know.
+        let mut fixes = fixup::repair(&mut header, bytes, payload_start);
+        fixes |= fixup::apply_table(&mut header);
+        header.fixes = fixes;
+
+        let payload_end = payload_start
+            .checked_add(header.prg_rom_size)
+            .and_then(|end| end.checked_add(header.chr_rom_size))
+            .ok_or(CartError::InvalidHeader("ROM size overflow"))?;
+        if payload_end > bytes.len() {
+            return Err(CartError::TooShort);
+        }
+        if header.prg_rom_size == 0 {
+            return Err(CartError::InvalidHeader("Game has no program ROM"));
+        }
+
+        let mut off = payload_start;
+        let prg = bytes[off..off + header.prg_rom_size].to_vec();
+        off += header.prg_rom_size;
+
+        // A CHR ROM size of zero means the board carries CHR *RAM* instead.
+        let chr = if header.chr_rom_size == 0 {
+            Vec::new()
+        } else {
+            bytes[off..off + header.chr_rom_size].to_vec()
+        };
+
+        header.hash = fnv1a(&bytes[payload_start..payload_end]);
 
         let mapper = mapper::build(&header, prg, chr)?;
         Ok(Cartridge { header, mapper })
