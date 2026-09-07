@@ -204,6 +204,35 @@ stops the check lying on art nobody has drawn yet:
   shallow diagonal staircase is exactly a sequence of one-line pinches. It is
   kept for the concept that would hit it next.
 
+## The one that got past every check
+
+`v0.2.3-rc2` through `rc4` shipped a launcher icon that was a **grey disc** on
+the tablet — the four colour quadrants gone, only the sprite showing. Every one
+of the eight checks was green the whole time.
+
+`to_avd` dropped `stop-opacity` when converting a gradient. An Android gradient
+item has no separate alpha attribute, so the only place it can carry one is the
+colour, and nothing folded it in:
+
+```
+SVG    <stop offset="0" stop-color="#ffffff" stop-opacity="0.09"/>
+AVD    <item android:offset="0" android:color="#ffffff" />
+```
+
+So the vignette — 9% white to 26% black — became an **opaque** white-to-black
+radial painted over all four quadrants. It affected all five concepts, not just
+the one that shipped.
+
+**Why nothing caught it: checks 1–8 measure rasters Chrome renders from the
+SVG, and the SVG was right.** Not one of them ever opened the Android drawable.
+The whole apparatus was measuring the artwork and none of it was measuring the
+thing the phone actually loads.
+
+**Check 9** compares the two files directly — every colour the SVG paints, with
+its effective alpha, against every colour the drawable paints. It fails on all
+five concepts if the conversion is reverted, which is how it was verified;
+a check nobody has watched fail is not yet a check.
+
 ## One measurement that did not work
 
 `validate.py` check **5b** re-runs check 5's subject-vs-ground contrast at

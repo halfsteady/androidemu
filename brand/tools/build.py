@@ -130,6 +130,26 @@ def rasterize(svg_path: Path, size: int, out: Path) -> Image.Image:
 
 # ------------------------------------------------------------- SVG -> Android
 
+def _stop_colour(stop) -> str:
+    """A gradient stop as #RRGGBBAA, folding in stop-opacity.
+
+    An Android gradient item has no separate alpha attribute -- the only place
+    it can carry one is the colour. Dropping stop-opacity here silently turned
+    the launcher background's 9%-white-to-26%-black vignette into an OPAQUE
+    white-to-black radial painted over all four colour quadrants, which is what
+    shipped in v0.2.3-rc2 through rc4: on the tablet the icon read as a grey
+    disc with a sprite on it and none of the colour underneath.
+
+    Nothing caught it because every check measures rasters rendered from the
+    SVG, and the SVG was right. See check 9, which exists because of this.
+    """
+    col = stop.get("stop-color") or "#000000"
+    a = stop.get("stop-opacity")
+    if a in (None, "") or _num(a, 1.0) >= 1.0 or len(col) == 9:
+        return col
+    return col + "%02x" % max(0, min(255, round(_num(a, 1.0) * 255)))
+
+
 def _color(v: str) -> str:
     """SVG writes alpha last (#RRGGBBAA); Android writes it first (#AARRGGBB)."""
     if re.fullmatch(r"#[0-9a-fA-F]{8}", v or ""):
@@ -184,7 +204,7 @@ def _gradients(root):
                          "Android gradient has no object bounding box to map onto"
                          % g.get("id"))
             out[g.get("id")] = (kind, g.attrib,
-                                [(_num(s.get("offset")), s.get("stop-color"))
+                                [(_num(s.get("offset")), _stop_colour(s))
                                  for s in g.iter(SVG + "stop")])
     return out
 

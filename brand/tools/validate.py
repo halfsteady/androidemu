@@ -29,6 +29,7 @@ that hole is a dead pixel.
 import math
 import os
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image
@@ -307,6 +308,63 @@ def channels(fg_432, sizes=(48, 32)):
     return len(out), gap_px * 108.0 / w, alphas
 
 
+def _paint_set(rgb_alpha_pairs):
+    """A layer's paints as a sorted multiset of (RRGGBB, alpha to 2dp)."""
+    return sorted((c.lower(), round(a, 2)) for c, a in rgb_alpha_pairs)
+
+
+def svg_paints(path):
+    """Every colour the SVG paints, with its effective alpha."""
+    root = ET.parse(path).getroot()
+    NS = "{http://www.w3.org/2000/svg}"
+    out = []
+
+    def add(col, opacity):
+        if not col or col.startswith("url(") or col == "none":
+            return
+        a = 1.0 if opacity in (None, "") else float(opacity)
+        if len(col) == 9:                      # #RRGGBBAA
+            a *= int(col[7:9], 16) / 255.0
+            col = col[:7]
+        out.append((col[1:], a))
+
+    for el in root.iter():
+        tag = el.tag.replace(NS, "")
+        if tag == "stop":
+            add(el.get("stop-color"), el.get("stop-opacity"))
+        elif tag not in ("svg", "defs", "linearGradient", "radialGradient",
+                         "clipPath", "g"):
+            add(el.get("fill"), el.get("fill-opacity"))
+            add(el.get("stroke"), el.get("stroke-opacity"))
+    return _paint_set(out)
+
+
+def avd_paints(path):
+    """Every colour the Android vector drawable paints, with its alpha."""
+    root = ET.parse(path).getroot()
+    A = "{http://schemas.android.com/apk/res/android}"
+    out = []
+
+    def add(col, alpha):
+        if not col:
+            return
+        a = 1.0 if alpha in (None, "") else float(alpha)
+        col = col.lstrip("#")
+        if len(col) == 8:                      # AARRGGBB
+            a *= int(col[0:2], 16) / 255.0
+            col = col[2:]
+        out.append((col, a))
+
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]
+        if tag == "item":
+            add(el.get(A + "color"), None)
+        elif tag == "path":
+            add(el.get(A + "fillColor"), el.get(A + "fillAlpha"))
+            add(el.get(A + "strokeColor"), el.get(A + "strokeAlpha"))
+    return _paint_set(out)
+
+
 def main():
     slugs = sorted(p.name for p in (ROOT / "concepts").iterdir() if p.is_dir())
 
@@ -512,6 +570,31 @@ def main():
         verdict = "clear" if worst < 96 else ("part" if worst < 176 else "MERGED")
         print("  %-18s %2d channels, tightest %.2fdp -> alpha %3d@48px %3d@32px  %s"
               % (slug, n, gap, al[48], al[32], verdict))
+
+    print("\n## 9. The Android drawable still says what the SVG said")
+    print("     Checks 1-8 all measure rasters rendered from the SVG by Chrome,")
+    print("     so every one of them passes on art the CONVERSION has broken.")
+    print("     v0.2.3-rc2 shipped that way: to_avd dropped stop-opacity, and a")
+    print("     9%-white-to-26%-black vignette became an opaque white-to-black")
+    print("     radial over all four colour quadrants. On the tablet the icon was")
+    print("     a grey disc. Every check was green. This compares the two files.")
+    for slug in slugs:
+        for layer in ("background", "foreground", "monochrome"):
+            svg = ROOT / "concepts" / slug / ("adaptive-%s.svg" % layer)
+            avd = ROOT / "android" / slug / "drawable" / ("ic_launcher_%s.xml" % layer)
+            if not avd.exists():
+                continue
+            want, got = svg_paints(svg), avd_paints(avd)
+            # The monochrome layer is deliberately retinted flat white on the way
+            # out, so compare its alphas only; the other two must match exactly.
+            if layer == "monochrome":
+                want = sorted(a for _, a in want)
+                got = sorted(a for _, a in got)
+            if want != got:
+                fail(9, "%s %s: SVG paints %s, drawable paints %s"
+                     % (slug, layer, want, got))
+            else:
+                print("  pass %-18s %-11s %d paints match" % (slug, layer, len(got)))
 
     print("\n### %d failures" % len(fails))
     for f in fails:
