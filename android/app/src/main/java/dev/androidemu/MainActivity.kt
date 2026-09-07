@@ -199,11 +199,40 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { previewSample = copy }
             }
         } else {
-            previewSample = savedMoment() ?: framebufferOf(SampleFrame.pixels())
+            // A saved screenshot is finished colour and cannot be restained, so
+            // when a palette is being chosen the built pattern is the honest
+            // thing to show.
+            previewSample =
+                if (settings.palette == Palette.Standard) savedMoment() ?: framebufferOf(SampleFrame.pixels(settings.paletteColours()))
+                else framebufferOf(SampleFrame.pixels(settings.paletteColours()))
         }
     }
     /** Lets go of the preview buffers; the next open captures a fresh sample. */
     private fun closeSettings() { showSettings = false; previewImage = null; previewSample = null }
+
+    /**
+     * Hands the core the chosen colours and repaints whatever is on screen.
+     *
+     * A palette is a lookup the core was doing anyway, so this costs nothing per
+     * frame — but a paused game has already painted its last frame, and a preview
+     * built from a captured buffer holds colour rather than indices. Both have to
+     * be asked for again, or the choice appears to do nothing until play resumes.
+     */
+    private fun applyPalette() {
+        val bytes = settings.paletteBytes()
+        surface.task { Native.setPalette(bytes) }
+        if (game != null && surface.loaded) {
+            surface.task {
+                Native.repaint(shot)
+                val copy = ByteBuffer.allocateDirect(shot.capacity()).order(ByteOrder.nativeOrder())
+                shot.position(0); copy.put(shot); copy.position(0); shot.position(0)
+                runOnUiThread { previewSample = copy }
+            }
+            surface.requestRender()
+        } else if (showSettings) {
+            previewSample = framebufferOf(SampleFrame.pixels(settings.paletteColours()))
+        }
+    }
     private fun framebufferOf(pixels: ByteArray): ByteBuffer =
         ByteBuffer.allocateDirect(pixels.size).order(ByteOrder.nativeOrder()).put(pixels).also { it.position(0) }
     /** The newest thumbnail on the shelf, scaled to a framebuffer. */
@@ -264,6 +293,25 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { runOnUiThread { game = null }; throw e }
         }
     }
+    /**
+     * A `.pal` file: 192 bytes of RGB, the format every published NES palette
+     * comes in. Longer files carry the emphasis variants and are accepted, since
+     * the first 64 colours are the part the core can use today.
+     */
+    private val importPalette = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            val bytes = library.readBytes(uri)
+            PaletteModel.parse(bytes) ?: error("A .pal file is at least 192 bytes; this one is ${bytes.size}")
+            settings.importedPalette = bytes
+            settings.palette = Palette.File
+            applyPalette()
+            message = "Palette loaded."
+        } catch (e: Exception) {
+            report("That palette file didn't work.", e.message)
+        }
+    }
+
     // Box art is a picture chosen by hand, downscaled on the way in so the shelf
     // never decodes a 12-megapixel photo to fill a 240 dp tile.
     private val importArt = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -535,6 +583,10 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(settings.aspect, settings.trimEdges, settings.filter) {
             surface.setPicture(settings.aspect, settings.trimEdges, settings.filter)
         }
+        // Colour is pushed to the core rather than to the GL context: the core
+        // paints indices into RGB and this is the table it reads. Once on first
+        // composition, so a chosen palette survives being closed and reopened.
+        LaunchedEffect(settings.palette, settings.importedPalette) { applyPalette() }
         // The skip-back buttons grey out when the chain is too short to honour
         // them, so the depth has to be known while a game is open.
         LaunchedEffect(game) {
@@ -835,7 +887,7 @@ class MainActivity : ComponentActivity() {
                     Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     SectionLabel("Picture")
                     // Redrawn whenever a choice that affects it changes.
-                    LaunchedEffect(previewSample, settings.aspect, settings.trimEdges, settings.filter) { renderPreview() }
+                    LaunchedEffect(previewSample, settings.aspect, settings.trimEdges, settings.filter, settings.palette) { renderPreview() }
                     Box(
                         Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp)).background(Color.Black),
                         contentAlignment = Alignment.Center,
@@ -851,13 +903,30 @@ class MainActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     ChoiceRow("Shape", Aspect.entries.map { it.label }, settings.aspect.ordinal) { settings.aspect = Aspect.entries[it] }
-                    ChoiceRow("Look", Filter.entries.map { it.label }, settings.filter.ordinal) { settings.filter = Filter.entries[it] }
+                    ChoiceRow("Look", Filter.entries.map { it.label }, Filter.entries.indexOf(settings.filter)) { settings.filter = Filter.entries[it] }
                     Text(
                         settings.filter.note,
                         Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    // Colour is its own choice, not part of the look: you might
+                    // want Composite with one set of colours and Cartoon with
+                    // another, and folding them together would multiply the list.
+                    ChoiceRow("Colours", Palette.entries.map { it.label }, Palette.entries.indexOf(settings.palette)) { chosen ->
+                        val palette = Palette.entries[chosen]
+                        if (palette == Palette.File && settings.importedPalette == null) importPalette.launch(arrayOf("*/*"))
+                        else { settings.palette = palette; applyPalette() }
+                    }
+                    Text(
+                        settings.palette.note,
+                        Modifier.padding(start = 12.dp, top = 2.dp, bottom = 6.dp),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (settings.palette == Palette.File) {
+                        SettingRow("Palette file", "Replace", "Load a different .pal file") { importPalette.launch(arrayOf("*/*")) }
+                    }
                     SettingRow("Trim the edges", onOff(settings.trimEdges), "Hides the ${Picture.TRIM} rows a television lost to overscan") {
                         settings.trimEdges = !settings.trimEdges
                     }

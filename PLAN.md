@@ -108,10 +108,10 @@ range, each one earning its place. A look that is only another look with a knob
 turned does not get a slot. Parameters live one panel deeper, per §9.
 
 - CRT family: scanlines, aperture grille, shadow mask, curvature, bloom, `crt-easymode` and `crt-lottes` ports
-- **NTSC composite filter** (blargg's nes-ntsc): the big one. Makes dithering blend and Zelda's waterfalls look the way they actually looked, rather than the way the raw framebuffer looks. Do it as a GPU signal pass, not blargg's CPU lookup table — that costs about a millisecond in the just-in-time frame path, which is the latency §2 just spent a release buying back.
+- **Composite** — built. A GPU signal pass rather than blargg's CPU lookup table, which would cost about a millisecond in the just-in-time frame path and give back the latency §2 spent a release buying. Encode and decode happen in one shader so the signal is never stored at 8 bits. Flat colours round-trip exactly; a column dither of two hues blends to the colour between them with a ripple of 1 in 255, while a dither of two brightnesses correctly survives — chroma is carried at a fraction of luma's bandwidth, and that asymmetry is the whole effect. Working on RGB rather than palette indices is deliberate: it is what lets the palette picker below keep meaning something with Composite switched on.
 - **Cartoon** — built. Edge-directed smoothing into curves, then an ink line at two weights drawn as a dark tint of the colour it runs through rather than black. No posterising step: a 2C02 frame is already flat, four colours to a tile and chosen by hand, so banding it again only walks the artist's colours onto a quantiser's grid. See below.
-- Smoothing family: Scale2x is built as the engine under Cartoon. An unstylised **Smooth** is nearly free on top of it; xBRZ ported literally is not, and should not be — a 5×5 neighbourhood with a hundred-odd branches at ~7.7 Mpx would throttle the tablet. Classify in picture space, fill in screen space.
-- **Bad cable** and **Coloring book** — cheap siblings of the two above, once each engine exists.
+- **Smooth** — built. Cartoon's engine without the stylising, and it needed no shader branch at all: a look the present shader does not recognise already draws the picture it was handed, and what it is handed is the smoothed one. xBRZ ported literally is not free and should not be attempted — a 5×5 neighbourhood with a hundred-odd branches at ~7.7 Mpx would throttle the tablet. Classify in picture space, fill in screen space.
+- **Bad cable** and **Coloring book** — cheap siblings, once each engine exists. Old TV should also take its picture from Composite rather than from the raw framebuffer; that is a one-line change nobody has looked at yet.
 - LCD/handheld look, for completeness
 
 Considered and cut: *Black and white* (Old photo with the tint thrown away),
@@ -119,23 +119,37 @@ Considered and cut: *Black and white* (Old photo with the tint thrown away),
 sheet). *Vector* and *Night light* never made the shortlist — one is unplayable
 after ten seconds, the other is a brightness control wearing a costume.
 
-**Palettes**
-- 2C02 hardware measurement, Nestopia YUV, FBX Smooth/Composite, and custom `.pal` import
-- Per-game palette override
-- A palette is an **axis, not a look**: you want Composite with FBX and Cartoon
-  with measured 2C02, so it gets its own picker rather than multiplying the shelf.
-  When Composite is on the palette is largely moot — nes-ntsc synthesises colour
-  from phase rather than reading a table — so it either feeds the encoder or greys
-  out. It must not sit there silently doing nothing.
-- Cheapest item here, but only after the framebuffer arrives as **palette indices
-  rather than RGB**. Today `native/src/lib.rs` converts on the CPU against a
-  hardcoded table; moving the lookup into the shader makes every palette a
-  256-byte upload, shrinks the per-frame upload from 245 KB to 61 KB, and is a
-  hard prerequisite for the NTSC filter, which needs index and phase.
-- Blocked on the core: **emphasis bits are not encoded** (`core/src/ppu.rs`).
-  Don't widen the framebuffer to `u16` for them — it is serialised into every
-  savestate and so into every rewind delta. A per-scanline `[u8; 240]` plane is
-  240 bytes and covers every real case (SMB3's flash, Noah's Ark, Battletoads).
+**Palettes** — built, and not the way this section first called for.
+
+- A palette is an **axis, not a look**: you want Composite with one set of colours
+  and Cartoon with another, so it has its own picker rather than multiplying the
+  shelf. Because Composite works on RGB it sits *after* the palette, so the two
+  compose instead of one overriding the other.
+- **Generated from the 2C02's own behaviour, not pasted in.** The chip emitted a
+  square wave — a two-bit level set the two voltages, a four-bit hue set the phase
+  — and a television decoded it. `PaletteModel` does exactly that, so the knobs
+  are a television's: colour, tint, contrast, brightness, gamma. `PaletteTest`
+  checks the model against the table the core ships and holds it to a mean of 9
+  in 255 per channel, well inside the spread between any two published palettes.
+- This replaces the named list this section originally asked for. **Nestopia YUV
+  and FBX Smooth/Composite are not shipped as built-ins**: they are specific
+  published tables, and pasting numbers that cannot be checked is exactly what
+  generating them avoids. `.pal` import covers them — those files are 192 bytes
+  and load in one tap.
+- Shipped: Standard (the core's own table, so upgrading restains nothing),
+  Hardware, Soft, Vivid, and From a file. Cut: a tint-drift set, because eighteen
+  degrees of hue turns a red cap magenta and a smaller shift did not earn a slot.
+- The lookup stays on the CPU in `native/src/lib.rs`, which is a reversal of the
+  earlier plan to move it into the shader. That change was justified by the NTSC
+  filter needing indices and phase; doing NTSC on RGB removes the reason, and the
+  bandwidth it would save — 245 KB a frame down to 61 KB — is not a bottleneck on
+  this device. Reconsider it if per-game palettes or emphasis make it pay.
+- Still open: **per-game override** (all picture settings are global today), and
+  **emphasis bits are not encoded** in the core (`core/src/ppu.rs`), so the
+  emphasis half of an imported `.pal` is read and ignored. Don't widen the
+  framebuffer to `u16` for them — it is serialised into every savestate and so
+  into every rewind delta. A per-scanline `[u8; 240]` plane is 240 bytes and
+  covers every real case (SMB3's flash, Noah's Ark, Battletoads).
 
 **Presets**
 - Named bundles ("Living-room CRT", "Crisp", "Amelia") so nobody has to reason about shader parameters
@@ -349,7 +363,8 @@ Phase 2 is implemented, and deliberately without the separate kid mode §9 first
 called for: a box-art shelf ordered by what was played last, one-tap resume, one
 draggable time control covering rewind and fast-forward with fixed jumps back
 beside it, chosen box art per game, picture settings (4:3 / 8:7 / pixel-perfect,
-overscan trim) and eight looks from scanlines to a cel-shaded Cartoon —
+overscan trim), ten looks from scanlines to a cel-shaded Cartoon, and a
+separate choice of colours —
 each previewed in settings by the real shader — screenshots to the device gallery,
 playtime, plain one-sentence failures with the real reason kept in a readable log,
 and autosave on pause, on background and on a low battery. Control size follows

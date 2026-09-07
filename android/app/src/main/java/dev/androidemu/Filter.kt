@@ -1,23 +1,41 @@
 package dev.androidemu
 
 /**
+ * Where a look's picture comes from before the present shader sees it.
+ *
+ * Most looks read the framebuffer straight. The ones that cannot are the ones
+ * that need to work in picture space rather than screen space, where the same
+ * work costs a hundredth as much: 61k or 246k fragments against the roughly 7.7
+ * million a full-screen pass covers on this panel.
+ */
+enum class Source {
+    /** The framebuffer as the console drew it. */
+    Direct,
+
+    /** Two scale2x steps, 4x, corners rounded off. */
+    Smoothed,
+
+    /** Encoded to a composite signal and decoded back, at four samples a pixel. */
+    Composite,
+}
+
+/**
  * A look applied to the finished framebuffer.
  *
- * Most of these are one fragment shader with a branch, so switching costs nothing
- * and there is one place to read. [Cartoon] is the exception: it needs the picture
- * smoothed before it can be inked, so it asks for the source passes in
- * [ScreenRenderer] first.
+ * Most of these are one fragment shader with a branch, so switching costs
+ * nothing and there is one place to read. A look that needs its picture prepared
+ * first names a [Source] instead, and [ScreenRenderer] runs that off-screen
+ * before presenting.
  *
- * [id] is what gets written to preferences, not the ordinal. A look that turns out
- * not to earn its place can then be removed without silently changing the look
- * everybody after it in the list is using. A retired id is never reused.
+ * [id] is what gets written to preferences, not the ordinal. A look that turns
+ * out not to earn its place can then be removed without silently changing the
+ * look everybody after it in the list is using. A retired id is never reused.
  */
 enum class Filter(
     val id: Int,
     val label: String,
     val note: String,
-    /** Whether the picture is edge-smoothed into an off-screen buffer first. */
-    val smooths: Boolean = false,
+    val source: Source = Source.Direct,
 ) {
     None(0, "Off", "The framebuffer exactly as the console drew it"),
     Scanlines(1, "Scanlines", "A soft dark band between each row, the way a CRT drew them"),
@@ -28,7 +46,12 @@ enum class Filter(
     // anyone who had it now gets Sepia. The id stays retired.
     Sepia(6, "Old photo", "Warm and faded"),
     Neon(7, "Neon", "Bright things glow and the colour is turned all the way up"),
-    Cartoon(8, "Cartoon", "Smoothed into curves, inked, and painted in flat colour", smooths = true);
+    Cartoon(8, "Cartoon", "Smoothed into curves, inked, and painted in flat colour", Source.Smoothed),
+    // These two need no branch in the present shader: an unhandled kind already
+    // draws the picture it was handed, and the interesting work already happened
+    // to that picture off-screen.
+    Smooth(9, "Smooth", "Stairsteps rounded into curves, with the colour left alone", Source.Smoothed),
+    Composite(10, "Composite", "Down an aerial lead: colours bleed and dithering turns solid", Source.Composite);
 
     companion object {
         /** The id "Black and white" used to be saved under. */

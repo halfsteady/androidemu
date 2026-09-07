@@ -26,16 +26,77 @@ fn rewind_reset(nes: &Nes) {
 /// caller establishes from the direct buffer's capacity.
 unsafe fn blit(nes: &Nes, address: *mut u8) {
     let out = unsafe { std::slice::from_raw_parts_mut(address, 256 * 240 * 4) };
+    // Read the table once. It is behind a lock because the shell can change it
+    // between frames, and taking that lock per pixel would be absurd.
+    let palette = CHOSEN_PALETTE.lock().unwrap().unwrap_or(PALETTE);
     for (pixel, &index) in out.as_chunks_mut::<4>().0.iter_mut().zip(nes.framebuffer()) {
-        let rgb = PALETTE[(index & 63) as usize];
+        let rgb = palette[(index & 63) as usize];
         pixel.copy_from_slice(&[(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255]);
     }
+}
+
+/// The palette in force, or `None` for the one built in below.
+///
+/// The framebuffer the core produces is 6-bit indices, not colour, so which
+/// colours those indices mean is a presentation choice and belongs to whoever is
+/// holding the tablet. Changing it costs nothing: the lookup was already
+/// happening, this only changes what it reads.
+static CHOSEN_PALETTE: Mutex<Option<[u32; 64]>> = Mutex::new(None);
+
+/// Set the 64 colours the framebuffer's indices mean, as 192 bytes of RGB.
+/// An empty array restores the built-in table.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_setPalette(
+    mut env: JNIEnv,
+    _: JClass,
+    colors: JByteArray,
+) {
+    let Ok(bytes) = env.convert_byte_array(&colors) else {
+        error(&mut env, "Palette could not be read");
+        return;
+    };
+    if bytes.is_empty() {
+        *CHOSEN_PALETTE.lock().unwrap() = None;
+        return;
+    }
+    if bytes.len() != 64 * 3 {
+        error(&mut env, "A palette is 64 colours, so 192 bytes");
+        return;
+    }
+    let mut table = [0u32; 64];
+    for (entry, rgb) in table.iter_mut().zip(bytes.as_chunks::<3>().0) {
+        *entry = (rgb[0] as u32) << 16 | (rgb[1] as u32) << 8 | rgb[2] as u32;
+    }
+    *CHOSEN_PALETTE.lock().unwrap() = Some(table);
+}
+
+/// Paint the current frame again without advancing the machine.
+///
+/// Changing the palette while paused has to show up, and re-running a frame to
+/// see it would move the game. The framebuffer is still there; only the table
+/// read against it has changed.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_repaint(mut env: JNIEnv, _: JClass, buffer: JByteBuffer) {
+    let capacity = env.get_direct_buffer_capacity(&buffer).unwrap_or(0);
+    if capacity < 256 * 240 * 4 {
+        error(&mut env, "Invalid video buffer");
+        return;
+    }
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        error(&mut env, "Video buffer must be direct");
+        return;
+    };
+    let machine = MACHINE.lock().unwrap();
+    let Some(nes) = machine.as_ref() else { return };
+    // JNI verified the direct buffer capacity; Kotlin retains it for this call.
+    unsafe { blit(nes, address) };
 }
 #[cfg(target_os = "android")]
 mod audio;
 fn error(env: &mut JNIEnv, message: impl ToString) {
     let _ = env.throw_new("java/lang/IllegalStateException", message.to_string());
 }
+/// The table used when nothing else has been chosen.
 const PALETTE: [u32; 64] = [
     0x666666, 0x002a88, 0x1412a7, 0x3b00a4, 0x5c007e, 0x6e0040, 0x6c0600, 0x561d00, 0x333500,
     0x0b4800, 0x005200, 0x004f08, 0x00404d, 0, 0, 0, 0xadadad, 0x155fd9, 0x4240ff, 0x7527fe,

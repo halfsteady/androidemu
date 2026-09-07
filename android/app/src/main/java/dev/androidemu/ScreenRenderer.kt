@@ -40,6 +40,18 @@ class ScreenRenderer {
     private val viewport = IntArray(4)
     private val boundFrame = IntArray(1)
 
+    // The composite pass. Encode and decode happen in the same shader, so the
+    // signal is never stored: an 8-bit intermediate would quantise it, and the
+    // window each output sample needs is small enough to re-derive.
+    private var ntscProgram = 0
+    private var uNtscSrc = 0
+    private var uNtscSize = 0
+    private var uNtscPhase = 0
+    private var ntscBuffer = 0
+    private var ntscTexture = 0
+    /** Frames drawn, for the phase that makes the dots crawl rather than sit. */
+    private var frames = 0
+
     val ready get() = program != 0
 
     fun create() {
@@ -52,6 +64,10 @@ class ScreenRenderer {
         smoothProgram = link(SMOOTH_FRAGMENT)
         uSmoothSrc = glGetUniformLocation(smoothProgram, "src")
         uSmoothSize = glGetUniformLocation(smoothProgram, "srcSize")
+        ntscProgram = link(NTSC_FRAGMENT)
+        uNtscSrc = glGetUniformLocation(ntscProgram, "src")
+        uNtscSize = glGetUniformLocation(ntscProgram, "srcSize")
+        uNtscPhase = glGetUniformLocation(ntscProgram, "framePhase")
         val textures = IntArray(1); glGenTextures(1, textures, 0); texture = textures[0]
         glBindTexture(GL_TEXTURE_2D, texture)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
@@ -60,6 +76,31 @@ class ScreenRenderer {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, Picture.WIDTH, Picture.HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, null)
         createSmoothChain()
+        createSignalBuffer()
+    }
+
+    /**
+     * Where the decoded picture lands: four samples to a console pixel, which is
+     * what the subcarrier needs to be resolvable, and full height because
+     * composite blurs along a scanline and not across them.
+     */
+    private fun createSignalBuffer() {
+        val buffers = IntArray(1); glGenFramebuffers(1, buffers, 0); ntscBuffer = buffers[0]
+        val textures = IntArray(1); glGenTextures(1, textures, 0); ntscTexture = textures[0]
+        glBindTexture(GL_TEXTURE_2D, ntscTexture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, GL_RGBA, Picture.WIDTH * SUBSAMPLES, Picture.HEIGHT,
+            0, GL_RGBA, GL_UNSIGNED_BYTE, null
+        )
+        glBindFramebuffer(GL_FRAMEBUFFER, ntscBuffer)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ntscTexture, 0)
+        val status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        check(status == GL_FRAMEBUFFER_COMPLETE) { "signal buffer incomplete: $status" }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
     }
 
     /**
@@ -122,9 +163,14 @@ class ScreenRenderer {
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, texture)
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, Picture.WIDTH, Picture.HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels)
-        // A look that wants a smoothed picture gets one drawn off-screen first,
-        // and is then presented from that instead of from the framebuffer.
-        val present = if (filter.smooths) smooth() else texture
+        // A look that wants its picture prepared gets that done off-screen first,
+        // and is then presented from the result instead of from the framebuffer.
+        frames++
+        val present = when (filter.source) {
+            Source.Direct -> texture
+            Source.Smoothed -> smooth()
+            Source.Composite -> composite()
+        }
         glUseProgram(program)
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, present)
@@ -173,6 +219,31 @@ class ScreenRenderer {
         glBindTexture(GL_TEXTURE_2D, source)
         glGenerateMipmap(GL_TEXTURE_2D)
         return source
+    }
+
+    /**
+     * Encodes the framebuffer to a composite signal and decodes it back, which is
+     * what makes a one-pixel dither read as a colour rather than a checkerboard.
+     * Returns the texture to present from.
+     */
+    private fun composite(): Int {
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, boundFrame, 0)
+        glGetIntegerv(GL_VIEWPORT, viewport, 0)
+        glBindFramebuffer(GL_FRAMEBUFFER, ntscBuffer)
+        glViewport(0, 0, Picture.WIDTH * SUBSAMPLES, Picture.HEIGHT)
+        glUseProgram(ntscProgram)
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glUniform1i(uNtscSrc, 0)
+        glUniform2i(uNtscSize, Picture.WIDTH, Picture.HEIGHT)
+        // A frame advances the subcarrier by a third of a cycle, so the pattern
+        // repeats every third frame. Kept as a whole number of thirds rather than
+        // a growing float, which would lose its low bits inside an hour of play.
+        glUniform1f(uNtscPhase, (frames % 3) / 3f)
+        quad()
+        glBindFramebuffer(GL_FRAMEBUFFER, boundFrame[0])
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
+        return ntscTexture
     }
 
     private fun quad() {
@@ -271,6 +342,71 @@ class ScreenRenderer {
                 "    if (v == h) result = v;\n" +
                 "  }\n" +
                 "  color = vec4(result, 1.0);\n" +
+                "}"
+
+        /**
+         * Samples per console pixel in the signal pass. The subcarrier runs at
+         * two thirds of a cycle per pixel, so six samples is exactly one cycle -
+         * which is what lets the luma filter cancel the carrier instead of
+         * merely attenuating it. Four is the smallest number that keeps that
+         * whole and still resolves the subcarrier.
+         */
+        const val SUBSAMPLES = 4
+
+        // Composite video, encoded and decoded in one pass.
+        //
+        // A 2C02 does not emit colour; it emits a phase. This does the same and
+        // then reads it back the way a television had to, which is why the two
+        // famous consequences fall out rather than being drawn on: a one-pixel
+        // dither averages into a solid colour because chroma is carried at a
+        // fraction of luma's bandwidth, and the dots crawl because the phase
+        // walks a third of a cycle every line and every frame.
+        const val NTSC_FRAGMENT =
+            "#version 300 es\n" +
+                "precision highp float;\n" +
+                "precision highp int;\n" +
+                "uniform sampler2D src; uniform ivec2 srcSize; uniform float framePhase;\n" +
+                "out vec4 color;\n" +
+                "const float PI = 3.14159265;\n" +
+                "const float SUBS = 4.0;\n" +
+                "vec3 fetch(int px, int py){\n" +
+                "  return texelFetch(src, ivec2(clamp(px, 0, srcSize.x - 1), clamp(py, 0, srcSize.y - 1)), 0).rgb;\n" +
+                "}\n" +
+                "vec3 toYiq(vec3 c){\n" +
+                "  return vec3(dot(c, vec3(0.299, 0.587, 0.114)),\n" +
+                "              dot(c, vec3(0.5959, -0.2746, -0.3213)),\n" +
+                "              dot(c, vec3(0.2115, -0.5227, 0.3112)));\n" +
+                "}\n" +
+                "void main(){\n" +
+                "  int ox = int(gl_FragCoord.x);\n" +
+                "  int oy = int(gl_FragCoord.y);\n" +
+                // A line and a frame each walk the phase a third of a cycle.
+                "  float base = 2.0 * PI * (float(oy) / 3.0 + framePhase);\n" +
+                "  float luma = 0.0;\n" +
+                "  vec2 chroma = vec2(0.0);\n" +
+                "  float weight = 0.0;\n" +
+                // Twenty-four samples is exactly four subcarrier cycles, so the
+                // demodulation closes on a whole number of turns.
+                "  for (int k = -12; k <= 11; k++) {\n" +
+                "    int s = ox + k;\n" +
+                "    vec3 c = toYiq(fetch(int(floor(float(s) / SUBS)), oy));\n" +
+                "    float ph = base + 2.0 * PI * (2.0 / 3.0) * (float(s) / SUBS);\n" +
+                "    vec2 cs = vec2(cos(ph), sin(ph));\n" +
+                "    float signal = c.x + c.y * cs.x + c.z * cs.y;\n" +
+                // Luma over exactly one cycle: the carrier sums to zero and
+                // leaves the brightness detail behind.
+                "    if (k >= -3 && k <= 2) luma += signal;\n" +
+                // Chroma over the wide tapered window. This is the bleed.
+                "    float w = 0.5 + 0.5 * cos(PI * (float(k) + 0.5) / 12.0);\n" +
+                "    chroma += w * signal * cs;\n" +
+                "    weight += w;\n" +
+                "  }\n" +
+                "  float y = luma / 6.0;\n" +
+                "  vec2 iq = 2.0 * chroma / weight;\n" +
+                "  vec3 rgb = vec3(y + 0.956 * iq.x + 0.619 * iq.y,\n" +
+                "                  y - 0.272 * iq.x - 0.647 * iq.y,\n" +
+                "                  y - 1.106 * iq.x + 1.703 * iq.y);\n" +
+                "  color = vec4(clamp(rgb, 0.0, 1.0), 1.0);\n" +
                 "}"
 
         const val VERTEX =

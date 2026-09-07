@@ -12,6 +12,16 @@ object Native {
      */
     external fun headerNotes(): Array<String>
     external fun frame(buffer: ByteBuffer, p1: Int, p2: Int, advance: Boolean)
+    /**
+     * What the framebuffer's 64 indices mean, as 192 bytes of RGB. An empty
+     * array restores the table built into the core.
+     */
+    external fun setPalette(colours: ByteArray)
+    /**
+     * Paints the current frame again without advancing the machine, so a palette
+     * chosen while paused shows up without the game moving.
+     */
+    external fun repaint(buffer: ByteBuffer)
     /** Steps one frame back and paints it. False once there is nothing left to undo. */
     external fun rewind(buffer: ByteBuffer): Boolean
     external fun rewindDepth(): Int

@@ -27,7 +27,7 @@ is built, tested, signed and published by GitHub Actions — see
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
 | Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard |
 | Time controls | One draggable control for rewind and fast-forward, further from centre is faster, plus 5 s / 15 s jumps back; shoulder buttons drive it too |
-| Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, and eight looks from scanlines to a cel-shaded Cartoon — previewed in settings by the real shader |
+| Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, ten looks from scanlines to a cel-shaded Cartoon, and a separate choice of colours with `.pal` import — previewed in settings by the real shader |
 | Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave on pause, background and low battery |
 | Shelf | Chosen box art per game, last-played ordering, playtime, screenshots to the device gallery, a readable problem log |
 

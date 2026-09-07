@@ -101,7 +101,14 @@ driver, where every look is also rendered off-screen and looked at. The looks
 have now been seen on the panel too: `v0.2.1-rc5` was played on the tablet and
 Cartoon passed by eye (owner report, 2026-09-07).
 
-What that does not cover is numbers. Cartoon's two off-screen passes are 61k and
+Composite is checked harder than by eye, because it is the one look with a
+correct answer: every one of the 54 real palette colours survives the encode and
+decode unchanged, and a column dither of two hues resolves to the colour between
+them with a ripple of 1 in 255 while a dither of two brightnesses correctly keeps
+its pattern. The palette model is checked against the core's own table in
+`PaletteTest`. Neither of those has been seen on the panel.
+
+What none of it covers is numbers. Cartoon's two off-screen passes are 61k and
 246k fragments against the roughly 7.7 million a full-screen pass covers on this
 panel, so they should sit far inside the frame budget — but that is arithmetic,
 not a measurement, and a look that costs frames would show up as pacing rather
@@ -120,9 +127,13 @@ the first release shipped becomes the scanlines look, and that path has a test.
 - [ ] Measure 8× in both directions, and measure Cartoon's two extra passes
   rather than trusting the fragment counts. Watch Cartoon on a scrolling
   background for shimmer.
-- [ ] The accurate end of §3 — the NTSC composite filter and the CRT shader ports
-  — is real work and is not pretending to be here. The smoothing engine now
-  exists (Cartoon rides it), so an unstylised **Smooth** is nearly free.
+- [x] The composite filter and the smoothing family. **Smooth** and **Composite**
+  ship, and colour is now a separate choice with `.pal` import. The CRT shader
+  ports (`crt-easymode`, `crt-lottes`) are still not here.
+- [ ] Point Old TV at Composite instead of the raw framebuffer. It is close to a
+  one-line change and should be a large improvement, but it alters a look that
+  has already been approved on the tablet, so it wants eyes before it lands.
+- [ ] Per-game palette and picture overrides. Everything is global today.
 - [ ] Cartoon inks by colour distance alone, so it cannot tell a drawn outline
   from a sprite meeting a busy background. A silhouette pass that weights the
   line by how far apart the two regions are in depth-of-field terms would give

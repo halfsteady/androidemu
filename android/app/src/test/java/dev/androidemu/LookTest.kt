@@ -38,10 +38,19 @@ class LookTest {
     }
 
     @Test fun onlyTheLooksThatNeedAnOffScreenPassAskForOne() {
-        // The smoothing chain is two extra draws, so it runs only where it earns
-        // them. Everything else is still one shader with a branch.
-        assertTrue(Filter.Cartoon.smooths)
-        assertEquals(listOf(Filter.Cartoon), Filter.entries.filter { it.smooths })
+        // An off-screen pass is extra draws, so it runs only where it earns them.
+        // Everything else is still one shader with a branch.
+        assertEquals(
+            listOf(Filter.Cartoon, Filter.Smooth),
+            Filter.entries.filter { it.source == Source.Smoothed },
+        )
+        assertEquals(listOf(Filter.Composite), Filter.entries.filter { it.source == Source.Composite })
+        assertEquals(Source.Direct, Filter.None.source)
+    }
+
+    @Test fun theNewIdsFollowOnWithoutReusingTheRetiredOne() {
+        assertEquals(9, Filter.Smooth.id)
+        assertEquals(10, Filter.Composite.id)
     }
 
     @Test fun everyLookIsNamedAndExplained() {
