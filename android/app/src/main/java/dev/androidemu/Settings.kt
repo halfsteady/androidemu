@@ -40,6 +40,14 @@ class Settings(context: Context) {
         get() = filterState.value
         set(value) { filterState.value = value; preferences.edit { putInt(FILTER, value.id) } }
 
+    // How the shelf draws itself. A preference rather than a per-session toggle
+    // because it is a statement about the screen you are on -- a phone wants the
+    // list and the tablet wants the cards, and neither wants to be asked twice.
+    private val shelfListState = mutableStateOf(preferences.getBoolean(SHELF_LIST, false))
+    var shelfList: Boolean
+        get() = shelfListState.value
+        set(value) { shelfListState.value = value; preferences.edit { putBoolean(SHELF_LIST, value) } }
+
     private val paletteState = mutableStateOf(Palette.of(preferences.getInt(PALETTE, 0)))
     var palette: Palette
         get() = paletteState.value
@@ -99,5 +107,6 @@ class Settings(context: Context) {
         const val TRIM_EDGES = "trimEdges"
         const val FILTER = "filter"
         const val SCANLINES = "scanlines"
+        const val SHELF_LIST = "shelfList"
     }
 }

@@ -32,7 +32,9 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -55,6 +57,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -947,68 +950,99 @@ class MainActivity : ComponentActivity() {
      * thing you read every time you sit down to play.
      */
     @Composable private fun Shelf() {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 24.dp, vertical = 18.dp)) {
-            // Beside the heading where there is room for it, underneath where
-            // there is not. The tablet this is for is always the first case; a
-            // narrow window should still not push a button off the edge.
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                if (maxWidth >= 820.dp) Row(
+        BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            // A phone screen is mostly header if the header is written for a
+            // tablet. Everything here scales off one measurement.
+            val tight = maxWidth < 600.dp
+            // Captured here rather than read inside the Column: maxWidth belongs
+            // to BoxWithConstraints's scope and a nested lambda has its own.
+            val roomy = maxWidth >= 820.dp
+            Column(Modifier.fillMaxSize().padding(horizontal = if (tight) 14.dp else 24.dp, vertical = if (tight) 12.dp else 18.dp)) {
+                // Beside the heading where there is room for it, underneath where
+                // there is not. The tablet this is for is always the first case; a
+                // narrow window should still not push a button off the edge.
+                if (roomy) Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     ShelfHeading(Modifier.weight(1f))
                     ShelfActions()
-                } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     ShelfHeading()
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) { ShelfActions() }
                 }
-            }
-            Text(
-                if (showArchive) "Off the shelf, and nothing lost. Every save is still here."
-                else "Pick a game. Play a little. Come back anytime.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-            val shown = if (showArchive) archived else games
-            if (shown.isEmpty()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        // The small master, which carries its own rounded ground:
-                        // a drawable has no currentColor, and tinting this one
-                        // would flatten four palettes into one. Held back to 0.9
-                        // alpha so it reads as a mark on an empty shelf rather
-                        // than as something to tap.
-                        Image(
-                            painterResource(R.drawable.ic_emulia_mark),
-                            null,
-                            Modifier.size(96.dp).padding(bottom = 18.dp).alpha(0.9f),
-                        )
-                        Text("A shelf full of possibilities", fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Add a game file (.nes) from your tablet to begin.\nGames stay on this device. No account needed.",
-                            modifier = Modifier.padding(16.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                // The strapline that used to sit here — "Pick a game. Play a little."
+                // — cost a line of type on every screen to say what the grid below it
+                // already says. On the cover screen of a folding phone it was one of
+                // three things above the fold, and the only one that was not a game.
+                val shown = if (showArchive) archived else games
+                if (shown.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            // The small master, which carries its own rounded ground:
+                            // a drawable has no currentColor, and tinting this one
+                            // would flatten four palettes into one. Held back to 0.9
+                            // alpha so it reads as a mark on an empty shelf rather
+                            // than as something to tap.
+                            Image(
+                                painterResource(R.drawable.ic_emulia_mark),
+                                null,
+                                Modifier.size(if (tight) 68.dp else 96.dp)
+                                .padding(bottom = if (tight) 12.dp else 18.dp).alpha(0.9f),
+                            )
+                            Text(
+                                "A shelf full of possibilities",
+                                fontSize = if (tight) 19.sp else 23.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "Add a game file (.nes) from your tablet to begin.\nGames stay on this device. No account needed.",
+                                modifier = Modifier.padding(16.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
+                } else if (settings.shelfList) LazyColumn(
+                    contentPadding = PaddingValues(top = 14.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(shown, key = { it.id }) { selected -> GameRow(selected) }
+                } else LazyVerticalGrid(
+                    // 220dp is a tablet's cell. On a 360dp-wide phone it is one
+                    // column, which makes a single game fill the whole screen and
+                    // turns the shelf into a slideshow.
+                    columns = GridCells.Adaptive(if (tight) 150.dp else 220.dp),
+                    contentPadding = PaddingValues(top = if (tight) 14.dp else 20.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (tight) 10.dp else 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (tight) 10.dp else 16.dp),
+                ) {
+                    items(shown, key = { it.id }) { selected -> GameCard(selected, tight) }
                 }
-            } else LazyVerticalGrid(
-                columns = GridCells.Adaptive(220.dp),
-                contentPadding = PaddingValues(top = 20.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                items(shown, key = { it.id }) { selected -> GameCard(selected) }
             }
         }
     }
+    /**
+     * The mark, then the name. "Your next adventure" was a 30sp line that said
+     * nothing the games underneath it did not, and on a folding phone's cover
+     * screen it pushed the first game below the fold on its own. What is left is
+     * the one thing a masthead is for: whose shelf this is.
+     */
     @Composable private fun ShelfHeading(modifier: Modifier = Modifier) {
-        Column(modifier) {
-            Text("EMULIA", color = MaterialTheme.colorScheme.primary, letterSpacing = 3.sp, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(if (showArchive) "Put away" else "Your next adventure", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.ic_emulia_mark), null, Modifier.size(34.dp))
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (showArchive) "Put away" else "EMULIA",
+                color = if (showArchive) MaterialTheme.colorScheme.onBackground
+                else MaterialTheme.colorScheme.primary,
+                letterSpacing = if (showArchive) 0.sp else 3.sp,
+                fontSize = if (showArchive) 22.sp else 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
     @Composable private fun ShelfActions() {
@@ -1023,6 +1057,12 @@ class MainActivity : ComponentActivity() {
             // Only offered when there is something in it, so an empty shelf does
             // not advertise an empty cupboard.
             if (archived.isNotEmpty()) SecondaryAction("Put away (${archived.size})") { showArchive = true }
+            // Last, and icon-only: it changes how this screen looks rather than
+            // what is on it, and it should never be the widest thing in the row.
+            if (games.isNotEmpty()) IconAction(
+                if (settings.shelfList) GRID_VIEW else LIST_VIEW,
+                if (settings.shelfList) "Show games as cards" else "Show games as a list",
+            ) { settings.shelfList = !settings.shelfList }
         }
     }
     /**
@@ -1034,7 +1074,79 @@ class MainActivity : ComponentActivity() {
      * under the finger aiming to start it. They live behind the card's own menu
      * now: still one tap away, no longer in the way of the game.
      */
-    @Composable private fun GameCard(selected: Game) {
+    /**
+     * A game as one row: a small piece of box art, the title, and where you got
+     * to. The same tap target and the same menu as the card — the only thing
+     * that changes is how much of the screen one game is allowed to take.
+     *
+     * Six of these fit where one card does on a phone, which is the whole point
+     * of offering it.
+     */
+    @Composable private fun GameRow(selected: Game) {
+        var menu by remember { mutableStateOf(false) }
+        Card(
+            onClick = { if (!showArchive) open(selected) },
+            enabled = !busy && !showArchive,
+            shape = RoundedCornerShape(Ui.cornerMedium),
+        ) {
+            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Cover(
+                    selected.title,
+                    library.cover(selected),
+                    Modifier.width(76.dp).aspectRatio(4f / 3f).clip(RoundedCornerShape(Ui.cornerSmall)),
+                    covers,
+                )
+                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                    Text(
+                        selected.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val note = if (showArchive) playtime(selected.seconds)
+                    else listOfNotNull(
+                        if (library.state(selected, -1).exists()) "Resume" else "Ready to play",
+                        playtime(selected.seconds),
+                    ).joinToString(" · ")
+                    if (!note.isNullOrEmpty()) Text(
+                        note,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+                if (showArchive) Row {
+                    QuietAction("Bring back", enabled = !busy) { unarchive(selected) }
+                    QuietAction("Delete", enabled = !busy, danger = true) { forgetting = selected }
+                } else Box {
+                    IconButton(onClick = { menu = true }, enabled = !busy) {
+                        Icon(MORE, "More for ${selected.title}", Modifier.size(22.dp))
+                    }
+                    GameMenu(selected, menu) { menu = false }
+                }
+            }
+        }
+    }
+    /** The card's and the row's menu, so the two can never drift apart. */
+    @Composable private fun GameMenu(selected: Game, expanded: Boolean, dismiss: () -> Unit) {
+        DropdownMenu(expanded = expanded, onDismissRequest = dismiss) {
+            DropdownMenuItem(
+                text = { Text("Choose box art") },
+                onClick = { dismiss(); artFor = selected; importArt.launch(arrayOf("image/*")) },
+            )
+            if (library.art(selected).exists()) DropdownMenuItem(
+                text = { Text("Clear box art") },
+                onClick = { dismiss(); clearArt(selected) },
+            )
+            DropdownMenuItem(
+                text = { Text("Put this away") },
+                enabled = !busy,
+                onClick = { dismiss(); archive(selected) },
+            )
+        }
+    }
+    @Composable private fun GameCard(selected: Game, tight: Boolean = false) {
         var menu by remember { mutableStateOf(false) }
         // A put-away game does not open on a tap: the whole card would
         // otherwise be a trap next to "Bring back".
@@ -1052,29 +1164,25 @@ class MainActivity : ComponentActivity() {
                                 Icon(MORE, "More for ${selected.title}", Modifier.size(22.dp))
                             }
                         }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Choose box art") },
-                                onClick = { menu = false; artFor = selected; importArt.launch(arrayOf("image/*")) },
-                            )
-                            if (library.art(selected).exists()) DropdownMenuItem(
-                                text = { Text("Clear box art") },
-                                onClick = { menu = false; clearArt(selected) },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Put this away") },
-                                enabled = !busy,
-                                onClick = { menu = false; archive(selected) },
-                            )
-                        }
+                        GameMenu(selected, menu) { menu = false }
                     }
                 }
-                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                    Text(selected.title, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                Column(Modifier.padding(horizontal = if (tight) 12.dp else 18.dp, vertical = if (tight) 10.dp else 14.dp)) {
+                    // A ROM's filename is the title until somebody renames it,
+                    // and filenames are long. Two lines then an ellipsis, rather
+                    // than one orphaned letter on a line of its own.
+                    Text(
+                        selected.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = if (tight) 15.sp else 19.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (!showArchive) Text(
-                        if (library.state(selected, -1).exists()) "Resume your adventure  →" else "Ready to play  →",
+                        if (library.state(selected, -1).exists()) "Resume  →" else "Ready to play  →",
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 8.dp),
+                        fontSize = if (tight) 13.sp else 15.sp,
+                        modifier = Modifier.padding(top = if (tight) 5.dp else 8.dp),
                     )
                     playtime(selected.seconds)?.let {
                         Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))

@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 /**
  * The things that make this look like one app rather than several.
@@ -183,6 +185,30 @@ object Ui {
     ) {
         if (icon != null) { Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)) }
         Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * An action that is only an icon, sized and shaped like [SecondaryAction] so it
+ * sits in the same row without looking like a different kind of control. The
+ * label is not drawn but it is still required: it is what a screen reader says,
+ * and an icon-only button with no name is a button only sighted people have.
+ */
+@Composable fun IconAction(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(Ui.cornerMedium),
+        contentPadding = PaddingValues(0.dp),
+        modifier = modifier.size(Ui.secondaryHeight).semantics { contentDescription = label },
+    ) {
+        Icon(icon, null, Modifier.size(20.dp))
     }
 }
 
@@ -405,6 +431,16 @@ val TUNE = icon(
     "M3,17v2h6v-2H3zM3,5v2h10V5H3zM13,21v-2h8v-2h-8v-2h-2v6H13zM7,9v2H3v2h4v2h2V9H7zM21,13v-2H11v2H21z" +
         "M15,9h2V7h4V5h-4V3h-2V9z",
 )
+// The two ways to draw a shelf. Each button shows the layout it switches TO,
+// which is the convention every gallery uses and the only one that survives
+// having no label beside it.
+val GRID_VIEW = icon("GridView", "M3,3h8v8h-8zM13,3h8v8h-8zM3,13h8v8h-8zM13,13h8v8h-8z")
+val LIST_VIEW = icon(
+    "ListView",
+    "M3,5h5v4.5h-5zM10,5.75h11v3h-11zM3,9.75h5v4.5h-5zM10,10.5h11v3h-11z" +
+        "M3,14.5h5v4.5h-5zM10,15.25h11v3h-11z",
+)
+
 val SHELF = icon(
     "Shelf",
     "M4,3h6v8H4V3zM14,3h6v8h-6V3zM4,13h6v8H4V13zM14,13h6v8h-6V13z",
