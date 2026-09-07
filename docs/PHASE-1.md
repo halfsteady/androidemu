@@ -29,6 +29,11 @@ physical-device play, controllers, pacing and audio latency still need validatio
   sample queue, device-rate conversion and limited buffer-fill rate correction.
   AAudio is used directly because API 29+ is the floor; Oboe's older-device backend
   is not needed. This is a deliberate change from the original Oboe wrapper plan.
+- Rewind: a hold-to-undo control that runs the game backwards a frame at a time.
+  Each frame is stored as a run-length-encoded XOR against the one before it and
+  the window is bounded in bytes, not frames, so a still screen buys about a
+  minute and a full-screen scroll rather less. Loading a savestate abandons the
+  chain rather than rewinding into a timeline that was never played.
 - Ten manual save slots with screenshots and timestamps, overwrite confirmation,
   a separate autosave on pause/background, resume from the shelf, atomic save and
   SRAM file replacement, and clear error feedback. No network permission or ROMs
@@ -36,17 +41,17 @@ physical-device play, controllers, pacing and audio latency still need validatio
 
 ## Verification
 
-- Rust workspace tests: 60 passing, including the real nestest reference trace,
+- Rust workspace tests: 66 passing, including the real nestest reference trace,
   GxROM banking under bus conflicts, and per-region frame length, frame height,
-  vblank scanline and savestate timing restoration. Without the optional nestest
+  vblank scanline, savestate timing restoration and the rewind chain. Without the optional nestest
   files that harness reports that it skipped. A golden-hash test pins the layout
   of version-1 snapshots, so the saves made with the first preview keep loading.
 - Public ROMs: all 39 selected ROMs pass (16 CPU instruction, 8 APU, 10 PPU
   vblank/NMI and 5 MMC3 tests). `scripts/check-roms.py` runs these externally.
   Tested collection revision: `95d8f621ae55cee0d09b91519a8989ae0e64753b`.
 - Kotlin/JNI host-JVM tests exercise actual native rendering, deterministic
-  save/restore, battery data, exception translation, invalid buffers and rejected
-  corrupt states. Android audio is excluded from the host library.
+  save/restore, battery data, exception translation, invalid buffers, rejected
+  corrupt states, and rewinding back through the exact frames just played. Android audio is excluded from the host library.
 - arm64 and x86_64 native builds, Android app/test APK builds, Android lint.
 - Device instrumentation is written but **not executed successfully** here. The
   available emulator lacks KVM and repeatedly loses Android system services before
@@ -66,6 +71,9 @@ physical-device play, controllers, pacing and audio latency still need validatio
   but the 50 Hz surface request and audio rate correction are unmeasured on the
   panel, and no region-specific ROM suite is run.
 - [ ] Measure sustained frame pacing and input-to-photon latency on the OnePlus Pad 3.
+- [ ] Measure what rewind costs on the tablet. Every frame is serialised and
+  XOR-encoded, roughly 95 KB a frame before encoding, and neither the CPU cost
+  nor the real depth of the 64 MB window has been measured on device.
 - [ ] Measure underruns/output latency, test output-route changes and long sessions.
   The frame-fed audio queue currently targets roughly 20 ms, so the original
   sub-10 ms end-to-end audio target is **not achieved or claimed**.

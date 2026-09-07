@@ -12,6 +12,7 @@ pub mod controller;
 pub mod cpu;
 pub mod nes;
 pub mod ppu;
+pub mod rewind;
 
 pub use bus::NesBus;
 pub use cart::{Cartridge, Mirroring, Region};

@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -59,6 +60,18 @@ class MainActivity : ComponentActivity() {
     private var message by mutableStateOf<String?>(null)
     private var slots by mutableStateOf(emptyList<SaveSlot>())
     private var showSlots by mutableStateOf(false)
+    private var rewinding by mutableStateOf(false)
+    private var rewindAtStart by mutableStateOf(false)
+    // Rewinding plays no new audio, so the stream is stopped rather than left
+    // to drain into an underrun, and started again when normal play resumes.
+    private fun applyRewinding(active: Boolean) {
+        if (rewinding == active || game == null) return
+        rewinding = active
+        if (active) rewindAtStart = false
+        surface.rewinding = active
+        input.clear()
+        surface.task { Native.audio(!active && surface.playing && !backgrounded) }
+    }
     private var fullscreen by mutableStateOf(false)
     private var fullscreenTouch by mutableStateOf(false)
     private var mapping by mutableStateOf(false)
@@ -91,7 +104,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         library = Library(this)
         input = ControllerInput(this) { if (game != null) pause(); message = "Controller disconnected. Your game is paused." }
-        surface = GameSurface(this, input::buttons) { message = "This game couldn't continue. $it"; paused = true; busy = false }
+        surface = GameSurface(this, input::buttons, { rewindAtStart = true }) { message = "This game couldn't continue. $it"; paused = true; busy = false }
         runCatching { games = library.games() }.onFailure { message = "Your library couldn't be opened. Your game files are still stored on this device." }
         // Every slot a Material component actually reads is set here. The
         // defaults are purple-tinted, and any one left unset shows up as an
@@ -235,6 +248,7 @@ class MainActivity : ComponentActivity() {
                     Text(game!!.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
                     BarButton(Icons.Filled.List, "Save states", !busy) { pause(); showSlots = true }
                     BarButton(ENTER_FULLSCREEN, "Full screen", !busy) { applyFullscreen(true) }
+                    RewindBarButton()
                     BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 }
                 AndroidView(factory = { surface }, modifier = Modifier.weight(1f).fillMaxWidth())
@@ -244,6 +258,7 @@ class MainActivity : ComponentActivity() {
                 BarButton(Icons.Filled.Menu, "Menu", !busy) { pause() }
                 BarButton(null, if (fullscreenTouch) "Hide controls" else "Touch controls") { fullscreenTouch = !fullscreenTouch }
                 BarButton(EXIT_FULLSCREEN, "Exit full screen") { applyFullscreen(false) }
+                RewindBarButton()
             }
             if (game == null) Shelf()
             if (game != null && paused) PausePanel()
@@ -251,6 +266,14 @@ class MainActivity : ComponentActivity() {
             // dialog: a dialog has its own window and its own key dispatch, so
             // dispatchKeyEvent never sees the button the wizard is asking for.
             if (mapping) MappingPanel()
+            // Say it once when the chain runs out, so a frozen picture reads
+            // as the end of the tape rather than a hang.
+            if (rewindAtStart) Box(
+                Modifier.align(Alignment.TopCenter).padding(top = 12.dp).clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xff33240c)).padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text("That's as far back as this goes.", color = Color(0xffffd9a0))
+            }
             if (busy) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         }
         }
@@ -260,6 +283,38 @@ class MainActivity : ComponentActivity() {
     // The wizard lives in the activity's window so dispatchKeyEvent can claim
     // the button being pressed. It shows progress as it goes, because a step
     // that silently does nothing is indistinguishable from a broken adapter.
+    // Held, not tapped: the game runs backwards for as long as a finger is
+    // down. Framed as "Undo" because that is what it is to the player.
+    @Composable private fun RewindButton() {
+        Box(Modifier.size(76.dp).semantics {
+            role = Role.Button
+            contentDescription = "Undo. Hold to rewind the game."
+            stateDescription = if (rewinding) "Rewinding" else "Released"
+        }.clip(RoundedCornerShape(28.dp)).background(if (rewinding) Color(0xffffd9a0) else Color(0xffe0b877)).pointerInput(game) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                try {
+                    applyRewinding(true)
+                    do { val event = awaitPointerEvent(); val change = event.changes.firstOrNull { it.id == down.id } ?: break; change.consume() } while (change.pressed)
+                } finally { applyRewinding(false) }
+            }
+        }, contentAlignment = Alignment.Center) { Text("Undo", color = Color(0xff33240c), fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+    }
+    @Composable private fun RewindBarButton() {
+        TextButton(onClick = {}, modifier = Modifier.pointerInput(game) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                try {
+                    applyRewinding(true)
+                    do { val event = awaitPointerEvent(); val change = event.changes.firstOrNull { it.id == down.id } ?: break; change.consume() } while (change.pressed)
+                } finally { applyRewinding(false) }
+            }
+        }.semantics { contentDescription = "Undo. Hold to rewind the game." }) {
+            Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(20.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(if (rewinding) "Rewinding" else "Undo")
+        }
+    }
     @Composable private fun BarButton(icon: ImageVector?, label: String, enabled: Boolean = true, onClick: () -> Unit) {
         TextButton(enabled = enabled, onClick = onClick) {
             if (icon != null) {
@@ -375,7 +430,7 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Dpad()
                     if (!compact) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { HoldButton("Select", 4, 64); HoldButton("Start", 8, 64) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { HoldButton("B", 2, 68); HoldButton("A", 1, 76) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { RewindButton(); HoldButton("B", 2, 68); HoldButton("A", 1, 76) }
                 }
                 if (compact) Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.Center) { HoldButton("Select", 4, 64); Spacer(Modifier.width(12.dp)); HoldButton("Start", 8, 64) }
             }

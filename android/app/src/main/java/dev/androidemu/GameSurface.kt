@@ -12,7 +12,7 @@ import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 /** UI vsync schedules work on the GL thread; native emulation never blocks Compose. */
-class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, private val failure: (String) -> Unit) : GLSurfaceView(context), GLSurfaceView.Renderer, Choreographer.FrameCallback {
+class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, private val rewindEnded: () -> Unit, private val failure: (String) -> Unit) : GLSurfaceView(context), GLSurfaceView.Renderer, Choreographer.FrameCallback {
     private val pixels = ByteBuffer.allocateDirect(256 * 240 * 4)
     private val vertices = ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
         put(floatArrayOf(-1f,-1f,0f,1f, 1f,-1f,1f,1f, -1f,1f,0f,0f, 1f,1f,1f,0f)); position(0)
@@ -20,6 +20,8 @@ class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, pr
     private var program = 0
     private var texture = 0
     @Volatile var playing = false
+    @Volatile var rewinding = false
+    private var exhausted = false
     @Volatile var loaded = false
     private var nextFrame = 0L
     @Volatile private var frameRate = 60.0988f
@@ -63,7 +65,17 @@ class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, pr
         glClearColor(0f,0f,0f,1f); glClear(GL_COLOR_BUFFER_BIT)
         if (!loaded || program == 0) return
         try {
-            val (p1, p2) = inputs(); Native.frame(pixels, p1, p2, playing)
+            val (p1, p2) = inputs()
+            // Rewinding replaces the frame rather than following it. Once the
+            // chain runs dry the picture holds on its oldest frame - releasing
+            // the button is what resumes play, so a held button never quietly
+            // turns back into forward motion.
+            if (rewinding) {
+                if (!Native.rewind(pixels) && !exhausted) { exhausted = true; post { rewindEnded() } }
+            } else {
+                exhausted = false
+                Native.frame(pixels, p1, p2, playing)
+            }
             pixels.position(0); glUseProgram(program); glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture)
             glUniform1i(glGetUniformLocation(program, "screen"), 0)
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0,0,256,240,GL_RGBA,GL_UNSIGNED_BYTE,pixels)

@@ -4,9 +4,33 @@ use jni::{
     sys::{jboolean, jbyteArray, jfloat, jint, jstring},
     JNIEnv,
 };
-use nes_core::{Buttons, Nes};
+use nes_core::{rewind::Rewind, Buttons, Nes};
 use std::sync::Mutex;
 static MACHINE: Mutex<Option<Nes>> = Mutex::new(None);
+/// Bounded in bytes rather than frames: see `nes_core::rewind`. 64 MB buys
+/// roughly a minute of a mostly still screen and rather less of a scrolling
+/// one, which is the trade worth making automatically.
+const REWIND_BUDGET: usize = 64 * 1024 * 1024;
+static REWIND: Mutex<Option<Rewind>> = Mutex::new(None);
+/// Start a fresh chain anchored on where the machine is now. The anchor is
+/// always the machine's current state, so one pop is exactly one frame back.
+fn rewind_reset(nes: &Nes) {
+    let mut chain = Rewind::new(REWIND_BUDGET);
+    chain.push(&nes.save_state());
+    *REWIND.lock().unwrap() = Some(chain);
+}
+/// Paint the current framebuffer into a caller-owned direct buffer.
+///
+/// # Safety
+/// `address` must point to at least `256 * 240 * 4` writable bytes, which the
+/// caller establishes from the direct buffer's capacity.
+unsafe fn blit(nes: &Nes, address: *mut u8) {
+    let out = unsafe { std::slice::from_raw_parts_mut(address, 256 * 240 * 4) };
+    for (pixel, &index) in out.as_chunks_mut::<4>().0.iter_mut().zip(nes.framebuffer()) {
+        let rgb = PALETTE[(index & 63) as usize];
+        pixel.copy_from_slice(&[(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255]);
+    }
+}
 #[cfg(target_os = "android")]
 mod audio;
 fn error(env: &mut JNIEnv, message: impl ToString) {
@@ -34,6 +58,7 @@ pub extern "system" fn Java_dev_androidemu_Native_load(
     match result {
         Ok(nes) => {
             let id = format!("{:016x}", nes.bus.cart.header.hash);
+            rewind_reset(&nes);
             *MACHINE.lock().unwrap() = Some(nes);
             env.new_string(id).unwrap().into_raw()
         }
@@ -69,15 +94,56 @@ pub extern "system" fn Java_dev_androidemu_Native_frame(
         nes.set_buttons(0, Buttons(p1 as u8));
         nes.set_buttons(1, Buttons(p2 as u8));
         nes.step_frame();
+        // Recorded after the frame, so the chain's anchor is where the machine
+        // actually is and the first step back is one frame, not two.
+        if let Some(rewind) = REWIND.lock().unwrap().as_mut() {
+            rewind.push(&nes.save_state());
+        }
         #[cfg(target_os = "android")]
         audio::push(nes.bus.apu.samples());
     }
     // JNI verified the direct buffer capacity; Kotlin retains it for this call.
-    let out = unsafe { std::slice::from_raw_parts_mut(address, 256 * 240 * 4) };
-    for (pixel, &index) in out.as_chunks_mut::<4>().0.iter_mut().zip(nes.framebuffer()) {
-        let rgb = PALETTE[(index & 63) as usize];
-        pixel.copy_from_slice(&[(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255]);
+    unsafe { blit(nes, address) };
+}
+
+/// Step one frame back and paint it. Returns false once the chain runs out, so
+/// the shell can stop asking and tell the player they are as far back as it goes.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_rewind(
+    mut env: JNIEnv,
+    _: JClass,
+    buffer: JByteBuffer,
+) -> jboolean {
+    let capacity = env.get_direct_buffer_capacity(&buffer).unwrap_or(0);
+    if capacity < 256 * 240 * 4 {
+        error(&mut env, "Invalid video buffer");
+        return 0;
     }
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        error(&mut env, "Video buffer must be direct");
+        return 0;
+    };
+    let mut machine = MACHINE.lock().unwrap();
+    let Some(nes) = machine.as_mut() else {
+        return 0;
+    };
+    let mut chain = REWIND.lock().unwrap();
+    let stepped = match chain.as_mut().and_then(|rewind| rewind.pop()) {
+        // A state that came out of this same machine a moment ago should always
+        // load. If it somehow does not, leave the machine untouched - load_state
+        // is transactional - and report that rewinding stopped.
+        Some(state) => nes.load_state(state).is_ok(),
+        None => false,
+    };
+    drop(chain);
+    unsafe { blit(nes, address) };
+    stepped as jboolean
+}
+
+/// Frames the chain can still give back.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_rewindDepth(_: JNIEnv, _: JClass) -> jint {
+    REWIND.lock().unwrap().as_ref().map_or(0, |rewind| rewind.depth().min(i32::MAX as usize) as jint)
 }
 #[no_mangle]
 pub extern "system" fn Java_dev_androidemu_Native_snapshot(
@@ -127,8 +193,11 @@ pub extern "system" fn Java_dev_androidemu_Native_restore(
     } else {
         nes.load_state(&bytes)
     };
-    if let Err(e) = result {
-        error(&mut env, e);
+    match result {
+        // The chain led back from a different moment; keeping it would rewind
+        // into a timeline the player did not play.
+        Ok(()) => rewind_reset(nes),
+        Err(e) => error(&mut env, e),
     }
 }
 #[no_mangle]

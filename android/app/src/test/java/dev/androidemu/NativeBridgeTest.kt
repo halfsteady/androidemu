@@ -27,6 +27,36 @@ class NativeBridgeTest {
         battery[100] = 42; Native.restore(battery, true)
         assertArrayEquals(battery, Native.snapshot(true))
     }
+    @Test fun rewindWalksBackThroughTheFramesJustPlayed() {
+        Native.load(rom())
+        val buffer = ByteBuffer.allocateDirect(256 * 240 * 4)
+        // Frame 0 is recorded before it runs, so after five frames the chain
+        // holds the five states that preceded the current one.
+        val states = ArrayList<ByteArray>()
+        repeat(5) { states.add(Native.snapshot(false)); Native.frame(buffer, 0, 0, true) }
+        assertEquals(5, Native.rewindDepth())
+        for (expected in states.reversed()) {
+            assertTrue("the chain ran out early", Native.rewind(buffer))
+            assertArrayEquals(expected, Native.snapshot(false))
+        }
+        // Past the oldest frame it reports that it stopped, and leaves the
+        // machine where it was rather than unwinding into nothing.
+        val oldest = Native.snapshot(false)
+        assertFalse(Native.rewind(buffer))
+        assertArrayEquals(oldest, Native.snapshot(false))
+        assertEquals(0, Native.rewindDepth())
+    }
+    @Test fun loadingAStateAbandonsTheRewindChain() {
+        Native.load(rom())
+        val buffer = ByteBuffer.allocateDirect(256 * 240 * 4)
+        repeat(4) { Native.frame(buffer, 0, 0, true) }
+        val saved = Native.snapshot(false)
+        assertTrue(Native.rewindDepth() > 0)
+        // The chain led back from a different moment, so it does not survive.
+        Native.restore(saved, false)
+        assertEquals(0, Native.rewindDepth())
+        assertFalse(Native.rewind(buffer))
+    }
     @Test fun errorsBecomeExceptionsAndPreserveTheSession() {
         Native.load(rom()); val saved = Native.snapshot(false)
         fun rejects(block: () -> Unit) {

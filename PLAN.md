@@ -305,8 +305,10 @@ An emulator without a test harness is a rumour.
 Phase 1 has an installable preview: tier-1 mappers plus 66 (GxROM), NTSC/PAL/Dendy
 timing, five-channel audio, PPU rendering, a Compose shell, GLES video, AAudio
 output, standard controller/touch input with a per-controller button-mapping
-wizard, a full-screen mode, ROM import, savestates and SRAM persistence. The
-39-ROM regression set and nestest pass.
+wizard, a full-screen mode, hold-to-undo rewind, ROM import, savestates and SRAM
+persistence. Releases are built, signed and published by GitHub Actions; see
+[the release runbook](docs/RELEASING.md). The 39-ROM regression set and nestest
+pass.
 **Phase 1 remains open until device acceptance passes.** See
 [the implementation and acceptance record](docs/PHASE-1.md) for measured results,
 known limits and the outstanding gates.
@@ -328,7 +330,8 @@ Savestates and a polished UI are required Phase 1 deliverables, not optional ext
   reopen → resume. Measure frame pacing, audio latency and input latency before
   calling the phase complete.
 
-Phase 2 still adds rewind, the dedicated kid-mode lock and richer box-art handling.
+Phase 2 has rewind. It still needs the dedicated kid-mode lock, the large-target
+kid layout and richer box-art handling.
 
 Phases 1 and 2 together are the point at which Amelia stops using anything else. Everything after that is upside.
 
