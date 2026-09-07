@@ -9,22 +9,39 @@ import org.junit.Test
  * changes everybody's saved look, and a flat sample would preview nothing.
  */
 class LookTest {
-    @Test fun theOrdinalsAreTheSavedValuesSoTheyMustNotMove() {
-        // Persisted in preferences. Appending is fine; reordering is not.
-        assertEquals(0, Filter.None.ordinal)
-        assertEquals(1, Filter.Scanlines.ordinal)
-        assertEquals(2, Filter.Crt.ordinal)
-        assertEquals(3, Filter.DotMatrix.ordinal)
-        assertEquals(4, Filter.GameBoy.ordinal)
-        assertEquals(5, Filter.Grey.ordinal)
-        assertEquals(6, Filter.Sepia.ordinal)
-        assertEquals(7, Filter.Neon.ordinal)
+    @Test fun theIdsAreTheSavedValuesSoTheyMustNotMove() {
+        // Persisted in preferences. These are the numbers on disk, so a new look
+        // may take the next free one and a cut look's number is never reissued.
+        assertEquals(0, Filter.None.id)
+        assertEquals(1, Filter.Scanlines.id)
+        assertEquals(2, Filter.Crt.id)
+        assertEquals(3, Filter.DotMatrix.id)
+        assertEquals(4, Filter.GameBoy.id)
+        assertEquals(6, Filter.Sepia.id)
+        assertEquals(7, Filter.Neon.id)
+        assertEquals(8, Filter.Cartoon.id)
+        assertEquals("ids must be unique", Filter.entries.size, Filter.entries.map { it.id }.distinct().size)
     }
 
-    @Test fun anUnknownOrdinalFallsBackRatherThanCrashing() {
+    @Test fun theCutBlackAndWhiteLandsOnTheLookThatAbsorbedIt() {
+        // 5 was "Black and white", which was Sepia with the tint thrown away.
+        // Anyone still saved on it gets Sepia rather than silently losing it,
+        // and 5 is never handed to a new look.
+        assertEquals(Filter.Sepia, Filter.of(5))
+        assertFalse("id 5 is retired", Filter.entries.any { it.id == 5 })
+    }
+
+    @Test fun anUnknownIdFallsBackRatherThanCrashing() {
         assertEquals(Filter.Crt, Filter.of(2))
         assertEquals(Filter.None, Filter.of(99))
         assertEquals(Filter.None, Filter.of(-1))
+    }
+
+    @Test fun onlyTheLooksThatNeedAnOffScreenPassAskForOne() {
+        // The smoothing chain is two extra draws, so it runs only where it earns
+        // them. Everything else is still one shader with a branch.
+        assertTrue(Filter.Cartoon.smooths)
+        assertEquals(listOf(Filter.Cartoon), Filter.entries.filter { it.smooths })
     }
 
     @Test fun everyLookIsNamedAndExplained() {

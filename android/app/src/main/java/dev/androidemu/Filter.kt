@@ -1,27 +1,46 @@
 package dev.androidemu
 
 /**
- * A look applied to the finished framebuffer. All of these are one fragment
- * shader with a branch, so switching costs nothing and there is one place to read.
+ * A look applied to the finished framebuffer.
  *
- * These are the cheap, fun end of §3 of the plan. The accurate end — the NTSC
- * composite filter, xBRZ and the CRT shader ports — needs real work and is not
- * pretending to be here.
+ * Most of these are one fragment shader with a branch, so switching costs nothing
+ * and there is one place to read. [Cartoon] is the exception: it needs the picture
+ * smoothed before it can be inked, so it asks for the source passes in
+ * [ScreenRenderer] first.
  *
- * The ordinal is persisted, so append rather than reorder.
+ * [id] is what gets written to preferences, not the ordinal. A look that turns out
+ * not to earn its place can then be removed without silently changing the look
+ * everybody after it in the list is using. A retired id is never reused.
  */
-enum class Filter(val label: String, val note: String) {
-    None("Off", "The framebuffer exactly as the console drew it"),
-    Scanlines("Scanlines", "A soft dark band between each row, the way a CRT drew them"),
-    Crt("Old TV", "Scanlines, a curved tube, an aperture grille and a darkened edge"),
-    DotMatrix("Dot matrix", "A grid between the pixels, like a handheld's LCD"),
-    GameBoy("Four greens", "Everything remapped onto a handheld's four-shade screen"),
-    Grey("Black and white", "The set nobody in the house wanted"),
-    Sepia("Old photo", "Warm and faded"),
-    Neon("Neon", "Bright things glow and the colour is turned all the way up");
+enum class Filter(
+    val id: Int,
+    val label: String,
+    val note: String,
+    /** Whether the picture is edge-smoothed into an off-screen buffer first. */
+    val smooths: Boolean = false,
+) {
+    None(0, "Off", "The framebuffer exactly as the console drew it"),
+    Scanlines(1, "Scanlines", "A soft dark band between each row, the way a CRT drew them"),
+    Crt(2, "Old TV", "Scanlines, a curved tube, an aperture grille and a darkened edge"),
+    DotMatrix(3, "Dot matrix", "A grid between the pixels, like a handheld's LCD"),
+    GameBoy(4, "Four greens", "Everything remapped onto a handheld's four-shade screen"),
+    // 5 was "Black and white". Cut: it is Sepia with the tint thrown away, and
+    // anyone who had it now gets Sepia. The id stays retired.
+    Sepia(6, "Old photo", "Warm and faded"),
+    Neon(7, "Neon", "Bright things glow and the colour is turned all the way up"),
+    Cartoon(8, "Cartoon", "Smoothed into curves, inked, and painted in flat colour", smooths = true);
 
     companion object {
-        /** Persisted ordinals, tolerant of a value written by a newer build. */
-        fun of(ordinal: Int) = entries.getOrElse(ordinal) { None }
+        /** The id "Black and white" used to be saved under. */
+        private const val RETIRED_GREY = 5
+
+        /**
+         * A saved id, tolerant of one written by a newer build. The first release
+         * wrote ordinals, which for every surviving look are the same number.
+         */
+        fun of(id: Int) = when (id) {
+            RETIRED_GREY -> Sepia
+            else -> entries.firstOrNull { it.id == id } ?: None
+        }
     }
 }

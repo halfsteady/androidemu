@@ -96,11 +96,16 @@ app behaves, with the depth one panel away rather than behind a code.
 
 ## Not verified here
 
-The shaders compile and the geometry is unit-tested, but **nobody has looked at
-the eight looks on the panel**. Whether the aperture grille reads as a CRT or as
-shimmer at this scale, whether the curvature is pleasant or seasick, and whether
-the neon bloom is fun or garish are all judgements that need eyes on hardware.
-The cost of 8× fast-forward and of an 8× rewind is also unmeasured.
+The shaders compile — against `glslangValidator` and against a real GLES 3.2
+driver, where every look has also been rendered off-screen and looked at — but
+**nobody has seen any of it on the panel**. Whether the aperture grille reads as a
+CRT or as shimmer at this scale, whether the curvature is pleasant or seasick,
+whether the neon bloom is fun or garish, and whether Cartoon's ink is confident or
+heavy on small sprites are all judgements that need eyes on hardware. Cartoon's
+two off-screen passes are 61k and 246k fragments against the roughly 7.7 million a
+full-screen pass covers, so they should be far inside the frame budget — but that
+is arithmetic, not a measurement. The cost of 8× fast-forward and of an 8× rewind
+is also unmeasured.
 
 Settings written by an older build are migrated, not reset: the scanlines switch
 the first release shipped becomes the scanlines look, and that path has a test.
@@ -108,9 +113,15 @@ the first release shipped becomes the scanlines look, and that path has a test.
 ## Remaining
 
 - [ ] Look at the eight looks on the tablet and cut the ones that do not earn
-  their place. Measure 8× in both directions.
-- [ ] The accurate end of §3 — the NTSC composite filter, the CRT shader ports,
-  xBRZ — is real work and is not pretending to be here.
+  their place. Measure 8× in both directions, and measure Cartoon's two extra
+  passes rather than trusting the fragment counts.
+- [ ] The accurate end of §3 — the NTSC composite filter and the CRT shader ports
+  — is real work and is not pretending to be here. The smoothing engine now
+  exists (Cartoon rides it), so an unstylised **Smooth** is nearly free.
+- [ ] Cartoon inks by colour distance alone, so it cannot tell a drawn outline
+  from a sprite meeting a busy background. A silhouette pass that weights the
+  line by how far apart the two regions are in depth-of-field terms would give
+  the foreground a heavier line, which is what a real cel does.
 - [ ] Per-game picture overrides. Settings are global today.
 - [ ] Slow motion and frame advance, the other half of the time controls.
 - [ ] Box-art packs keyed by ROM hash (§8; needs a metadata pack that doesn't exist).

@@ -102,14 +102,40 @@ Live thumbnail preview in the picker, global default plus per-game override.
 - Overscan crop, adjustable per edge (many games have garbage in the top/bottom 8 px)
 
 **Shaders**
+
+A curated shelf of named looks, not a settings screen: somewhere in the 10–20
+range, each one earning its place. A look that is only another look with a knob
+turned does not get a slot. Parameters live one panel deeper, per §9.
+
 - CRT family: scanlines, aperture grille, shadow mask, curvature, bloom, `crt-easymode` and `crt-lottes` ports
-- **NTSC composite filter** (blargg's nes-ntsc): the big one. Makes dithering blend and Zelda's waterfalls look the way they actually looked, rather than the way the raw framebuffer looks.
-- Smoothing family: Scale2x, HQ2x, xBRZ — for when you want the opposite of authenticity
+- **NTSC composite filter** (blargg's nes-ntsc): the big one. Makes dithering blend and Zelda's waterfalls look the way they actually looked, rather than the way the raw framebuffer looks. Do it as a GPU signal pass, not blargg's CPU lookup table — that costs about a millisecond in the just-in-time frame path, which is the latency §2 just spent a release buying back.
+- **Cartoon** — built. Edge-directed smoothing into curves, then an ink line at two weights drawn as a dark tint of the colour it runs through rather than black. No posterising step: a 2C02 frame is already flat, four colours to a tile and chosen by hand, so banding it again only walks the artist's colours onto a quantiser's grid. See below.
+- Smoothing family: Scale2x is built as the engine under Cartoon. An unstylised **Smooth** is nearly free on top of it; xBRZ ported literally is not, and should not be — a 5×5 neighbourhood with a hundred-odd branches at ~7.7 Mpx would throttle the tablet. Classify in picture space, fill in screen space.
+- **Bad cable** and **Coloring book** — cheap siblings of the two above, once each engine exists.
 - LCD/handheld look, for completeness
+
+Considered and cut: *Black and white* (Old photo with the tint thrown away),
+*Studio monitor* and *Phosphor* (near-free, and the least essential things on the
+sheet). *Vector* and *Night light* never made the shortlist — one is unplayable
+after ten seconds, the other is a brightness control wearing a costume.
 
 **Palettes**
 - 2C02 hardware measurement, Nestopia YUV, FBX Smooth/Composite, and custom `.pal` import
 - Per-game palette override
+- A palette is an **axis, not a look**: you want Composite with FBX and Cartoon
+  with measured 2C02, so it gets its own picker rather than multiplying the shelf.
+  When Composite is on the palette is largely moot — nes-ntsc synthesises colour
+  from phase rather than reading a table — so it either feeds the encoder or greys
+  out. It must not sit there silently doing nothing.
+- Cheapest item here, but only after the framebuffer arrives as **palette indices
+  rather than RGB**. Today `native/src/lib.rs` converts on the CPU against a
+  hardcoded table; moving the lookup into the shader makes every palette a
+  256-byte upload, shrinks the per-frame upload from 245 KB to 61 KB, and is a
+  hard prerequisite for the NTSC filter, which needs index and phase.
+- Blocked on the core: **emphasis bits are not encoded** (`core/src/ppu.rs`).
+  Don't widen the framebuffer to `u16` for them — it is serialised into every
+  savestate and so into every rewind delta. A per-scanline `[u8; 240]` plane is
+  240 bytes and covers every real case (SMB3's flash, Noah's Ark, Battletoads).
 
 **Presets**
 - Named bundles ("Living-room CRT", "Crisp", "Amelia") so nobody has to reason about shader parameters
@@ -323,7 +349,7 @@ Phase 2 is implemented, and deliberately without the separate kid mode §9 first
 called for: a box-art shelf ordered by what was played last, one-tap resume, one
 draggable time control covering rewind and fast-forward with fixed jumps back
 beside it, chosen box art per game, picture settings (4:3 / 8:7 / pixel-perfect,
-overscan trim) and eight looks from scanlines to a four-shade handheld screen —
+overscan trim) and eight looks from scanlines to a cel-shaded Cartoon —
 each previewed in settings by the real shader — screenshots to the device gallery,
 playtime, plain one-sentence failures with the real reason kept in a readable log,
 and autosave on pause, on background and on a low battery. Control size follows

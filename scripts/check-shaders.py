@@ -3,7 +3,7 @@
 
 A shader that fails to compile is a black screen, and the only place that shows
 up is on hardware — the Kotlin compiles either way, because the shader is a
-string. This pulls the two shader sources out of the Kotlin literal and runs them
+string. This pulls every shader source out of the Kotlin literals and runs them
 through glslangValidator, which does enforce the ES 3.00 rules that matter here
 (reserved words like `sample`, undeclared identifiers, type mismatches).
 
@@ -28,7 +28,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "android/app/src/main/java/dev/androidemu/ScreenRenderer.kt"
-SHADERS = [("VERTEX", "const val FRAGMENT", "vert"), ("FRAGMENT", "}", "frag")]
 
 
 def find_validator(explicit: str | None) -> str | None:
@@ -42,24 +41,47 @@ def find_validator(explicit: str | None) -> str | None:
     return str(candidate) if candidate.exists() else None
 
 
-def extract(name: str, stop: str) -> str:
-    """The Kotlin string-concatenation literal for one shader, comments dropped."""
-    out: list[str] = []
-    inside = False
+def shaders() -> list[tuple[str, str, str]]:
+    """Every GLSL literal in the file, as (name, source, suffix).
+
+    Found rather than listed, so a shader added to the renderer is checked
+    without anyone remembering to add it here. A constant counts as a shader
+    when its literals begin with a #version line; the stage comes from whether
+    it writes gl_Position.
+    """
+    found: list[tuple[str, str, str]] = []
+    name: str | None = None
+    pieces: list[str] = []
+
+    def flush() -> None:
+        if name and pieces:
+            source = "".join(pieces)
+            if source.startswith("#version"):
+                suffix = "vert" if "gl_Position" in source else "frag"
+                found.append((name, source, suffix))
+
     for line in SOURCE.read_text().splitlines():
         stripped = line.strip()
-        if stripped.startswith(f"const val {name} ="):
-            inside = True
+        start = re.match(r"const val (\w+) =", stripped)
+        if start:
+            flush()
+            name, pieces = start.group(1), []
             continue
-        if inside and stripped.startswith(stop):
-            break
-        if not inside or stripped.startswith("//"):
+        if name is None:
             continue
-        for piece in re.findall(r'"((?:[^"\\]|\\.)*)"', line):
-            out.append(piece.encode().decode("unicode_escape"))
-    if not out:
-        raise SystemExit(f"could not find the {name} shader in {SOURCE}")
-    return "".join(out)
+        # A comment can quote things too, and its quotes are not shader source.
+        if stripped.startswith("//"):
+            continue
+        quoted = re.findall(r'"((?:[^"\\]|\\.)*)"', re.sub(r"\s*//.*$", "", line))
+        if quoted:
+            pieces.extend(piece.encode().decode("unicode_escape") for piece in quoted)
+        elif pieces:
+            flush()
+            name, pieces = None, []
+    flush()
+    if not found:
+        raise SystemExit(f"no shaders found in {SOURCE}")
+    return found
 
 
 def main() -> int:
@@ -78,9 +100,9 @@ def main() -> int:
         shutil.copy2(validator, runnable)
         runnable.chmod(0o755)
         failed = False
-        for name, stop, suffix in SHADERS:
-            path = Path(work) / f"screen.{suffix}"
-            path.write_text(extract(name, stop))
+        for name, source, suffix in shaders():
+            path = Path(work) / f"{name.lower()}.{suffix}"
+            path.write_text(source)
             done = subprocess.run([str(runnable), str(path)], capture_output=True, text=True)
             if done.returncode == 0:
                 print(f"ok: {name.lower()} shader")

@@ -37,7 +37,7 @@ class Settings(context: Context) {
     )
     var filter: Filter
         get() = filterState.value
-        set(value) { filterState.value = value; preferences.edit { putInt(FILTER, value.ordinal) } }
+        set(value) { filterState.value = value; preferences.edit { putInt(FILTER, value.id) } }
 
     private companion object {
         const val ASPECT = "aspect"
