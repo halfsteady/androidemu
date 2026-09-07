@@ -7,8 +7,21 @@
   tmux = "androidemu"
   default_model = ""
 
+[[task]]
+  name = "visuals"
+  purpose = "Picture looks, filters and palettes — the visual side of Emulia"
+  dir = ".harness/worktrees/visuals"
+  phase = "completed"
+  branch = "feat/visuals"
+
 [[terminal]]
   name = "main"
   tmux = "androidemu"
   main = true
+  agent = "claude"
+
+[[terminal]]
+  name = "visuals"
+  task = "visuals"
+  tmux = "androidemu-visuals"
   agent = "claude"
