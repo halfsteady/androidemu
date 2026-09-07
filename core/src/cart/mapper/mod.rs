@@ -1,9 +1,12 @@
 //! Mapper (cartridge board) implementations.
 //!
-//! Tier 1 - mappers 0/1/2/3/4/7 - is roughly 90% of the commercial library and is
-//! what Phase 1 targets. See PLAN.md §1.
+//! Tier 1 - mappers 0/1/2/3/4/7 - is roughly 90% of the commercial library.
+//! Tier 2 adds 9/10 (MMC2/MMC4), 11, 66 and 69 (Sunsoft FME-7), plus 71
+//! (Codemasters). See PLAN.md §1.
 
 mod banked;
+mod fme7;
+mod latched;
 mod nrom;
 
 use super::{CartError, Header, Mirroring};
@@ -43,11 +46,18 @@ pub trait Mapper: Send {
 }
 
 pub fn build(header: &Header, prg: Vec<u8>, chr: Vec<u8>) -> Result<Box<dyn Mapper>, CartError> {
+    // Every banked board needs at least one whole 16 KB window to fix in place;
+    // below that the file is not the board it claims to be.
+    if header.mapper != 0 && prg.len() < 16384 {
+        return Err(CartError::UnsupportedMapper(header.mapper));
+    }
     match header.mapper {
         0 => Ok(Box::new(nrom::Nrom::new(header, prg, chr))),
-        1 | 2 | 3 | 4 | 7 | 66 if prg.len() >= 16384 => {
-            Ok(Box::new(banked::Banked::new(header, prg, chr)))
-        }
+        1 | 2 | 3 | 4 | 7 | 11 | 66 | 71 => Ok(Box::new(banked::Banked::new(header, prg, chr))),
+        // Both need CHR ROM to latch between, so a CHR-RAM image claiming one of
+        // these is mislabelled rather than unusual.
+        9 | 10 if !chr.is_empty() => Ok(Box::new(latched::Latched::new(header, prg, chr))),
+        69 => Ok(Box::new(fme7::Fme7::new(header, prg, chr))),
         n => Err(CartError::UnsupportedMapper(n)),
     }
 }

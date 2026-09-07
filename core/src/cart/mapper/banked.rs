@@ -1,4 +1,15 @@
-//! Common tier-1 boards: MMC1, UxROM, CNROM, MMC3 and AxROM.
+//! The boards that are a bank register and little else: MMC1, UxROM, CNROM,
+//! MMC3, AxROM, GxROM, Color Dreams and Codemasters.
+//!
+//! One register file serves all of them, and each board reads the fields it needs
+//! — `bank` means a different thing on UxROM than on GxROM. That is deliberate:
+//! the alternative is eight structs that are each one `u8`. Boards that need
+//! state of their own shape live in their own modules instead (see `latched` and
+//! `fme7`), because bending this file around them would cost more than it saves.
+//!
+//! The field list is a savestate wire format. Adding to it invalidates every
+//! state already saved for these boards, so a new board reuses a field that the
+//! boards already here do not read.
 use super::{Header, Mapper, Mirroring};
 use crate::state::{Codec, StateError};
 
@@ -75,7 +86,10 @@ impl Banked {
             state: Registers {
                 bank: 0,
                 shift: 0x10,
-                control: 0x0c,
+                // MMC1 powers up with both PRG bank-mode bits set. Every other
+                // board here ignores this field, except Codemasters, which uses
+                // it as its mirroring latch and must therefore start clear.
+                control: if h.mapper == 1 { 0x0c } else { 0 },
                 chr0: 0,
                 chr1: 0,
                 prg: 0,
@@ -136,6 +150,17 @@ impl Banked {
             3 => a / 16384,
             7 => (s.bank as usize & 7) * 2 + a / 16384,
             66 => ((s.bank as usize >> 4) & 3) * 2 + a / 16384,
+            // Color Dreams is GxROM with the nibbles the other way round: PRG in
+            // the low bits, CHR in the high ones.
+            11 => (s.bank as usize & 0x0f) * 2 + a / 16384,
+            // Codemasters, same shape as UxROM.
+            71 => {
+                if a < 16384 {
+                    s.bank as usize
+                } else {
+                    n16 - 1
+                }
+            }
             4 => {
                 let n8 = self.prg.len() / 8192;
                 let slot = a / 8192;
@@ -179,6 +204,7 @@ impl Banked {
             }
             3 => s.bank as usize * 8192 + a,
             66 => (s.bank as usize & 3) * 8192 + a,
+            11 => (s.bank as usize >> 4) * 8192 + a,
             4 => {
                 let slot = (a / 1024) ^ if s.select & 0x80 != 0 { 4 } else { 0 };
                 let bank = match slot {
@@ -264,6 +290,16 @@ impl Mapper for Banked {
                 0xe001 => s.irq_enabled = true,
                 _ => unreachable!(),
             },
+            // Codemasters BF9097 boards put a single-screen mirroring latch at
+            // $9000, and the bank register responds to the rest of the range.
+            // `control` is the latch: 0 until written, then 1 or 2.
+            71 => {
+                if (0x9000..=0x9fff).contains(&addr) {
+                    s.control = if val & 0x10 != 0 { 2 } else { 1 };
+                } else {
+                    s.bank = val;
+                }
+            }
             _ => s.bank = val,
         }
     }
@@ -291,6 +327,12 @@ impl Mapper for Banked {
                     Mirroring::SingleScreenHi
                 }
             }
+            71 => match self.state.control {
+                1 => Mirroring::SingleScreenLo,
+                2 => Mirroring::SingleScreenHi,
+                // Boards without the latch never write it, and keep the header's.
+                _ => self.fixed_mirroring,
+            },
             4 if self.fixed_mirroring != Mirroring::FourScreen => {
                 if self.state.mirror == 0 {
                     Mirroring::Vertical
