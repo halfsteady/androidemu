@@ -27,6 +27,17 @@ pub enum Region {
     Dendy,
 }
 
+impl Region {
+    pub fn cpu_hz(self) -> u32 {
+        match self { Self::Ntsc => 1_789_773, Self::Pal => 1_662_607, Self::Dendy => 1_773_448 }
+    }
+    pub fn frame_rate(self) -> f64 {
+        match self { Self::Ntsc => 60.0988, Self::Pal | Self::Dendy => 50.00698 }
+    }
+    pub fn scanlines(self) -> u16 { if self == Self::Ntsc { 262 } else { 312 } }
+    pub fn vblank_scanline(self) -> u16 { if self == Self::Dendy { 291 } else { 241 } }
+}
+
 #[derive(Debug)]
 pub enum CartError {
     TooShort,

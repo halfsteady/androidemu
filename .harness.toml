@@ -6,3 +6,9 @@
 [session]
   tmux = "androidemu"
   default_model = ""
+
+[[terminal]]
+  name = "main"
+  tmux = "androidemu"
+  main = true
+  agent = "claude"

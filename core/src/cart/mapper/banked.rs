@@ -135,6 +135,7 @@ impl Banked {
             }
             3 => a / 16384,
             7 => (s.bank as usize & 7) * 2 + a / 16384,
+            66 => ((s.bank as usize >> 4) & 3) * 2 + a / 16384,
             4 => {
                 let n8 = self.prg.len() / 8192;
                 let slot = a / 8192;
@@ -177,6 +178,7 @@ impl Banked {
                 bank * 4096 + a % 4096
             }
             3 => s.bank as usize * 8192 + a,
+            66 => (s.bank as usize & 3) * 8192 + a,
             4 => {
                 let slot = (a / 1024) ^ if s.select & 0x80 != 0 { 4 } else { 0 };
                 let bank = match slot {
@@ -222,6 +224,7 @@ impl Mapper for Banked {
         if addr < 0x8000 {
             return;
         }
+        let val = if self.kind == 66 { val & self.prg[self.prg_index(addr)] } else { val };
         let s = &mut self.state;
         match self.kind {
             1 => {

@@ -8,6 +8,17 @@ import android.view.MotionEvent
 import java.util.concurrent.ConcurrentHashMap
 
 class ControllerInput(context: Context, private val disconnected: () -> Unit) : InputManager.InputDeviceListener {
+    private val preferences = context.getSharedPreferences("controllers", Context.MODE_PRIVATE)
+    private fun profile(event: KeyEvent) = event.device?.let { "${it.vendorId}:${it.productId}:${it.descriptor}" } ?: "keyboard"
+    private fun physical(event: KeyEvent) = if (event.scanCode != 0) "scan:${event.scanCode}" else "key:${event.keyCode}"
+    fun saveMapping(events: List<Pair<KeyEvent, Int>>) {
+        val edit = preferences.edit()
+        events.groupBy { profile(it.first) }.forEach { (device, mappings) ->
+            preferences.all.keys.filter { it.startsWith("$device/") }.forEach { edit.remove(it) }
+            mappings.forEach { (event, bit) -> edit.putInt("$device/${physical(event)}", bit) }
+        }
+        edit.apply(); clear()
+    }
     private val manager = context.getSystemService(InputManager::class.java)
     private val slots = ConcurrentHashMap<Int, Int>()
     private val keys = ConcurrentHashMap<Int, Int>()
@@ -26,17 +37,24 @@ class ControllerInput(context: Context, private val disconnected: () -> Unit) : 
         val slot = (0..1).firstOrNull { !slots.containsValue(it) } ?: return false
         slots[id] = slot; return true
     }
-    fun key(event: KeyEvent): Boolean {
-        val bit = when (event.keyCode) {
-            KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_X -> 1
-            KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_Z -> 2
+    // The NES button bit this event stands for, or 0 for a key we don't use.
+    // A saved profile wins over the built-in guesses, which is the whole point
+    // of the mapping wizard: cheap adapters report buttons the defaults miss.
+    fun bitFor(event: KeyEvent): Int =
+        preferences.getInt("${profile(event)}/${physical(event)}", 0).takeIf { it != 0 } ?: when (event.keyCode) {
+            KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_1, KeyEvent.KEYCODE_X -> 1
+            KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_2, KeyEvent.KEYCODE_Z -> 2
             KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_SHIFT_RIGHT -> 4
             KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> 8
-            KeyEvent.KEYCODE_DPAD_UP -> 16; KeyEvent.KEYCODE_DPAD_DOWN -> 32
-            KeyEvent.KEYCODE_DPAD_LEFT -> 64; KeyEvent.KEYCODE_DPAD_RIGHT -> 128
-            else -> return false
+            KeyEvent.KEYCODE_DPAD_UP -> 16
+            KeyEvent.KEYCODE_DPAD_DOWN -> 32
+            KeyEvent.KEYCODE_DPAD_LEFT -> 64
+            KeyEvent.KEYCODE_DPAD_RIGHT -> 128
+            else -> 0
         }
-        if (!assign(event.deviceId)) return false
+    fun key(event: KeyEvent): Boolean {
+        val bit = bitFor(event)
+        if (bit == 0 || !assign(event.deviceId)) return false
         val old = keys[event.deviceId] ?: 0
         keys[event.deviceId] = if (event.action == KeyEvent.ACTION_DOWN) old or bit else old and bit.inv()
         return true

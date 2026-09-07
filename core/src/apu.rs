@@ -1,7 +1,9 @@
 //! NTSC 2A03 audio. Five channels, nonlinear mixer and fixed-rate output.
 //! The per-cycle nonlinear mixer is band-limited by a fixed FIR before 48 kHz
 //! decimation, then filtered for DC removal and the analog output response.
-const CPU_HZ: u32 = 1_789_773;
+use crate::cart::Region;
+const PAL_NOISE: [u16; 16] = [4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778];
+const PAL_DMC: [u16; 16] = [398,354,316,298,276,236,210,198,176,148,132,118,98,78,66,50];
 pub const SAMPLE_RATE: u32 = 48_000;
 const LENGTH: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
@@ -98,6 +100,7 @@ impl Pulse {
 }
 #[derive(Clone)]
 pub struct Apu {
+    pub(crate) region: Region,
     regs: [u8; 0x18],
     five_step: bool,
     irq_inhibit: bool,
@@ -143,6 +146,7 @@ impl Default for Apu {
 impl Apu {
     pub fn new() -> Self {
         Self {
+            region: Region::Ntsc,
             regs: [0; 0x18],
             five_step: false,
             irq_inhibit: false,
@@ -228,20 +232,21 @@ impl Apu {
                 }
             }
         }
-        if self.cycle == 7457 || self.cycle == 22371 {
+        let clocks = if self.region == Region::Pal { [8313, 16627, 24939, 33253, 41565] } else { [7457, 14913, 22371, 29829, 37281] };
+        if self.cycle == clocks[0] || self.cycle == clocks[2] {
             self.quarter();
         }
-        if self.cycle == 14913
-            || (!self.five_step && self.cycle == 29829)
-            || (self.five_step && self.cycle == 37281)
+        if self.cycle == clocks[1]
+            || (!self.five_step && self.cycle == clocks[3])
+            || (self.five_step && self.cycle == clocks[4])
         {
             self.quarter();
             self.half();
         }
-        if !self.five_step && (29828..=29830).contains(&self.cycle) && !self.irq_inhibit {
+        if !self.five_step && (clocks[3] - 1..=clocks[3] + 1).contains(&self.cycle) && !self.irq_inhibit {
             self.frame_irq = true;
         }
-        if self.cycle >= if self.five_step { 37282 } else { 29830 } {
+        if self.cycle >= if self.five_step { clocks[4] + 1 } else { clocks[3] + 1 } {
             self.cycle = 0;
         }
         if self.total & 1 == 0 {
@@ -263,7 +268,7 @@ impl Apu {
             self.triangle_timer -= 1;
         }
         if self.noise_timer == 0 {
-            self.noise_timer = NOISE[(self.regs[0x0e] & 15) as usize] - 1;
+            self.noise_timer = (if self.region == Region::Pal { PAL_NOISE } else { NOISE })[(self.regs[0x0e] & 15) as usize] - 1;
             let tap = if self.regs[0x0e] & 0x80 != 0 { 6 } else { 1 };
             let feedback = (self.noise_shift ^ (self.noise_shift >> tap)) & 1;
             self.noise_shift = (self.noise_shift >> 1) | (feedback << 14);
@@ -271,7 +276,7 @@ impl Apu {
             self.noise_timer -= 1;
         }
         if self.dmc_timer == 0 {
-            self.dmc_timer = DMC_RATE[(self.regs[0x10] & 15) as usize] - 1;
+            self.dmc_timer = (if self.region == Region::Pal { PAL_DMC } else { DMC_RATE })[(self.regs[0x10] & 15) as usize] - 1;
             if !self.dmc_silent {
                 if self.dmc_shift & 1 != 0 {
                     if self.dmc_output <= 125 {
@@ -320,8 +325,8 @@ impl Apu {
         self.history[self.history_pos] = mixed as f32;
         self.history_pos = (self.history_pos + 1) & 1023;
         self.sample_phase += SAMPLE_RATE;
-        if self.sample_phase >= CPU_HZ {
-            self.sample_phase -= CPU_HZ;
+        if self.sample_phase >= self.region.cpu_hz() {
+            self.sample_phase -= self.region.cpu_hz();
             let mut value = 0.0;
             for (i, &coefficient) in crate::audio_filter::FIR.iter().enumerate() {
                 value += coefficient * self.history[(self.history_pos + i) & 1023];
@@ -451,10 +456,10 @@ impl Apu {
         }
     }
     pub(crate) fn valid_state(&self) -> bool {
-        self.cycle <= 37282
+        self.cycle <= if self.region == Region::Pal { 41566 } else { 37282 }
             && self.dmc_output <= 127
             && self.sample_count <= 2048
-            && self.sample_phase < CPU_HZ
+            && self.sample_phase < self.region.cpu_hz()
             && self.history_pos < 1024
             && self.dmc_bits > 0
             && self.dmc_bits <= 8
@@ -518,5 +523,6 @@ crate::state::state_fields!(
     high_pass,
     low_pass,
     samples,
-    sample_count
+    sample_count;
+    region: Region::Ntsc
 );

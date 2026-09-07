@@ -36,10 +36,12 @@ pub struct NesBus {
 
 impl NesBus {
     pub fn new(cart: Cartridge) -> NesBus {
+        let mut ppu = Ppu::new(); ppu.region = cart.header.region;
+        let mut apu = Apu::new(); apu.region = cart.header.region;
         NesBus {
             ram: [0; 2048],
-            ppu: Ppu::new(),
-            apu: Apu::new(),
+            ppu,
+            apu,
             cart,
             controllers: Default::default(),
             open_bus: 0,
@@ -54,7 +56,12 @@ impl NesBus {
     /// per CPU cycle on NTSC.
     fn tick(&mut self) {
         self.begin_cycle();
+        self.end_cycle();
+    }
+
+    fn end_cycle(&mut self) {
         self.ppu.tick(self.cart.mapper.as_mut());
+        if self.cart.header.region == crate::Region::Pal && self.cycles.is_multiple_of(5) { self.ppu.tick(self.cart.mapper.as_mut()); }
     }
 
     fn begin_cycle(&mut self) {
@@ -113,7 +120,7 @@ impl Bus for NesBus {
             0x4020..=0xFFFF => self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus),
         };
         self.open_bus = v;
-        self.ppu.tick(self.cart.mapper.as_mut());
+        self.end_cycle();
         v
     }
 
@@ -134,7 +141,7 @@ impl Bus for NesBus {
             0x4018..=0x401F => {}
             0x4020..=0xFFFF => self.cart.mapper.cpu_write(addr, val),
         }
-        self.ppu.tick(self.cart.mapper.as_mut());
+        self.end_cycle();
     }
 
     fn nmi_line(&self) -> bool {
@@ -170,6 +177,10 @@ impl NesBus {
         self.dma_page = Codec::decode(input)?;
         self.cycles = Codec::decode(input)?;
         self.extra_cycles = Codec::decode(input)?;
+        // Timing configuration is immutable cartridge metadata, not serialized
+        // device state. Keeping it out of the codec preserves preview-v1 saves.
+        self.ppu.region = self.cart.header.region;
+        self.apu.region = self.cart.header.region;
         if !self.ppu.valid_state()
             || !self.apu.valid_state()
             || self.dma_stall > 514

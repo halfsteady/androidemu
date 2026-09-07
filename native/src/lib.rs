@@ -1,7 +1,7 @@
 //! Android JNI boundary. The machine has one owner and never runs in the audio callback.
 use jni::{
     objects::{JByteArray, JByteBuffer, JClass},
-    sys::{jboolean, jbyteArray, jint, jstring},
+    sys::{jboolean, jbyteArray, jfloat, jint, jstring},
     JNIEnv,
 };
 use nes_core::{Buttons, Nes};
@@ -33,10 +33,6 @@ pub extern "system" fn Java_dev_androidemu_Native_load(
         .and_then(|bytes| Nes::new(&bytes).map_err(|e| e.to_string()));
     match result {
         Ok(nes) => {
-            if nes.bus.cart.header.region != nes_core::Region::Ntsc {
-                error(&mut env, "This version supports NTSC games only.");
-                return std::ptr::null_mut();
-            }
             let id = format!("{:016x}", nes.bus.cart.header.hash);
             *MACHINE.lock().unwrap() = Some(nes);
             env.new_string(id).unwrap().into_raw()
@@ -147,4 +143,9 @@ pub extern "system" fn Java_dev_androidemu_Native_audio(
     }
     #[cfg(not(target_os = "android"))]
     let _ = (&mut env, playing);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_frameRate(_: JNIEnv, _: JClass) -> jfloat {
+    MACHINE.lock().unwrap().as_ref().map_or(60.0988, |nes| nes.bus.cart.header.region.frame_rate() as f32)
 }

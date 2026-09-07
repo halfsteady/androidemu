@@ -22,6 +22,8 @@ class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, pr
     @Volatile var playing = false
     @Volatile var loaded = false
     private var nextFrame = 0L
+    @Volatile private var frameRate = 60.0988f
+    fun setGameFrameRate(rate: Float) { frameRate = rate; post { if (Build.VERSION.SDK_INT >= 30 && holder.surface.isValid) holder.surface.setFrameRate(rate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) } }
     private var attached = false
     init { setEGLContextClientVersion(3); preserveEGLContextOnPause = true; setRenderer(this); renderMode = RENDERMODE_WHEN_DIRTY }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); attached = true; Choreographer.getInstance().postFrameCallback(this) }
@@ -29,7 +31,7 @@ class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, pr
     override fun doFrame(time: Long) {
         if (playing && loaded) {
             if (nextFrame == 0L || time - nextFrame > 100_000_000L) nextFrame = time
-            if (time >= nextFrame) { nextFrame += 16_639_267L; requestRender() }
+            if (time >= nextFrame) { nextFrame += (1_000_000_000.0 / frameRate).toLong(); requestRender() }
         } else nextFrame = 0L
         if (attached) Choreographer.getInstance().postFrameCallback(this)
     }
@@ -55,7 +57,7 @@ class GameSurface(context: Context, private val inputs: () -> Pair<Int, Int>, pr
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         val w = minOf(width, height * 4 / 3); val h = w * 3 / 4
         glViewport((width-w)/2, (height-h)/2, w, h)
-        if (Build.VERSION.SDK_INT >= 30) holder.surface.setFrameRate(60.0988f, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+        if (Build.VERSION.SDK_INT >= 30) holder.surface.setFrameRate(frameRate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
     }
     override fun onDrawFrame(gl: GL10?) {
         glClearColor(0f,0f,0f,1f); glClear(GL_COLOR_BUFFER_BIT)

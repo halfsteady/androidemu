@@ -4,21 +4,19 @@
 //! Sprite evaluation is functional, but does not yet reproduce the overflow bug
 //! or cycle-exact secondary OAM accesses.
 
-use crate::cart::{mapper::Mapper, Mirroring};
+use crate::cart::{mapper::Mapper, Mirroring, Region};
 
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
 
-/// Dots per scanline, and scanlines per frame, for NTSC.
+/// Dots per scanline. Every region shares this; they differ in scanline count,
+/// in the scanline vblank starts on, and in the PPU-to-CPU clock ratio, all of
+/// which come from [`Region`].
 const DOTS_PER_SCANLINE: u16 = 341;
-const SCANLINES_PER_FRAME: u16 = 262;
-/// The scanline on which vblank is entered and the NMI may fire.
-const VBLANK_SCANLINE: u16 = 241;
-/// The pre-render scanline, where flags are cleared.
-const PRERENDER_SCANLINE: u16 = 261;
 
 #[derive(Clone)]
 pub struct Ppu {
+    pub(crate) region: Region,
     /// $2000 PPUCTRL
     pub ctrl: u8,
     /// $2001 PPUMASK
@@ -86,6 +84,7 @@ impl Default for Ppu {
 impl Ppu {
     pub fn new() -> Ppu {
         Ppu {
+            region: Region::Ntsc,
             ctrl: 0,
             mask: 0,
             status: 0,
@@ -138,7 +137,7 @@ impl Ppu {
     pub fn tick(&mut self, mapper: &mut dyn Mapper) {
         self.total_dots = self.total_dots.wrapping_add(1);
         // The final pre-render dot is omitted on odd frames while rendering.
-        if self.scanline == PRERENDER_SCANLINE
+        if self.region == Region::Ntsc && self.scanline == (self.region.scanlines() - 1)
             && self.dot == 339
             && self.frame & 1 != 0
             && self.odd_skip
@@ -152,13 +151,13 @@ impl Ppu {
         if self.dot >= DOTS_PER_SCANLINE {
             self.dot = 0;
             self.scanline += 1;
-            if self.scanline >= SCANLINES_PER_FRAME {
+            if self.scanline >= self.region.scanlines() {
                 self.scanline = 0;
                 self.frame += 1;
             }
         }
 
-        if (self.scanline < 240 || self.scanline == PRERENDER_SCANLINE) && self.rendering() {
+        if (self.scanline < 240 || self.scanline == (self.region.scanlines() - 1)) && self.rendering() {
             if (2..=257).contains(&self.dot) || (322..=337).contains(&self.dot) {
                 self.bg_low <<= 1;
                 self.bg_high <<= 1;
@@ -193,7 +192,7 @@ impl Ppu {
                 self.v = (self.v & !0x041f) | (self.t & 0x041f);
                 self.select_sprites();
             }
-            if self.scanline == PRERENDER_SCANLINE && (280..=304).contains(&self.dot) {
+            if self.scanline == (self.region.scanlines() - 1) && (280..=304).contains(&self.dot) {
                 self.v = (self.v & !0x7be0) | (self.t & 0x7be0);
             }
             if (257..=320).contains(&self.dot) {
@@ -227,17 +226,17 @@ impl Ppu {
             self.render_pixel();
         }
 
-        if self.scanline == PRERENDER_SCANLINE && self.dot == 338 {
+        if self.scanline == (self.region.scanlines() - 1) && self.dot == 338 {
             self.odd_skip = self.rendering();
         }
-        if self.scanline == VBLANK_SCANLINE && self.dot == 1 {
+        if self.scanline == self.region.vblank_scanline() && self.dot == 1 {
             if !self.suppress_vblank {
                 self.status |= 0x80;
             }
             self.suppress_vblank = false;
             self.update_nmi();
         }
-        if self.scanline == PRERENDER_SCANLINE && self.dot == 1 {
+        if self.scanline == (self.region.scanlines() - 1) && self.dot == 1 {
             // Vblank, sprite 0 hit and sprite overflow all clear together.
             self.status &= !0xE0;
             self.update_nmi();
@@ -249,7 +248,7 @@ impl Ppu {
     pub fn read_register(&mut self, addr: u16, mapper: &mut dyn Mapper) -> u8 {
         match addr & 7 {
             2 => {
-                if self.scanline == VBLANK_SCANLINE && self.dot == 0 {
+                if self.scanline == self.region.vblank_scanline() && self.dot == 0 {
                     self.suppress_vblank = true;
                 }
                 // Reading PPUSTATUS clears vblank and resets the write toggle. The
@@ -338,7 +337,7 @@ impl Ppu {
     }
 
     fn increment_v(&mut self) {
-        if self.rendering() && (self.scanline < 240 || self.scanline == PRERENDER_SCANLINE) {
+        if self.rendering() && (self.scanline < 240 || self.scanline == (self.region.scanlines() - 1)) {
             self.increment_x();
             self.increment_y();
             return;
@@ -398,7 +397,7 @@ impl Ppu {
             },
             ..Sprite::default()
         });
-        let next = if self.scanline == PRERENDER_SCANLINE {
+        let next = if self.scanline == (self.region.scanlines() - 1) {
             0
         } else {
             self.scanline + 1
@@ -569,14 +568,15 @@ crate::state::state_fields!(
     pattern_low,
     pattern_high,
     sprites,
-    sprite_count
+    sprite_count;
+    region: Region::Ntsc
 );
 crate::state::state_fields!(Sprite, x, attributes, low, high, zero, address);
 impl Ppu {
     pub(crate) fn valid_state(&self) -> bool {
         self.x < 8
             && self.dot < 341
-            && self.scanline < 262
+            && self.scanline < self.region.scanlines()
             && self.sprite_count <= 8
             && self.framebuffer.len() == WIDTH * HEIGHT
             && self.sprites.iter().all(|s| s.address <= 0x1ff7)

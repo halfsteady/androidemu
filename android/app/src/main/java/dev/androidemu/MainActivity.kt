@@ -1,5 +1,9 @@
 package dev.androidemu
 
+import android.annotation.SuppressLint
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
@@ -49,6 +53,20 @@ class MainActivity : ComponentActivity() {
     private var message by mutableStateOf<String?>(null)
     private var slots by mutableStateOf(emptyList<SaveSlot>())
     private var showSlots by mutableStateOf(false)
+    private var fullscreen by mutableStateOf(false)
+    private var fullscreenTouch by mutableStateOf(false)
+    private var mapping by mutableStateOf(false)
+    private var mappingStep by mutableStateOf(0)
+    private var mappingName by mutableStateOf("")
+    private val mappedKeys = mutableListOf<Pair<KeyEvent, Int>>()
+    private val mapButtons = listOf("A" to 1, "B" to 2, "Select" to 4, "Start" to 8)
+    private fun applyFullscreen(value: Boolean) {
+        fullscreen = value
+        val bars = WindowCompat.getInsetsController(window, window.decorView)
+        bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (value) bars.hide(WindowInsetsCompat.Type.systemBars()) else bars.show(WindowInsetsCompat.Type.systemBars())
+    }
+    private fun startMapping() { if (game != null && !paused) pause(); mappedKeys.clear(); mappingStep = 0; mappingName = ""; mapping = true; input.clear() }
     private var overwrite by mutableStateOf<Int?>(null)
     @Volatile private var backgrounded = false
     @Volatile private var activeGame: Game? = null
@@ -69,7 +87,28 @@ class MainActivity : ComponentActivity() {
         input = ControllerInput(this) { if (game != null) pause(); message = "Controller disconnected. Your game is paused." }
         surface = GameSurface(this, input::buttons) { message = "This game couldn't continue. $it"; paused = true; busy = false }
         runCatching { games = library.games() }.onFailure { message = "Your library couldn't be opened. Your game files are still stored on this device." }
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xffb9e38c), background = Color(0xff111813), surface = Color(0xff1d2820), onSurface = Color(0xffedf4e9))) { App() } }
+        // Every slot a Material component actually reads is set here. The
+        // defaults are purple-tinted, and any one left unset shows up as an
+        // off-hue label or dialog against this green palette.
+        setContent {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = Color(0xffb9e38c),
+                    onPrimary = Color(0xff17300c),
+                    background = Color(0xff111813),
+                    onBackground = Color(0xffedf4e9),
+                    surface = Color(0xff1d2820),
+                    onSurface = Color(0xffedf4e9),
+                    surfaceVariant = Color(0xff2a3a2e),
+                    onSurfaceVariant = Color(0xffc3d1bd),
+                    surfaceContainer = Color(0xff1d2820),
+                    surfaceContainerHigh = Color(0xff243128),
+                    outline = Color(0xff6d7f68),
+                    error = Color(0xffffb4a6),
+                    onError = Color(0xff5f1409),
+                )
+            ) { App() }
+        }
     }
     private fun work(label: String, action: () -> Unit) {
         if (busy) return
@@ -86,6 +125,7 @@ class MainActivity : ComponentActivity() {
         if (battery.exists()) runCatching { Native.restore(battery.readBytes(), true) }.onFailure { warning = "The battery save couldn't be opened. Your saved moments are still available." }
         val auto = library.state(selected, -1)
         if (auto.exists()) runCatching { Native.restore(auto.readBytes(), false) }.onFailure { warning = "Your automatic save couldn't be opened. The game started from its battery save; manual save slots are still available." }
+        surface.setGameFrameRate(Native.frameRate())
         activeGame = selected
         surface.loaded = true
         runOnUiThread {
@@ -144,34 +184,60 @@ class MainActivity : ComponentActivity() {
     }
     override fun onResume() { super.onResume(); backgrounded = false }
     override fun onDestroy() { input.close(); super.onDestroy() }
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    // Capture controller buttons before focused Compose widgets consume them.
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (mapping && event.keyCode != KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+                (mappedKeys.isEmpty() || mappedKeys.first().first.deviceId == event.deviceId)) {
+                if (mappedKeys.none { it.first.keyCode == event.keyCode && it.first.scanCode == event.scanCode }) {
+                    mappedKeys.add(KeyEvent(event) to mapButtons[mappingStep].second)
+                    mappingName = event.device?.name ?: "Keyboard"
+                    mappingStep++
+                    if (mappingStep == mapButtons.size) { input.saveMapping(mappedKeys); mapping = false; message = "Buttons saved for $mappingName. The directional pad and stick work automatically." }
+                }
+            }
+            return true
+        }
         if (game != null && !paused && input.key(event)) return true
-        if (game != null && keyCode == KeyEvent.KEYCODE_BUTTON_START && paused && !busy) { resumeGame(); return true }
-        return super.onKeyDown(keyCode, event)
-    }
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (game != null && !paused && input.key(event)) return true
-        return super.onKeyUp(keyCode, event)
+        // Start resumes from the pause panel, so a session driven entirely from
+        // the controller never has to reach for the screen. It reads through the
+        // saved profile, so a remapped Start still works.
+        if (game != null && paused && !busy && event.action == KeyEvent.ACTION_DOWN && input.bitFor(event) == 8) {
+            resumeGame()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
     override fun onGenericMotionEvent(event: MotionEvent) = if (game != null && !paused && input.motion(event)) true else super.onGenericMotionEvent(event)
 
     @Composable private fun App() {
-        BackHandler(game != null) { if (!paused) pause() else if (!busy) { if (showSlots) showSlots = false else game = null } }
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding()) {
+        BackHandler(game != null) { if (fullscreen) applyFullscreen(false) else if (!paused) pause() else if (!busy) { if (showSlots) showSlots = false else game = null } }
+        Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onSurface) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
             // Keep the GL thread attached while the library is visible so imports
             // and state operations have a single serialized execution queue.
             Column(Modifier.fillMaxSize()) {
-                if (game != null) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (game != null && !fullscreen) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(game!!.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
-                    TextButton(enabled = !busy, onClick = { pause() }) { Text("Pause & save") }
+                    TextButton(enabled = !busy, onClick = { pause(); showSlots = true }) { Text("Save states") }
+                    TextButton(enabled = !busy, onClick = { applyFullscreen(true) }) { Text("Full screen") }
+                    TextButton(enabled = !busy, onClick = { pause() }) { Text("Pause") }
                 }
                 AndroidView(factory = { surface }, modifier = Modifier.weight(1f).fillMaxWidth())
-                if (game != null) TouchControls()
+                if (game != null && (!fullscreen || fullscreenTouch)) TouchControls()
+            }
+            if (game != null && fullscreen && !paused) Row(Modifier.align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.7f))) {
+                TextButton(onClick = { pause() }) { Text("Menu") }
+                TextButton(onClick = { fullscreenTouch = !fullscreenTouch }) { Text(if (fullscreenTouch) "Hide controls" else "Touch controls") }
+                TextButton(onClick = { applyFullscreen(false) }) { Text("Exit full screen") }
             }
             if (game == null) Shelf()
             if (game != null && paused) PausePanel()
             if (busy) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         }
+        }
+        if (mapping) AlertDialog(onDismissRequest = { mapping = false; input.clear() }, title = { Text("Map controller buttons") }, text = { Text("${if (mappingName.isEmpty()) "On your controller" else mappingName}, press ${mapButtons[minOf(mappingStep, 3)].first}.\n\nStep ${minOf(mappingStep + 1, 4)} of 4. Use a different button for each action. Directions use the pad or stick. Your mapping is remembered for this controller.") }, confirmButton = {}, dismissButton = { TextButton(onClick = { mapping = false; input.clear() }) { Text("Cancel") } })
         message?.let { text -> AlertDialog(onDismissRequest = { message = null }, title = { Text("A quick update") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { message = null }) { Text("Got it") } }) }
         overwrite?.let { slot -> AlertDialog(onDismissRequest = { overwrite = null }, title = { Text("Replace slot ${slot + 1}?") }, text = { Text("This replaces the progress saved in this slot. Your other slots stay available.") }, confirmButton = { TextButton(onClick = { overwrite = null; saveSlot(slot) }) { Text("Replace save") } }, dismissButton = { TextButton(onClick = { overwrite = null }) { Text("Keep it") } }) }
     }
@@ -183,6 +249,7 @@ class MainActivity : ComponentActivity() {
             Text("Your next adventure", fontSize = 32.sp, fontWeight = FontWeight.Bold)
             Text("Pick a game. Play a little. Come back anytime.", color = Color(0xffabb8a9), modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
             Button(enabled = !busy, onClick = { importGame.launch(arrayOf("*/*")) }) { Text("＋ Add a game") }
+            TextButton(onClick = { startMapping() }) { Text("Set up controller buttons") }
             if (games.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -212,7 +279,7 @@ class MainActivity : ComponentActivity() {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).padding(24.dp), contentAlignment = Alignment.Center) {
             Surface(shape = RoundedCornerShape(28.dp), modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (showSlots) "Your saved moments" else "Take your time", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Text(if (showSlots) "Save states" else "Take your time", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     Text(if (showSlots) "Ten slots, plus a separate automatic save." else "Progress saves automatically when you pause or leave.", color = Color(0xffabb8a9))
                     if (showSlots) LazyVerticalGrid(columns = GridCells.Adaptive(180.dp), modifier = Modifier.heightIn(max = 360.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(slots, key = { it.number }) { slot ->
@@ -229,8 +296,10 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Button(enabled = !busy, onClick = { resumeGame() }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Resume game", fontSize = 18.sp) }
-                    OutlinedButton(enabled = !busy, onClick = { showSlots = !showSlots }, modifier = Modifier.fillMaxWidth()) { Text(if (showSlots) "Back to pause" else "Save & load moments") }
-                    TextButton(enabled = !busy, onClick = { game = null; showSlots = false }) { Text("Back to your shelf") }
+                    OutlinedButton(enabled = !busy, onClick = { showSlots = !showSlots }, modifier = Modifier.fillMaxWidth()) { Text(if (showSlots) "Back to pause" else "Save states · 10 slots") }
+                    TextButton(enabled = !busy, onClick = { startMapping() }) { Text("Set up controller buttons") }
+                    TextButton(onClick = { applyFullscreen(!fullscreen) }) { Text(if (fullscreen) "Exit full screen" else "Full screen") }
+                    TextButton(enabled = !busy, onClick = { applyFullscreen(false); game = null; showSlots = false }) { Text("Back to your shelf") }
                 }
             }
         }

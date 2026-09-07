@@ -302,10 +302,12 @@ An emulator without a test harness is a rumour.
 
 ### Implementation progress
 
-Phase 1 has an installable preview: tier-1 mappers, five-channel audio, PPU
-rendering, a Compose shell, GLES video, AAudio output, standard controller/touch
-input, ROM import, savestates and SRAM persistence. The 39-ROM regression set and
-nestest pass. **Phase 1 remains open until device acceptance passes.** See
+Phase 1 has an installable preview: tier-1 mappers plus 66 (GxROM), NTSC/PAL/Dendy
+timing, five-channel audio, PPU rendering, a Compose shell, GLES video, AAudio
+output, standard controller/touch input with a per-controller button-mapping
+wizard, a full-screen mode, ROM import, savestates and SRAM persistence. The
+39-ROM regression set and nestest pass.
+**Phase 1 remains open until device acceptance passes.** See
 [the implementation and acceptance record](docs/PHASE-1.md) for measured results,
 known limits and the outstanding gates.
 

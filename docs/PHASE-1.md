@@ -6,16 +6,25 @@ physical-device play, controllers, pacing and audio latency still need validatio
 ## Implemented
 
 - CPU instructions, cycle-based bus, interleaved OAM DMA, DMC sample fetch/stalls,
-  interrupt polling, PPU background/sprite rendering and NTSC scrolling/timing.
-- Mappers 0, 1, 2, 3, 4 and 7, bank switching, mirroring, battery RAM, MMC3B/C IRQs.
+  interrupt polling, PPU background/sprite rendering, and scrolling and frame
+  timing for the machine's region.
+- Mappers 0, 1, 2, 3, 4, 7 and 66, bank switching, mirroring, battery RAM,
+  MMC3B/C IRQs, and GxROM bus conflicts.
+- NTSC, PAL and Dendy timing: per-region CPU clock, PPU-to-CPU ratio, frame
+  height, vblank scanline, APU frame-counter steps and noise/DMC period tables.
+  The shell requests the region's refresh rate instead of assuming 60.0988 Hz.
 - All five APU channels, nonlinear mixing, 1024-tap FIR anti-aliasing before
   48 kHz output, DC removal and analog low-pass filtering. No per-frame allocation
   in the core; snapshot allocation is outside frame execution.
 - Version-1 deterministic snapshots, checksum and ROM/board identity validation,
   transactional loading, and exact-size battery-save restoration.
 - Compose game shelf, single-file SAF import into private storage, GLES 3 rendering,
-  Choreographer scheduling, 60.0988 Hz surface request, touch controls and standard
-  Android USB/Bluetooth/keyboard input for two players. Portrait controls reflow.
+  Choreographer scheduling, a region-derived surface frame rate, touch controls and
+  standard Android USB/Bluetooth/keyboard input for two players. Portrait controls
+  reflow. A guided four-step wizard maps A/B/Select/Start per controller, saved by
+  vendor/product/descriptor and applied by scan code, which is what makes cheap USB
+  adapters usable; Start also resumes from the pause panel through that mapping.
+  Full screen hides the system bars, with touch controls optional while in it.
 - Direct AAudio low-latency callback, exclusive/shared fallback, bounded lock-free
   sample queue, device-rate conversion and limited buffer-fill rate correction.
   AAudio is used directly because API 29+ is the floor; Oboe's older-device backend
@@ -27,8 +36,11 @@ physical-device play, controllers, pacing and audio latency still need validatio
 
 ## Verification
 
-- Rust workspace tests: 54 passing, including the real nestest reference trace.
-  Without the optional nestest files its harness reports that it skipped.
+- Rust workspace tests: 60 passing, including the real nestest reference trace,
+  GxROM banking under bus conflicts, and per-region frame length, frame height,
+  vblank scanline and savestate timing restoration. Without the optional nestest
+  files that harness reports that it skipped. A golden-hash test pins the layout
+  of version-1 snapshots, so the saves made with the first preview keep loading.
 - Public ROMs: all 39 selected ROMs pass (16 CPU instruction, 8 APU, 10 PPU
   vblank/NMI and 5 MMC3 tests). `scripts/check-roms.py` runs these externally.
   Tested collection revision: `95d8f621ae55cee0d09b91519a8989ae0e64753b`.
@@ -48,6 +60,11 @@ physical-device play, controllers, pacing and audio latency still need validatio
   sprite rendering against captures; the current sprite selection is scanline-based.
 - [ ] Confirm real USB adapters, Bluetooth reconnects, two-player assignments and
   absence of stuck buttons after unplug, backgrounding and touch cancellation.
+  Run the mapping wizard on each adapter and confirm the profile survives a
+  replug and a restart, and that Start resumes from the pause panel.
+- [ ] Play a PAL and a Dendy game end to end. Region timing passes in the core,
+  but the 50 Hz surface request and audio rate correction are unmeasured on the
+  panel, and no region-specific ROM suite is run.
 - [ ] Measure sustained frame pacing and input-to-photon latency on the OnePlus Pad 3.
 - [ ] Measure underruns/output latency, test output-route changes and long sessions.
   The frame-fed audio queue currently targets roughly 20 ms, so the original
@@ -56,9 +73,10 @@ physical-device play, controllers, pacing and audio latency still need validatio
   DMC/OAM collision arbitration and repeated controller reads. MMC6 and other
   board revisions are not covered by the common MMC3 implementation.
 
-PAL/Dendy playback is rejected by the Android shell until region-specific timing
-is implemented. Color emphasis, raw USB HID fallback/remapping, folder/ZIP import,
-box-art packs, rewind and kid-mode locking remain planned follow-up work.
+Color emphasis, raw USB HID fallback, D-pad/axis remapping, folder/ZIP import,
+box-art packs, rewind and kid-mode locking remain planned follow-up work. The
+mapping wizard covers the four face/menu buttons; directions still come from the
+standard D-pad and stick handling.
 
 ## Save format and recovery
 

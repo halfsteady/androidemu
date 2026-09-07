@@ -77,11 +77,11 @@ impl<T: Codec> Codec for Vec<T> {
     }
 }
 macro_rules! state_fields {
-    ($t:ty, $($field:ident),+ $(,)?) => {
+    ($t:ty, $($field:ident),+ $(,)? $(; $($default_field:ident: $default:expr),+ )?) => {
         impl crate::state::Codec for $t {
             fn encode(&self, out: &mut Vec<u8>) { $(crate::state::Codec::encode(&self.$field, out);)+ }
             fn decode(input: &mut &[u8]) -> crate::state::Result<Self> {
-                Ok(Self { $($field: crate::state::Codec::decode(input)?,)+ })
+                Ok(Self { $($field: crate::state::Codec::decode(input)?,)+ $($($default_field: $default,)+)? })
             }
         }
     };
