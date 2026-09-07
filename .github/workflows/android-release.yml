@@ -71,7 +71,14 @@ jobs:
       - name: Derive version
         id: ver
         run: |
-          code="${{ github.run_number }}"
+          # The same chronological rule android/app/build.gradle.kts uses for an
+          # unstamped build: days since the project epoch, shifted four places,
+          # plus UTC HHMM. A local build and a CI build therefore order by when
+          # they were made, and neither can hand the tablet a version code below
+          # the one already installed - Android reads that as a downgrade and
+          # refuses it. The run number is not usable here: it starts at 1.
+          day=$(( $(date -u +%s) / 86400 - $(date -u -d 2018-07-09 +%s) / 86400 ))
+          code=$(( day * 10000 + 10#$(date -u +%H%M) ))
           if [ "${{ github.ref_type }}" = "tag" ]; then
             name="${{ github.ref_name }}"; name="${name#v}"
           else

@@ -24,8 +24,14 @@ The tag push builds, tests, signs, and publishes a GitHub Release carrying
 artifacts without cutting a release, run the workflow manually from the Actions
 tab; they attach to the run instead.
 
-`versionName` comes from the tag with the `v` stripped. `versionCode` is the
-workflow run number, which only ever increases — Play rejects a reused one.
+`versionName` comes from the tag with the `v` stripped. `versionCode` is
+chronological — days since the project epoch, shifted four places, plus UTC
+`HHMM` — computed the same way in the workflow and in
+`android/app/build.gradle.kts`. Builds therefore order by when they were made
+whichever produced them, so a release can never hand the tablet a code below the
+one already installed. Android reads that as a downgrade and refuses to install;
+Play rejects a reused code outright. Two builds in the same minute collide, which
+is loud rather than silent.
 
 ## The signing key
 
