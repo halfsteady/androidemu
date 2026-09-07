@@ -39,6 +39,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -975,6 +977,16 @@ class MainActivity : ComponentActivity() {
             if (shown.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        // The small master, which carries its own rounded ground:
+                        // a drawable has no currentColor, and tinting this one
+                        // would flatten four palettes into one. Held back to 0.9
+                        // alpha so it reads as a mark on an empty shelf rather
+                        // than as something to tap.
+                        Image(
+                            painterResource(R.drawable.ic_emulia_mark),
+                            null,
+                            Modifier.size(96.dp).padding(bottom = 18.dp).alpha(0.9f),
+                        )
                         Text("A shelf full of possibilities", fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
                         Text(
                             "Add a game file (.nes) from your tablet to begin.\nGames stay on this device. No account needed.",

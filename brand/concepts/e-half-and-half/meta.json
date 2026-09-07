@@ -1,0 +1,8 @@
+{
+  "letter": "e",
+  "title": "Half and Half",
+  "pun": "One sprite drawn twice: hard pixels on the left, the same silhouette rounded and merged on the right. Emulia's picture settings are an argument about how a pixel should be drawn, and this is that argument as a shape.",
+  "reads_as": "an 8-bit bug whose right half has melted",
+  "mood": "clever, technical, the one with an idea in it",
+  "risk": "Reads as a rendering bug rather than a rendering choice until it is explained, and the joke needs both halves -- so it is the concept that loses the most to a circle mask. The join is a tonal step in the ground, not a line: a 1.2dp seam measured 0.53px at mdpi and smeared into a crack, so it was removed. Measured separately: the smoothing eats its own counters -- growing the rounded runs to merge them narrows the eye gaps from 6.07dp to 3.25dp, so E's counters close sooner than C's despite the same sprite at nearly the same size."
+}

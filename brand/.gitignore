@@ -1,0 +1,17 @@
+# Derived, and large. `python3 brand/tools/build.py` rebuilds all three from
+# concepts/, and the promoted copy of android/ already lives in the app's own
+# res/ tree - tracking it here would be the same bytes twice, with no way to
+# tell which of the two a surface is reading.
+#
+# Anchored with a leading slash, deliberately: `android/` alone also matches
+# previous/android/, which silently dropped the backup of the very file this
+# directory replaced.
+/png/
+/android/
+/svg/
+__pycache__/
+
+# NOT ignored, deliberately: review/contact-sheet.png and index.html are
+# generated too, but they are the record of a decision rather than a build
+# output, and index.html is what `tailscale serve --set-path=/emulia-brand`
+# publishes. A fresh clone should be able to show both without running anything.

@@ -1,0 +1,8 @@
+{
+  "letter": "a",
+  "title": "Four Screens",
+  "pun": "The brief, taken literally: the square cut in half twice, a different game in each quarter. Two of Emulia's accents alternate so every cell stays bright and the checker is what survives.",
+  "reads_as": "a 2x2 checker of bright cells with a small sprite in each",
+  "mood": "playful, arcade-flyer, the busiest one",
+  "risk": "Measured: each sprite pixel is 1.19px at mdpi. The four sprites stop being four games and become texture; what is left is the checker, which no longer says NES."
+}

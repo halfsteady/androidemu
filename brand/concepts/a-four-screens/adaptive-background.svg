@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Four games, four cells, full-bleed checker ground. -->
+  <defs>
+    <radialGradient id="a-g" gradientUnits="userSpaceOnUse" cx="54" cy="54" r="66">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="108" height="108" fill="#173b2d"/>
+  <rect x="0" y="0" width="52" height="52" fill="#b9e38c"/>
+  <rect x="56" y="0" width="52" height="52" fill="#f0d49a"/>
+  <rect x="0" y="56" width="52" height="52" fill="#f0d49a"/>
+  <rect x="56" y="56" width="52" height="52" fill="#b9e38c"/>
+  <rect width="108" height="108" fill="url(#a-g)"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- One sprite rendered twice: hard pixels, then smoothed. -->
+  <defs>
+    <linearGradient id="e-g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="108" y2="108">
+      <stop offset="0" stop-color="#173b2d"/>
+      <stop offset="0.5" stop-color="#1d4735"/>
+      <stop offset="1" stop-color="#22513e"/>
+    </linearGradient>
+  </defs>
+  <rect width="108" height="108" fill="url(#e-g)"/>
+  <rect x="0" y="0" width="54" height="108" fill="#000000" fill-opacity="0.17"/>
+</svg>

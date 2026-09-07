@@ -1,0 +1,8 @@
+{
+  "letter": "d",
+  "title": "The Emu",
+  "pun": "Emu-lia. The name has a bird in it and has had one all along; the extra syllables were always doing that. A flightless bird for an app that runs games that cannot run anywhere else.",
+  "reads_as": "a chunky pixel emu, side on, in Emulia's green",
+  "mood": "warm, cute, the one with a character in it",
+  "risk": "Nothing in it says NES, or emulator, or games -- it is a bird until somebody tells you the joke. And at 1.60px per pixel it is the LEGS that go first, not the neck: the 3.50dp gap between them fills to alpha 161/255 at 48px, so the bird stands on a wedge. The neck is three pixels wide and safe."
+}

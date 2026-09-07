@@ -1,0 +1,11 @@
+<resources>
+    <!-- The cold-start splash, API 31+. A REFERENCE surface: it names the
+         adaptive icon rather than carrying its own copy, so it follows whatever
+         brand/tools/apply.py last promoted. The system masks the icon and adds
+         its own inset, which is why the mark is the adaptive icon and not the
+         in-app small master with its rounded tile already baked in. -->
+    <style name="AppTheme" parent="AppTheme.Base">
+        <item name="android:windowSplashScreenBackground">#111813</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

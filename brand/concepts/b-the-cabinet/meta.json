@@ -1,0 +1,8 @@
+{
+  "letter": "b",
+  "title": "The Cabinet",
+  "pun": "The same four games stated as a screen instead of a chart -- phosphor glow, a glass bezel, scanlines. Emulia ships ten picture modes; this is the icon that admits the app is about a display.",
+  "reads_as": "a small dark CRT with four glowing sprites on it",
+  "mood": "dim, late-night, the atmospheric one",
+  "risk": "Same 1.19px sprites as (a), and the scanlines are a 1.15dp feature that is gone below 96px. Dark ground with bright specks is also the shape most likely to read as a generic emulator icon."
+}

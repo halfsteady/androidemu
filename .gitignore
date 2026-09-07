@@ -25,3 +25,7 @@ android/app/src/main/jniLibs/
 *.jks
 *.keystore
 android/keystore.properties
+
+# Python bytecode from the scripts in scripts/ and brand/tools/.
+__pycache__/
+*.pyc

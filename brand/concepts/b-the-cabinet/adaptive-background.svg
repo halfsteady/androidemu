@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- The same four, stated as a CRT: bezel, phosphor, scanlines. -->
+  <defs>
+    <radialGradient id="b-g" gradientUnits="userSpaceOnUse" cx="54" cy="50" r="60">
+      <stop offset="0" stop-color="#2f7a5e"/>
+      <stop offset="0.55" stop-color="#0d2a20"/>
+      <stop offset="1" stop-color="#061510"/>
+    </radialGradient>
+    <radialGradient id="b-v" gradientUnits="userSpaceOnUse" cx="54" cy="54" r="58">
+      <stop offset="0.42" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.62"/>
+    </radialGradient>
+  </defs>
+  <rect width="108" height="108" fill="url(#b-g)"/>
+  <rect x="0" y="0" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="3" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="6" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="9" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="12" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="15" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="18" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="21" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="24" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="27" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="30" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="33" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="36" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="39" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="42" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="45" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="48" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="51" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="54" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="57" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="60" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="63" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="66" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="69" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="72" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="75" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="78" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="81" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="84" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="87" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="90" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="93" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="96" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="99" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="102" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect x="0" y="105" width="108" height="1.15" fill="#000000" fill-opacity="0.26"/>
+  <rect width="108" height="108" fill="url(#b-v)"/>
+</svg>

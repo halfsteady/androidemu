@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Emu-lia. The pun the name was already making. -->
+  <defs>
+    <radialGradient id="d-g" gradientUnits="userSpaceOnUse" cx="54" cy="46" r="64">
+      <stop offset="0" stop-color="#2c6a51"/>
+      <stop offset="0.6" stop-color="#22513e"/>
+      <stop offset="1" stop-color="#123024"/>
+    </radialGradient>
+  </defs>
+  <rect width="108" height="108" fill="url(#d-g)"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Four palettes under one sprite — the quadrants are the ground. -->
+  <defs>
+    <radialGradient id="c-g" gradientUnits="userSpaceOnUse" cx="54" cy="54" r="66">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.26"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="54" height="54" fill="#b9e38c"/>
+  <rect x="54" y="0" width="54" height="54" fill="#f0d49a"/>
+  <rect x="0" y="54" width="54" height="54" fill="#7fd2c4"/>
+  <rect x="54" y="54" width="54" height="54" fill="#e8a39a"/>
+  <rect width="108" height="108" fill="url(#c-g)"/>
+</svg>

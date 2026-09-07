@@ -1,1 +1,11 @@
-<resources><style name="AppTheme" parent="android:style/Theme.Material.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">false</item><item name="android:colorAccent">#B9E38C</item><item name="android:windowBackground">#111813</item></style></resources>
+<resources>
+    <!-- Split so values-v31 can add the splash items without restating these:
+         a qualified resource REPLACES its default, it does not merge with it. -->
+    <style name="AppTheme.Base" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#B9E38C</item>
+        <item name="android:windowBackground">#111813</item>
+    </style>
+    <style name="AppTheme" parent="AppTheme.Base"/>
+</resources>

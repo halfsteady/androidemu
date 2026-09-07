@@ -1,0 +1,8 @@
+{
+  "letter": "c",
+  "title": "One in Four",
+  "pun": "Still four quarters, but the variety moved to the ground and one sprite lies across all of it. It is what the app actually does: the same game, every palette, and a .pal importer to add more.",
+  "reads_as": "one big 8-bit bug on four blocks of colour",
+  "mood": "bold, poster-like, the confident one",
+  "risk": "The only quadrant concept whose pixels are still pixels at 48px (2.86px each). Cost is that two of the four cells leave Emulia's greens, so the mark owns its shape more than it owns its colour. Its counters also stay open all the way down (alpha 0 at 48px, 9 at 32px, against 157 for A and B) -- the eyes are still eyes at 32px."
+}
