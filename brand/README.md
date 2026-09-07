@@ -8,9 +8,19 @@ palette, and a `.pal` importer to add more — and it was the only quadrant
 concept whose pixels are still pixels at 48px.
 
 It is no longer a candidate. It is the launcher icon, the round icon, the
-Android 13 themed layer, the cold-start splash and the mark on an empty shelf.
+cold-start splash, the mark on the shelf header and the mark on an empty shelf.
 The other four stay in this directory because the reasoning is worth more than
 the files.
+
+**The themed (Android 13) layer is generated but deliberately not offered** —
+see `OFFER_MONOCHROME` in `tools/build.py`. It is switched off because of how
+"Themed icons" behaves rather than how it is documented: One UI recolours only
+the apps that *ship* a monochrome layer and leaves every other icon alone. So
+providing one did not make Emulia match the home screen, it made Emulia the
+single dark tile on a screen full of colour — the opposite of the intent, and
+observed on a real phone rather than argued from the spec. Without the element,
+a themed launcher falls back to the colour art. The layer is still built and
+still measured by check 6, one line from being switched back on.
 
 The mark it replaced was a flat green D-pad written as a placeholder and never
 revisited. It is in [`previous/`](previous/).
@@ -49,6 +59,7 @@ tooling writes it), **reference** (it names generated art and follows for free),
 |---|---|---|
 | launcher icon, adaptive | `res/mipmap-anydpi-v26/ic_launcher{,_round}.xml` | generated |
 | launcher, legacy bitmaps | `res/mipmap-*dpi/ic_launcher{,_round}.png` | generated |
+| shelf header, 34dp | `MainActivity.ShelfHeading` | reference |
 | the three layers | `res/drawable/ic_launcher_{background,foreground,monochrome}.xml` | generated |
 | in-app mark, empty shelf | `res/drawable/ic_emulia_mark.xml` | generated |
 | cold-start splash, API 31+ | `res/values-v31/styles.xml` | reference |

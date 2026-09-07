@@ -35,6 +35,9 @@ REPO = ROOT.parent
 RES = REPO / "android" / "app" / "src" / "main" / "res"
 MANIFEST = REPO / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
 PREVIOUS = ROOT / "previous"
+# Written after the first successful promotion. Its presence is what says the
+# app already wears a generated mark, so a later run has nothing to preserve.
+PROMOTED = PREVIOUS / ".promoted"
 AND = "{http://schemas.android.com/apk/res/android}"
 
 # The in-app mark's tile, as a path. A drawable has no `currentColor` and
@@ -89,8 +92,16 @@ def small_master(slug):
 
 
 def keep_previous(dest: Path):
-    """Back up an existing file, once, the first time it is overwritten."""
-    if not dest.exists():
+    """Back up an existing file, but only on the very first promotion.
+
+    `previous/` is for what the mark REPLACED. A re-run -- after a tweak, or to
+    flip a flag -- would otherwise file the current mark in there as its own
+    predecessor, which is worse than filing nothing because it reads as history
+    and is not. The first version of this guard skipped files carrying the
+    generator's banner, which is invisible in a PNG; ten launcher bitmaps went
+    into `previous/` as their own ancestors before the marker replaced it.
+    """
+    if PROMOTED.exists() or not dest.exists():
         return
     rel = dest.relative_to(REPO)
     keep = PREVIOUS / rel
@@ -157,6 +168,11 @@ def main():
         print("  ok    %s already points at @mipmap"
               % MANIFEST.relative_to(REPO))
 
+    if not PROMOTED.exists():
+        PREVIOUS.mkdir(parents=True, exist_ok=True)
+        PROMOTED.write_text(
+            "%s promoted first; brand/previous/ holds what it replaced.\n" % slug)
+
     print("""
 REDRAWN
   none. Nothing in this app is drawn per-surface yet, which is the state to
@@ -165,6 +181,7 @@ REDRAWN
     launcher, adaptive        res/mipmap-anydpi-v26/ic_launcher{,_round}.xml
     launcher, legacy bitmaps  res/mipmap-*dpi/ic_launcher{,_round}.png
     themed icon (Android 13)  res/drawable/ic_launcher_monochrome.xml
+                              built, but NOT offered - see OFFER_MONOCHROME
     in-app mark               res/drawable/ic_emulia_mark.xml
     cold-start splash         res/values-v31/styles.xml (references the above)
 
