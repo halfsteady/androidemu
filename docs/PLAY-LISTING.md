@@ -73,6 +73,33 @@ shelf of games and resumes with a single tap.
 Keeping "no INTERNET permission" in the copy is worth it: it is unusual, it is
 checkable, and it answers the privacy question before anyone asks it.
 
+## What is in the console, as of 2026-09-07
+
+The listing copy above is **entered and saved** as a draft ("Change saved. Send
+for review in Publishing overview"). What is still missing is graphics:
+
+| field | state | file |
+|---|---|---|
+| App name, short + full description | **done** | the copy above |
+| App icon (512×512) | not uploaded | `brand/png/c-one-in-four/play-512.png` |
+| Feature graphic (1024×500) | not uploaded | `brand/png/c-one-in-four/play-feature-1024x500.png` |
+| Phone screenshots (2–8) | not captured | — |
+| Privacy policy URL | **blocked** | text below, needs hosting |
+| Data safety form | not answered | answers in the checklist below |
+
+Both graphics are built and on the `/stuff` shelf. They cannot be uploaded from
+a script: the console has no `<input type=file>` in its DOM and opens a native
+picker instead, so those three rows are a human at a keyboard.
+
+Screenshots need a real device — the emulator on this machine will not start
+(its KVM check reads group membership rather than the ACL that grants access,
+and forced past that it cannot initialise a Qt platform plugin headless).
+
+**The copy predates two shipped features.** It does not mention the ten picture
+modes and the `.pal` palette import, or the shelf's list/card layouts. Left
+alone deliberately rather than edited on the fly — a store listing is a public
+claim, and this is the version that was written and approved.
+
 ## Console checklist
 
 | Field | Answer | Why |
