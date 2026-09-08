@@ -120,19 +120,34 @@ account, is exempt.
 
 ## Privacy policy
 
-The policy is [docs/PRIVACY.md](PRIVACY.md), and the URL to paste into Play
-Console is its GitHub address:
+The text is [docs/PRIVACY.md](PRIVACY.md). **It still needs somewhere public to
+live.** This repository is private, so its GitHub address returns 404 to anyone
+who is not signed in as its owner — including Google's reviewer — and a policy
+URL that only works for one person is not a policy URL.
 
-```
-https://github.com/bsteinfeld/androidemu/blob/main/docs/PRIVACY.md
-```
+Two ways to fix that, neither of which makes this repository public:
 
-That is publicly readable with no account and no setup, which is all Play
-requires. GitHub Pages would give a nicer page at
-`https://bsteinfeld.github.io/androidemu/` if it is ever worth the five minutes;
-the URL above keeps working either way.
+1. **A small public repo with Pages** — the tidier answer, and a real web page:
+
+   ```sh
+   gh repo create emulia-privacy --public --description "Privacy policy for Emulia"
+   # copy docs/PRIVACY.md in as README.md, push, then:
+   gh api -X POST repos/bsteinfeld/emulia-privacy/pages \
+     -f 'source[branch]=main' -f 'source[path]=/'
+   ```
+
+   Final URL: `https://bsteinfeld.github.io/emulia-privacy/`
+
+2. **A public gist** — thirty seconds, slightly informal, works today:
+
+   ```sh
+   gh gist create docs/PRIVACY.md --public --desc "Emulia privacy policy"
+   ```
+
+Whichever is chosen, paste the URL into Play Console at **Policy ▸ App content ▸
+Privacy policy**, and keep `docs/PRIVACY.md` as the source that gets copied
+there when it changes.
 
 It contains a public contact address (`bradley@steinfeld.ca`). Play requires a
 contact email on the listing regardless, so it becomes public either way — but
-if a dedicated alias is preferred, change it in `PRIVACY.md` before the listing
-is sent for review rather than after.
+if a dedicated alias is preferred, change it before publishing rather than after.
