@@ -38,6 +38,65 @@ one already installed. Android reads that as a downgrade and refuses to install;
 Play rejects a reused code outright. Two builds in the same minute collide, which
 is loud rather than silent.
 
+## Publishing to Play from CI
+
+A tag decides its own track. Nothing else changes about how a release is cut.
+
+| tag | goes to | as |
+|---|---|---|
+| `v0.2.3-rc1` | internal testing | live to testers |
+| `v0.2.3` | production | a **draft**, waiting in the console |
+| manual run | nowhere | artifacts on the run only |
+
+The upload is a **separate job** from the build, so a Play API failure — a
+permission still propagating, a rejected version code, an expired key — costs
+the upload and nothing else. The GitHub Release is already published by then,
+and re-running the one job is cheap. It downloads the same `.aab` the build job
+signed and verified, so Play and the GitHub Release get byte-identical files.
+
+**Production is off.** Emulia is still a Draft app: production is Inactive and
+the setup checklist is 8/11, with the privacy policy and the Data safety form
+outstanding. The job exists and is wired, but it is gated on a repository
+*variable*. Switch it on with `gh variable set PLAY_PRODUCTION_ENABLED --body
+true`, and grant the service account *Release to production* in the same sitting.
+`environment: play-production` is where an approval gate goes — add required
+reviewers to that environment and a production upload waits for a click.
+
+**Without `PLAY_SERVICE_ACCOUNT_JSON` the workflow behaves exactly as it did
+before**, printing a notice and skipping the upload. Setting it is what turns
+this on.
+
+### One-time setup
+
+1. **Google Cloud** — in the project linked to the Play account, enable the
+   **Google Play Android Developer API**, create a service account (no roles
+   needed on the Cloud side), then Keys ▸ Add key ▸ **JSON** and download it.
+2. **Play Console** ▸ Users and permissions ▸ Invite new user, using the service
+   account's email. Give it app access to Emulia only, with **Release to testing
+   tracks**. Add *Release to production* only when production is being turned on.
+   First-time permission propagation can take hours.
+3. **The secret** — from wherever the key landed:
+
+   ```sh
+   gh secret set PLAY_SERVICE_ACCOUNT_JSON < ~/Downloads/<key>.json
+   rm ~/Downloads/<key>.json     # it is a private key; do not leave it there
+   ```
+
+4. **Prove it** with a throwaway candidate: `git tag v0.2.4-rc1 && git push
+   origin v0.2.4-rc1`, then watch the `publish-internal` job and check the
+   release appears on the internal track.
+
+The first upload for a package has to be made by hand, and that is already
+satisfied — internal testing is Active and has carried releases up to 0.2.3-rc5.
+
+### Version codes and candidates
+
+Play rejects any version code it has ever seen, even from a deleted release, so
+five RCs in a cycle consume five codes. The chronological scheme handles this
+without help: `days-since-epoch × 10000 + UTC HHMM` increases with every minute
+that passes, so a candidate can never collide with the release that follows it.
+The only collision is two builds inside the same UTC minute.
+
 ## The signing key
 
 Release builds are signed with an **upload key**, not the debug key. Play

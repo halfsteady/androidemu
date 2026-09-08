@@ -17,7 +17,16 @@ name: Android release build
 #   ANDROIDEMU_UPLOAD_KEY_ALIAS        amelianes-upload (the key predates the
 #                                      rename; the alias is internal, and
 #                                      rotating a signing key would be worse)
+#   PLAY_SERVICE_ACCOUNT_JSON          optional; a Google Play service account
+#                                      key. Absent, the build is unchanged and
+#                                      the Play upload is skipped with a notice.
 # See docs/RELEASING.md for the one-time `gh secret set` commands.
+#
+# Where a tag goes, once PLAY_SERVICE_ACCOUNT_JSON exists:
+#   v0.2.3-rc1  ->  Play internal testing, live to testers
+#   v0.2.3      ->  Play production, as a DRAFT, and only when the repository
+#                   variable PLAY_PRODUCTION_ENABLED is `true`
+#   manual run  ->  nowhere
 
 on:
   workflow_dispatch:
@@ -30,6 +39,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.ver.outputs.name }}
+      track: ${{ steps.track.outputs.track }}
+      status: ${{ steps.track.outputs.status }}
+      configured: ${{ steps.track.outputs.configured }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -89,6 +103,38 @@ jobs:
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "versionCode=$code  versionName=$name"
+
+      # Which Play track this build belongs on, decided by the tag alone so the
+      # existing tagging habit needs no change: `v0.2.3-rc1` is a candidate and
+      # goes to testers, `v0.2.3` is the real thing and goes to production. A
+      # manual run is neither, and publishes nowhere.
+      - name: Route to a Play track
+        id: track
+        env:
+          # Only ever tested for emptiness, never printed. A job-level `if:`
+          # cannot see the `secrets` context, so whether Play is set up at all
+          # has to be decided here and carried out as a plain boolean --
+          # otherwise every tag pushed before the service account exists ends in
+          # a red run for a step that was never going to work.
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$PLAY_JSON" ]; then configured=true; else configured=false; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+          if [ "$configured" != "true" ]; then
+            echo "::notice::PLAY_SERVICE_ACCOUNT_JSON is not set; skipping the Play upload."
+          fi
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            track=none; status=none
+          elif printf '%s' "${{ github.ref_name }}" | grep -Eq -- '-rc[0-9]+$'; then
+            track=internal; status=completed
+          else
+            # draft, not completed: a production release then waits in the
+            # console to be looked at rather than going live off a git push.
+            track=production; status=draft
+          fi
+          echo "track=$track" >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "track=$track status=$status play-configured=$configured"
 
       - name: Build signed AAB + APK
         working-directory: android
@@ -170,3 +216,81 @@ jobs:
           else
             gh release create "$TAG" $files --title "$TAG" --generate-notes $prerelease
           fi
+
+  # Publishing is a SEPARATE job on purpose. A Play API failure - a propagating
+  # permission, a rejected version code, an expired key - then costs the upload
+  # and nothing else: the GitHub Release and its assets are already published by
+  # the job above, and re-running just this one is cheap. It also gives
+  # production somewhere to hang an approval gate that internal does not want.
+  #
+  # Neither job touches the build. They download the same signed .aab the build
+  # job produced and verified, so what reaches Play is byte-identical to what is
+  # on the GitHub Release.
+
+  publish-internal:
+    needs: build
+    if: needs.build.outputs.track == 'internal' && needs.build.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: emulia-${{ needs.build.outputs.name }}
+          path: dist
+
+      - name: Release notes for testers
+        run: |
+          # Play wants one file per locale, and rejects an empty one. The tag's
+          # own annotation is the message that was already written for this
+          # build; 500 chars is Play's limit.
+          mkdir -p whatsnew
+          notes=$(printf '%s' "${{ github.event.head_commit.message }}" | head -c 480)
+          [ -n "$notes" ] || notes="Emulia ${{ needs.build.outputs.name }}"
+          printf '%s\n' "$notes" > whatsnew/whatsnew-en-US
+
+      - name: Upload to Play internal testing
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.bsteinfeld.emulia
+          releaseFiles: dist/emulia-${{ needs.build.outputs.name }}.aab
+          track: internal
+          status: ${{ needs.build.outputs.status }}
+          releaseName: ${{ needs.build.outputs.name }}
+          whatsNewDirectory: whatsnew
+
+  # Disabled until the store listing is finished. Emulia is still a Draft app:
+  # production is Inactive and the setup checklist is 8/11, with the privacy
+  # policy and the Data safety form outstanding, so an upload here would have
+  # nowhere to land. Switch it on by setting the repository VARIABLE (not
+  # secret) PLAY_PRODUCTION_ENABLED to `true`, and grant the service account
+  # "Release to production" at the same time.
+  #
+  # `environment: play-production` is where an approval gate goes: add required
+  # reviewers to that environment in repo settings and a production upload waits
+  # for a click. Without reviewers configured it simply runs.
+  publish-production:
+    needs: build
+    if: >-
+      needs.build.outputs.track == 'production'
+      && needs.build.outputs.configured == 'true'
+      && vars.PLAY_PRODUCTION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: play-production
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: emulia-${{ needs.build.outputs.name }}
+          path: dist
+
+      - name: Upload to Play production (as a draft release)
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.bsteinfeld.emulia
+          releaseFiles: dist/emulia-${{ needs.build.outputs.name }}.aab
+          track: production
+          # draft: it waits in the console. Going live is still a human clicking
+          # "Send for review", which is the right shape for a first production
+          # release and probably for the next several.
+          status: ${{ needs.build.outputs.status }}
+          releaseName: ${{ needs.build.outputs.name }}
