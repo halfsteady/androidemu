@@ -120,28 +120,19 @@ account, is exempt.
 
 ## Privacy policy
 
-Play needs this at a public URL. The whole of it:
+The policy is [docs/PRIVACY.md](PRIVACY.md), and the URL to paste into Play
+Console is its GitHub address:
 
-> **Emulia privacy policy**
->
-> Emulia does not collect, store, transmit or share any personal data.
->
-> The app has no internet permission and cannot make network connections. Game
-> files you add, your saved games and your settings are stored only on your own
-> device, in the app's private storage, and are removed when you uninstall the
-> app.
->
-> There is no analytics, no advertising, no crash reporting and no account.
->
-> Contact: <address>
+```
+https://github.com/bsteinfeld/androidemu/blob/main/docs/PRIVACY.md
+```
 
-## Things that would change this answer
+That is publicly readable with no account and no setup, which is all Play
+requires. GitHub Pages would give a nicer page at
+`https://bsteinfeld.github.io/androidemu/` if it is ever worth the five minutes;
+the URL above keeps working either way.
 
-- **Box art or a bundled game-metadata pack.** Shipping publisher artwork is
-  straightforward copyright infringement and is the single most likely reason a
-  later version gets pulled. Let people supply their own art instead.
-- **"Game Genie"** is a trademark. The cheats feature should be called cheat
-  codes.
-- **RetroAchievements**, or anything else that adds networking, ends the "no
-  INTERNET permission" claim and changes the Data safety answers. Remove the
-  claim from the listing in the same release that adds the permission.
+It contains a public contact address (`bradley@steinfeld.ca`). Play requires a
+contact email on the listing regardless, so it becomes public either way — but
+if a dedicated alias is preferred, change it in `PRIVACY.md` before the listing
+is sent for review rather than after.
