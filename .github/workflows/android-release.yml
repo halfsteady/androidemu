@@ -44,6 +44,7 @@ jobs:
       track: ${{ steps.track.outputs.track }}
       status: ${{ steps.track.outputs.status }}
       configured: ${{ steps.track.outputs.configured }}
+      note: ${{ steps.track.outputs.note }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -135,6 +136,20 @@ jobs:
           echo "track=$track" >> "$GITHUB_OUTPUT"
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "track=$track status=$status play-configured=$configured"
+
+          # What a tester reads in the Play app. The first attempt used the
+          # tagged COMMIT's message, which is a different kind of writing
+          # entirely: 0.2.4-rc1 shipped to testers with a git trailer in its
+          # release notes. An annotated tag's subject is a sentence somebody
+          # wrote about the release, which is exactly what this field wants.
+          note=""
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            note=$(git for-each-ref "refs/tags/${{ github.ref_name }}" \
+                     --format='%(contents:subject)' 2>/dev/null || true)
+          fi
+          [ -n "$note" ] || note="Emulia ${{ steps.ver.outputs.name }}"
+          echo "note=$note" >> "$GITHUB_OUTPUT"
+          echo "note=$note"
 
       - name: Build signed AAB + APK
         working-directory: android
@@ -238,14 +253,14 @@ jobs:
           path: dist
 
       - name: Release notes for testers
+        env:
+          NOTE: ${{ needs.build.outputs.note }}
         run: |
-          # Play wants one file per locale, and rejects an empty one. The tag's
-          # own annotation is the message that was already written for this
-          # build; 500 chars is Play's limit.
+          # Play wants one file per locale, rejects an empty one, and caps it at
+          # 500 characters.
           mkdir -p whatsnew
-          notes=$(printf '%s' "${{ github.event.head_commit.message }}" | head -c 480)
-          [ -n "$notes" ] || notes="Emulia ${{ needs.build.outputs.name }}"
-          printf '%s\n' "$notes" > whatsnew/whatsnew-en-US
+          printf '%s\n' "$(printf '%s' "$NOTE" | head -c 480)" > whatsnew/whatsnew-en-US
+          cat whatsnew/whatsnew-en-US
 
       - name: Upload to Play internal testing
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
@@ -253,7 +268,7 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.bsteinfeld.emulia
           releaseFiles: dist/emulia-${{ needs.build.outputs.name }}.aab
-          track: internal
+          tracks: internal
           status: ${{ needs.build.outputs.status }}
           releaseName: ${{ needs.build.outputs.name }}
           whatsNewDirectory: whatsnew
@@ -288,7 +303,7 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.bsteinfeld.emulia
           releaseFiles: dist/emulia-${{ needs.build.outputs.name }}.aab
-          track: production
+          tracks: production
           # draft: it waits in the console. Going live is still a human clicking
           # "Send for review", which is the right shape for a first production
           # release and probably for the next several.
