@@ -12,7 +12,7 @@
 use crate::apu::Apu;
 use crate::cart::Cartridge;
 use crate::controller::Controller;
-use crate::cpu::Bus;
+use crate::cpu::{Bus, StalledInterrupts};
 use crate::ppu::Ppu;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,9 @@ pub struct NesBus {
     // A property of the last access, consumed within the current instruction.
     // It is overwritten before use after a snapshot, so it is not serialized.
     last_read_halted: bool,
+    // Like last_read_halted, consumed within the current CPU access and not
+    // serialized. Every new access replaces it before the CPU can observe it.
+    stalled_interrupts: Option<StalledInterrupts>,
     controller_port: u8,
     controller_bit: u8,
 }
@@ -80,6 +83,7 @@ impl NesBus {
             cycles: 0,
             extra_cycles: 0,
             last_read_halted: false,
+            stalled_interrupts: None,
             controller_port: 0,
             controller_bit: 0,
         }
@@ -102,6 +106,20 @@ impl NesBus {
         self.cart.mapper.tick();
     }
 
+    fn sample_stalled_interrupts(&mut self) {
+        let nmi = self.ppu.nmi_line;
+        let irq = self.irq_line();
+        if let Some(samples) = &mut self.stalled_interrupts {
+            samples.nmi_rose |= nmi && !samples.last_nmi;
+            samples.last_nmi = nmi;
+            samples.last_irq = irq;
+        } else {
+            self.stalled_interrupts = Some(StalledInterrupts {
+                first_nmi: nmi, last_nmi: nmi, nmi_rose: false, last_irq: irq,
+            });
+        }
+    }
+
     /// Queue OAM DMA. Writes (including the second write of an RMW instruction)
     /// continue until a CPU read can be halted by RDY.
     fn oam_dma(&mut self, page: u8) {
@@ -122,6 +140,7 @@ impl NesBus {
         self.begin_cycle();
         self.read_data(cpu_addr, cpu_addr, true);
         self.end_cycle();
+        self.sample_stalled_interrupts();
         self.extra_cycles += 1;
         dmc_stage = dmc_stage.advance(self.apu.dmc_request().is_some());
         while oam || dmc_stage != DmcDmaStage::Idle || self.apu.dmc_request().is_some() {
@@ -154,6 +173,7 @@ impl NesBus {
                 self.read_data(cpu_addr, cpu_addr, true);
             }
             self.end_cycle();
+            self.sample_stalled_interrupts();
             self.extra_cycles += 1;
             dmc_stage = dmc_stage.advance(self.apu.dmc_request().is_some());
         }
@@ -201,6 +221,7 @@ impl NesBus {
 
 impl Bus for NesBus {
     fn read(&mut self, addr: u16) -> u8 {
+        self.stalled_interrupts = None;
         let extra_before = self.extra_cycles;
         self.run_dma(addr);
         self.last_read_halted = self.extra_cycles != extra_before;
@@ -211,6 +232,7 @@ impl Bus for NesBus {
     }
 
     fn write(&mut self, addr: u16, val: u8) {
+        self.stalled_interrupts = None;
         self.last_read_halted = false;
         self.controller_port = 0;
         self.begin_cycle();
@@ -239,6 +261,10 @@ impl Bus for NesBus {
 
     fn read_halted(&self) -> bool {
         self.last_read_halted
+    }
+
+    fn stalled_interrupts(&self) -> Option<StalledInterrupts> {
+        self.stalled_interrupts
     }
 
     fn irq_line(&self) -> bool {
@@ -273,6 +299,7 @@ impl NesBus {
         self.cycles = Codec::decode(input)?;
         self.extra_cycles = Codec::decode(input)?;
         self.last_read_halted = false;
+        self.stalled_interrupts = None;
         self.controller_port = 0;
         self.controller_bit = 0;
         // Timing configuration is immutable cartridge metadata, not serialized

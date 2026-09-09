@@ -199,3 +199,58 @@ fn snapshot_preserves_pending_dma_and_controller_output_enable() {
         assert!(nes.save_state() == expected, "scenario {scenario}");
     }
 }
+
+#[test]
+fn snapshots_replay_across_ppu_fetches_and_pending_register_effects() {
+    let mut scene = Nes::new(&common::rom(0, 0)).unwrap();
+    scene.bus.ppu.oam.fill(0xff);
+    for i in 0..12 {
+        scene.bus.ppu.oam[i * 4..i * 4 + 4]
+            .copy_from_slice(&[20, i as u8, (i as u8 & 3) | 0x40, i as u8 * 17]);
+    }
+    scene.bus.ppu.vram.fill(1);
+    for address in 0..256 {
+        scene.bus.cart.mapper.ppu_write(address, (address as u8).wrapping_mul(37));
+    }
+    for (i, color) in scene.bus.ppu.palette.iter_mut().enumerate() { *color = i as u8; }
+    scene.bus.write(0x2001, 0x1e);
+    for _ in 0..341 * 262 {
+        if scene.bus.ppu.scanline == 21 && scene.bus.ppu.dot == 0 { break; }
+        scene.bus.ppu.tick(scene.bus.cart.mapper.as_mut());
+    }
+    assert_eq!((scene.bus.ppu.scanline, scene.bus.ppu.dot), (21, 0));
+    // Include secondary-OAM clearing/evaluation boundaries, individual sprite
+    // fetch phases, background reloads, and the end-of-line counter pulse.
+    for dot in [1, 2, 63, 64, 65, 66, 127, 255, 256, 257, 258, 259, 260, 261,
+                262, 263, 319, 320, 321, 322, 337, 338, 339] {
+        let mut at_dot = scene.clone();
+        for _ in 0..dot { at_dot.bus.ppu.tick(at_dot.bus.cart.mapper.as_mut()); }
+        for effect in 0..3 {
+            let mut nes = at_dot.clone();
+            match effect {
+                1 => nes.bus.ppu.write_register(0x2001, 0, nes.bus.cart.mapper.as_mut()),
+                2 => { nes.bus.ppu.read_register(0x2007, nes.bus.cart.mapper.as_mut()); }
+                _ => {}
+            }
+            let saved = nes.save_state();
+            let advance = |nes: &mut Nes| {
+                let mut reads = Vec::new();
+                for cycle in 0..160 {
+                    reads.push(nes.bus.read(match cycle % 23 {
+                        0 => 0x2002,
+                        1 => 0x2004,
+                        2 => 0x2007,
+                        _ => 0,
+                    }));
+                }
+                reads
+            };
+            let reads = advance(&mut nes);
+            let expected = nes.save_state();
+            nes.load_state(&saved).unwrap();
+            assert!(nes.save_state() == saved, "dot {dot}, effect {effect}");
+            assert_eq!(advance(&mut nes), reads, "dot {dot}, effect {effect}");
+            assert!(nes.save_state() == expected, "dot {dot}, effect {effect}");
+        }
+    }
+}

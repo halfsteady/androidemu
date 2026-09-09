@@ -164,3 +164,22 @@ fn controller_bus_conflicts_do_not_replace_zero_bits_in_dmc_audio() {
     assert!(conflicted.apu.samples() == ordinary.apu.samples(),
         "DMC audio must sample the external zero even while the CPU sees one");
 }
+
+#[test]
+fn nmi_edges_during_dma_survive_a_later_status_read() {
+    let mut rom = common::rom(0, 0);
+    rom[16 + 0x7ffa..16 + 0x7ffc].copy_from_slice(&0x0500u16.to_le_bytes());
+    let mut nes = Nes::new(&rom).unwrap();
+    nes.cpu.pc = 0x300;
+    nes.bus.ram[0x300..0x310].fill(0xea);
+    nes.bus.write(0x2000, 0x80);
+    nes.bus.write(0x4014, 0x20);
+    // VBlank starts during OAM DMA, then a DMA read of $2002 clears it.
+    // The CPU must retain the edge even though NMI is low again when RDY rises.
+    nes.bus.ppu.scanline = 240;
+    nes.bus.ppu.dot = 330;
+    assert!((515..=516).contains(&nes.step()));
+    assert!(!nes.bus.ppu.nmi_line);
+    assert_eq!(nes.step(), 7);
+    assert_eq!(nes.cpu.pc, 0x500);
+}

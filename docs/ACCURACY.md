@@ -83,7 +83,9 @@ load new v2 snapshots. Battery saves are unchanged.
 OAM and DMC now share one cycle-by-cycle DMA engine. OAM waits for a CPU read to
 halt, DMC setup overlaps OAM transfers, and DMC sample reads take priority on get
 cycles. Halt, dummy and alignment cycles repeat the held CPU read, including its
-PPU/APU side effects. Reset accounts for its own stolen cycles.
+PPU/APU side effects. Reset accounts for its own stolen cycles. Interrupt samples
+are retained throughout the stall, so an NMI pulse is not lost when a later DMA
+read clears PPU status before the CPU resumes.
 
 DMC activation and cancellation follow the APU phase. Explicit cancellation can
 produce a one-cycle halt; later cancellation still consumes the remaining DMA

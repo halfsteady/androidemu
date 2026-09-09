@@ -19,6 +19,16 @@ pub use table::{Access, Mode, Op};
 
 pub mod disasm;
 
+/// Interrupt samples collected while a bus read was held by DMA. The CPU
+/// cannot execute during the stall, but its NMI edge detector keeps running.
+#[derive(Clone, Copy)]
+pub struct StalledInterrupts {
+    pub first_nmi: bool,
+    pub last_nmi: bool,
+    pub nmi_rose: bool,
+    pub last_irq: bool,
+}
+
 /// The CPU's view of the system. Both accessors must advance the rest of the
 /// machine by one CPU cycle before returning.
 pub trait Bus {
@@ -29,6 +39,12 @@ pub trait Bus {
     /// observe this on their indexing dummy read, immediately before writing.
     fn read_halted(&self) -> bool {
         false
+    }
+
+    /// Samples from the stolen cycles preceding the most recent read. The
+    /// ordinary read's final interrupt sample is still taken by the CPU.
+    fn stalled_interrupts(&self) -> Option<StalledInterrupts> {
+        None
     }
 
     /// Level of the /NMI line, sampled by the CPU each cycle. The edge detection
@@ -136,6 +152,11 @@ impl Cpu {
 
     fn read<B: Bus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let v = bus.read(addr);
+        if let Some(stalled) = bus.stalled_interrupts() {
+            self.nmi_pending |= stalled.nmi_rose || (stalled.first_nmi && !self.nmi_prev);
+            self.nmi_prev = stalled.last_nmi;
+            self.irq_pending = stalled.last_irq;
+        }
         self.cycles += 1;
         self.sample_interrupts(bus);
         v
