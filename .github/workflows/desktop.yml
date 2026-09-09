@@ -2,9 +2,9 @@ name: Desktop portability
 
 on:
   push:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
   pull_request:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:
@@ -25,21 +25,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config build-essential libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev
       - name: Test core and runner
         run: cargo test --locked -p nes-core -p nes-runner
       - name: Build portable executables
         run: cargo build --release --locked -p nes-desktop -p nes-runner
       - name: Test desktop persistence
         run: cargo test --locked -p nes-desktop
-      - name: Lint desktop frontend
-        run: cargo clippy --locked -p nes-desktop --all-targets --no-deps -- -D warnings
+      - name: Lint core, runner and desktop
+        run: cargo clippy --locked -p nes-core -p nes-runner -p nes-desktop --all-targets --no-deps -- -D warnings
       - name: Exercise SDL video and audio
-        run: python3 scripts/check-desktop.py target/release/nes-desktop
+        run: python3 scripts/check-desktop.py target/release/nes-desktop --require-native-drivers
       - name: AccuracyCoin regression
         run: |
+          python3 scripts/test-accuracycoin.py
           curl --fail --location --output "$RUNNER_TEMP/AccuracyCoin.nes" https://raw.githubusercontent.com/100thCoin/AccuracyCoin/affc643aa771028510c4427451ecf5bba5e54592/AccuracyCoin.nes
           python3 scripts/check-accuracycoin.py "$RUNNER_TEMP/AccuracyCoin.nes" --report "$RUNNER_TEMP/accuracycoin.json"
+      - name: Upload accuracy results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accuracycoin-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/accuracycoin.json
+          if-no-files-found: ignore
       - name: Package
         run: |
           mkdir -p dist

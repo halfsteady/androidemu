@@ -36,7 +36,16 @@ fn main() -> ExitCode {
 
     match args[0].as_str() {
         "accuracycoin" => {
-            let limit = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(60_000);
+            let limit = match args.get(2) {
+                None => 10_000,
+                Some(value) => match value.parse::<usize>() {
+                    Ok(limit) if limit > 0 && args.len() == 3 => limit,
+                    _ => {
+                        eprintln!("accuracycoin expects a positive frame limit");
+                        return ExitCode::from(2);
+                    }
+                },
+            };
             return match accuracycoin::run(&mut nes, limit) {
                 Ok(true) => ExitCode::SUCCESS,
                 Ok(false) => ExitCode::from(1),

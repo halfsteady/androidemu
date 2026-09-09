@@ -26,7 +26,7 @@ are covered by the CI workflow.
 On Ubuntu/Debian, install the build and desktop development packages:
 
 ```sh
-sudo apt-get install build-essential cmake libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev
+sudo apt-get install build-essential cmake pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev
 ```
 
 From the repository root:
@@ -35,6 +35,12 @@ From the repository root:
 cargo build --release --locked -p nes-desktop -p nes-runner
 ./target/release/nes-desktop "/path/to/game.nes"
 ```
+
+SDL can build successfully with only dummy/offscreen drivers when development
+packages are missing. Check `nes-desktop --list-drivers`: Linux needs `x11` or
+`wayland` for the window and a desktop audio driver such as `alsa` or
+`pulseaudio`; macOS needs `cocoa` and `coreaudio`. The CI smoke test checks these
+compiled backends as well as exercising the dummy drivers.
 
 The executable can be copied out of the repository and run directly. Linux
 still needs the system C runtime and display/audio services; it is not a fully
@@ -74,9 +80,11 @@ Saves are keyed by ROM payload identity, so moving or renaming a ROM retains its
 saves. The default directory is `~/Library/Application Support/Emulia` on macOS
 and `$XDG_DATA_HOME/emulia` (or `~/.local/share/emulia`) on Linux. Override it with
 `--save-dir /path/to/saves`, including a directory on removable storage.
-Battery RAM is saved every five seconds during play and on clean exit. Save
+Battery RAM is saved every five seconds, on pause/focus loss and on clean exit. Save
 replacement is atomic; malformed existing SRAM is reported and left intact.
-Errors appear in the launching terminal. Avoid running two copies of the same
+Autosave errors appear in the launching terminal and are retried at the next
+interval, including while paused; the game stays open so its progress remains
+in memory. Avoid running two copies of the same
 game against the same save directory, since the last writer wins.
 
 F5/F8 use the existing core's versioned state format. Android save containers
@@ -87,7 +95,7 @@ changes since the last periodic save.
 
 ```sh
 cargo test --workspace --locked
-python3 scripts/check-desktop.py target/release/nes-desktop
+python3 scripts/check-desktop.py target/release/nes-desktop --require-native-drivers
 ```
 
 The smoke test creates its own NROM, runs the real frontend with SDL dummy video

@@ -308,7 +308,9 @@ impl Ppu {
             3 => self.oam_addr = val,
             4 => {
                 if self.rendering() && (self.scanline < 240 || self.scanline == self.region.scanlines() - 1) {
-                    self.oam_addr = self.oam_addr.wrapping_add(4) & 0xfc;
+                    // Only the sprite index (high six bits) increments; the
+                    // byte offset within the sprite is retained.
+                    self.oam_addr = self.oam_addr.wrapping_add(4);
                 } else {
                     self.oam[self.oam_addr as usize] = val;
                     self.oam_addr = self.oam_addr.wrapping_add(1);

@@ -54,15 +54,20 @@ fn one_cycle_controller_strobe_depends_on_apu_phase() {
 fn sprite_fetch_resets_oam_address_only_while_rendering() {
     let mut bus = bus();
     for mask in [0, 8, 16] {
-        let mut ppu = Ppu::new();
-        ppu.mask = mask;
-        ppu.dot = 256;
-        ppu.oam_addr = 5;
-        ppu.tick(bus.cart.mapper.as_mut());
-        assert_eq!(ppu.oam_addr, if mask == 0 { 5 } else { 0 });
-        ppu.oam_addr = 17;
-        ppu.tick(bus.cart.mapper.as_mut());
-        assert_eq!(ppu.oam_addr, if mask == 0 { 17 } else { 0 });
+        for scanline in [0, 239, 240, 241, 261] {
+            for dot in [255, 256, 257, 319, 320] {
+                let mut ppu = Ppu::new();
+                ppu.mask = mask;
+                ppu.scanline = scanline;
+                ppu.dot = dot;
+                ppu.oam_addr = 5;
+                ppu.tick(bus.cart.mapper.as_mut());
+                let fetch = mask != 0
+                    && (scanline < 240 || scanline == 261)
+                    && (257..=320).contains(&(dot + 1));
+                assert_eq!(ppu.oam_addr, if fetch { 0 } else { 5 });
+            }
+        }
     }
 }
 
@@ -81,7 +86,7 @@ fn oam_attribute_holes_and_rendering_accesses() {
     ppu.oam[1] = 0x5a;
     assert_eq!(ppu.read_register(0x2004, mapper), 0xff);
     ppu.write_register(0x2004, 0, mapper);
-    assert_eq!(ppu.oam_addr, 4);
+    assert_eq!(ppu.oam_addr, 5);
     assert_eq!(
         ppu.oam[1], 0x5a,
         "rendering writes must not alter primary OAM"
@@ -91,10 +96,42 @@ fn oam_attribute_holes_and_rendering_accesses() {
     assert_eq!(ppu.read_register(0x2004, mapper), 0x5a);
 }
 
+#[test]
+fn rendering_oam_writes_preserve_the_byte_offset_and_wrap() {
+    let mut bus = bus();
+    let mapper = bus.cart.mapper.as_mut();
+    for scanline in [0, 239, 261] {
+        for mask in [8, 16, 24] {
+            let mut ppu = Ppu::new();
+            ppu.scanline = scanline;
+            ppu.mask = mask;
+            ppu.dot = 100;
+            ppu.oam.fill(0x5a);
+            for address in 0..=255u8 {
+                ppu.oam_addr = address;
+                ppu.write_register(0x2004, 0xa5, mapper);
+                assert_eq!(ppu.oam_addr, address.wrapping_add(4));
+                assert_eq!(ppu.oam[address as usize], 0x5a);
+            }
+        }
+    }
+    // Rendering enabled during blanking still allows ordinary OAM writes.
+    for scanline in [240, 241, 260] {
+        let mut ppu = Ppu::new();
+        ppu.scanline = scanline;
+        ppu.mask = 24;
+        ppu.oam_addr = 255;
+        ppu.write_register(0x2004, 0xa5, mapper);
+        assert_eq!(ppu.oam_addr, 0);
+        assert_eq!(ppu.oam[255], 0xa5);
+    }
+}
+
 struct EdgeBus {
     memory: Vec<u8>,
     cycle: usize,
     edge: usize,
+    irq: bool,
 }
 impl Bus for EdgeBus {
     fn read(&mut self, addr: u16) -> u8 {
@@ -108,16 +145,21 @@ impl Bus for EdgeBus {
     fn nmi_line(&self) -> bool {
         self.cycle >= self.edge
     }
+    fn irq_line(&self) -> bool {
+        self.irq
+    }
 }
 fn interrupt_machine(edge: usize) -> (Cpu, EdgeBus) {
     let mut bus = EdgeBus {
         memory: vec![0; 65536],
         cycle: 0,
         edge,
+        irq: false,
     };
     bus.memory[0xfffa..0xfffc].copy_from_slice(&[0, 0xa0]);
     bus.memory[0xfffe..].copy_from_slice(&[0, 0x90]);
     bus.memory[0x9000] = 0xe8; // INX: observable first instruction of IRQ handler.
+    bus.memory[0xa000] = 0xe8;
     let mut cpu = Cpu::new();
     cpu.pc = 0x8000; // BRK followed by its padding byte.
     (cpu, bus)
@@ -141,4 +183,32 @@ fn late_nmi_waits_for_first_irq_handler_instruction() {
     assert_eq!(cpu.x, 1);
     assert_eq!(cpu.step(&mut bus), 7);
     assert_eq!(cpu.pc, 0xa000);
+}
+
+#[test]
+fn interrupt_hijack_window_preserves_irq_and_brk_stack_frames() {
+    for hardware_irq in [false, true] {
+        for edge in 1..=7 {
+            let (mut cpu, mut bus) = interrupt_machine(edge);
+            cpu.p &= !flags::I;
+            bus.irq = hardware_irq;
+            assert_eq!(cpu.step(&mut bus), 7);
+            assert_eq!(
+                cpu.pc,
+                if edge <= 4 { 0xa000 } else { 0x9000 },
+                "IRQ={hardware_irq}, NMI edge on cycle {edge}"
+            );
+            assert_eq!(bus.memory[0x1fc], if hardware_irq { 0 } else { 2 });
+            assert_eq!(bus.memory[0x1fd], 0x80);
+            assert_eq!(bus.memory[0x1fb] & flags::B != 0, !hardware_irq);
+            assert_eq!(bus.memory[0x1fb] & flags::I, 0);
+            // Both early and late edges allow the first handler instruction.
+            assert_eq!(cpu.step(&mut bus), 2);
+            assert_eq!(cpu.x, 1);
+            if edge > 4 {
+                assert_eq!(cpu.step(&mut bus), 7);
+                assert_eq!(cpu.pc, 0xa000);
+            }
+        }
+    }
 }
