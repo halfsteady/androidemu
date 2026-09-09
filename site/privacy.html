@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — Emulia</title>
+<meta name="description" content="Emulia collects nothing, sends nothing, and has no way to. It declares no Android permissions, including the one required to open a network connection.">
+<link rel="canonical" href="https://emulia.website/privacy.html">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://emulia.website/privacy.html">
+<meta property="og:title" content="Privacy policy — Emulia">
+<meta property="og:description" content="Emulia collects nothing, sends nothing, and has no way to.">
+<meta property="og:image" content="https://emulia.website/assets/og-card.jpg">
+<meta name="theme-color" content="#111813">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/mark.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<style>
+:root {
+  --ink: #111813; --panel: #1d2820; --line: #2f3f33;
+  --leaf: #b9e38c; --paper: #edf4e9; --dim: #9aab94; --dimmer: #6d7f68;
+  --q1:#b9e38c; --q2:#f0d49a; --q3:#7fd2c4; --q4:#e8a39a;
+  --sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --pad: clamp(1.25rem, 5vw, 4.5rem);
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ink); color: var(--paper);
+  font-family: var(--sans); font-size: 1.0625rem; line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; display: block; }
+a { color: var(--leaf); text-underline-offset: .2em; }
+a:hover { color: var(--paper); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; color: var(--paper); }
+:focus-visible { outline: 2px solid var(--leaf); outline-offset: 3px; border-radius: 2px; }
+.wrap { max-width: 46rem; margin-inline: auto; padding-inline: var(--pad); }
+
+.masthead { border-bottom: 1px solid var(--line); }
+.masthead .wrap { max-width: 78rem; display: flex; align-items: center; min-height: 4rem; gap: 1.5rem; }
+.brand { display: flex; align-items: center; gap: .7rem; text-decoration: none; color: var(--paper); }
+.brand img { width: 30px; height: 30px; border-radius: 7px; }
+.brand span { font-weight: 700; font-size: .95rem; letter-spacing: .34em; text-indent: .34em; font-variation-settings: "wdth" 112; }
+.masthead nav { margin-left: auto; font-size: .9rem; }
+.masthead nav a { color: var(--dim); text-decoration: none; }
+.masthead nav a:hover { color: var(--paper); }
+
+main { padding-block: clamp(2.75rem, 7vw, 5rem) clamp(3rem, 8vw, 6rem); }
+h1 {
+  margin: 0; font-size: clamp(2.1rem, 5.5vw, 3.1rem); font-weight: 800;
+  font-variation-settings: "wdth" 106; line-height: 1.02; letter-spacing: -.03em;
+}
+.updated { margin: .9rem 0 0; color: var(--dimmer); font-size: .92rem; }
+
+h2 {
+  margin: 3rem 0 0; font-size: 1.3rem; font-weight: 700;
+  line-height: 1.25; letter-spacing: -.012em;
+}
+p { margin: 1rem 0 0; color: var(--dim); }
+p strong, li strong { color: var(--paper); font-weight: 600; }
+ul { margin: 1rem 0 0; padding: 0; list-style: none; }
+ul li { position: relative; padding-left: 1.6rem; margin-top: .7rem; color: var(--dim); }
+ul li::before { content: ""; position: absolute; left: 0; top: .68em; width: 8px; height: 8px; background: var(--q4); }
+
+.short {
+  margin-top: 2.5rem; padding: 1.4rem 1.5rem;
+  background: #0c110e; border: 1px solid var(--line); border-left: 3px solid var(--q4);
+  border-radius: 12px;
+}
+.short h2 { margin-top: 0; }
+.short p:first-of-type { margin-top: .8rem; }
+
+.quadrule { display: grid; grid-template-columns: repeat(4, 1fr); height: 5px; }
+.quadrule i { display: block; }
+.quadrule i:nth-child(1){background:var(--q1)} .quadrule i:nth-child(2){background:var(--q2)}
+.quadrule i:nth-child(3){background:var(--q3)} .quadrule i:nth-child(4){background:var(--q4)}
+
+footer { border-top: 1px solid var(--line); padding-block: 2.5rem 3rem; color: var(--dimmer); font-size: .88rem; }
+footer .wrap { max-width: 78rem; display: grid; gap: 1rem; }
+footer a { color: var(--dim); text-decoration: none; }
+footer a:hover { color: var(--paper); }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="assets/mark.svg" alt=""><span>EMULIA</span></a>
+    <nav><a href="/">Back to Emulia</a></nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <h1>Privacy policy</h1>
+    <p class="updated">Last updated 7 September 2026</p>
+
+    <p>Emulia is an 8-bit game emulator for Android, published by Bradley Steinfeld.</p>
+
+    <div class="short">
+      <h2>The short version</h2>
+      <p><strong>Emulia collects nothing, sends nothing, and has no way to.</strong>
+        It has no account, no analytics, no advertising, no crash reporting, and no
+        internet permission.</p>
+    </div>
+
+    <h2>Why we can say that with confidence</h2>
+    <p>Emulia does not request the Android <code>INTERNET</code> permission. An app
+      without that permission is prevented by the operating system from opening any
+      network connection — this is enforced by Android itself, not by a promise in
+      this document. You can check it: the permission list on the app's Google Play
+      page, or in Settings on your device, shows no network access.</p>
+    <p>Because the app cannot reach a network, there is no server for your
+      information to be sent to. There isn't one.</p>
+
+    <h2>What is stored, and where</h2>
+    <p>Everything Emulia keeps stays in the app's own private storage on your device:</p>
+    <ul>
+      <li><strong>Game files</strong> you add yourself. Emulia does not include any
+        games and cannot download any.</li>
+      <li><strong>Saved games, save states and battery saves</strong>, including
+        their thumbnails.</li>
+      <li><strong>Screenshots</strong> you choose to take, which are written to your
+        device's own Pictures folder so you can find them in your gallery.</li>
+      <li><strong>Your settings</strong> — picture options, colour palette,
+        controller mappings, playtime, and which games are on your shelf.</li>
+    </ul>
+    <p>None of this leaves the device. Uninstalling Emulia removes all of it, except
+      for screenshots you have deliberately saved to your gallery.</p>
+
+    <h2>Data shared with others</h2>
+    <p>None. There are no third-party libraries that collect data, no advertising
+      networks, no analytics providers, and no payment processing.</p>
+
+    <h2>Permissions Emulia does request</h2>
+    <ul>
+      <li><strong>Reading a file you pick.</strong> When you add a game, Android's
+        file picker hands Emulia that single file. Emulia has no general access to
+        your storage.</li>
+      <li><strong>USB device access</strong>, so a wired controller can be used. Used
+        only for controller input.</li>
+    </ul>
+
+    <h2>Children</h2>
+    <p>Emulia is suitable for children and was written for one. It collects no
+      personal information from anyone, of any age. Because it cannot connect to a
+      network, it cannot transmit a child's information, show advertising, or link
+      to outside content.</p>
+    <p>Emulia is rated for ages 13 and over on Google Play. That rating reflects the
+      store's own process, not a judgement that the app is unsuitable for younger
+      players — it is the rating an app receives when it does not go through
+      Google's separate Families programme.</p>
+
+    <h2>Your rights</h2>
+    <p>Because no personal data is collected, there is nothing to request access to,
+      correct, export, or delete from us. The data on your device is yours, under
+      your control, and is removed when you uninstall the app.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes, the updated version will be published at this address
+      and the date at the top will change. If a future version of Emulia ever adds a
+      network feature, the “no internet permission” claim will be removed from this
+      policy and from the store listing in the same release that adds it.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy, or about Emulia:
+      <a href="mailto:bradley@steinfeld.ca">bradley@steinfeld.ca</a></p>
+  </div>
+</main>
+
+<div class="quadrule" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+<footer>
+  <div class="wrap">
+    <p><a href="/">Emulia</a> · <a href="mailto:bradley@steinfeld.ca">bradley@steinfeld.ca</a></p>
+    <p>© 2026 Bradley Steinfeld</p>
+  </div>
+</footer>
+
+</body>
+</html>

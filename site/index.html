@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emulia — 8-bit games, on your tablet</title>
+<meta name="description" content="Emulia plays the 8-bit cartridge files you already own, on your Android tablet or phone. Written from scratch in Rust. No ads, no accounts, and no network permission at all.">
+<link rel="canonical" href="https://emulia.website/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://emulia.website/">
+<meta property="og:title" content="Emulia — 8-bit games, on your tablet">
+<meta property="og:description" content="Plays the 8-bit cartridge files you already own. No ads, no accounts, and no network permission at all.">
+<meta property="og:image" content="https://emulia.website/assets/og-card.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Emulia — 8-bit games, on your tablet">
+<meta name="twitter:description" content="Plays the 8-bit cartridge files you already own. No ads, no accounts, and no network permission at all.">
+<meta name="twitter:image" content="https://emulia.website/assets/og-card.jpg">
+<meta name="theme-color" content="#111813">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/mark.svg">
+<!-- Safari won't render an SVG favicon, so ship the PNG the brand build makes too. -->
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Emulia",
+  "operatingSystem": "Android 10 and up",
+  "applicationCategory": "GameApplication",
+  "description": "An 8-bit cartridge emulator that plays the game files you already own. No ads, no accounts, no network permission.",
+  "url": "https://emulia.website/",
+  "image": "https://emulia.website/assets/og-card.jpg",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+/* ---------------------------------------------------------------------------
+   Colour is not invented here. --ink, --panel, --leaf and --paper are the exact
+   values the app ships in Ui.kt, and --q1..--q4 are the four quadrants of the
+   launcher mark. The page walks through those four in order, one per section,
+   because that is what the mark is about: the same thing, every palette.
+   --------------------------------------------------------------------------- */
+:root {
+  --ink:      #111813;
+  --ink-2:    #0c110e;
+  --panel:    #1d2820;
+  --panel-2:  #243128;
+  --line:     #2f3f33;
+  --leaf:     #b9e38c;
+  --on-leaf:  #17300c;
+  --paper:    #edf4e9;
+  --dim:      #9aab94;
+  --dimmer:   #6d7f68;
+
+  --q1: #b9e38c;  /* shelf   */
+  --q2: #f0d49a;  /* time    */
+  --q3: #7fd2c4;  /* picture */
+  --q4: #e8a39a;  /* nothing */
+
+  --hue: var(--leaf);
+
+  --sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --pad: clamp(1.25rem, 5vw, 4.5rem);
+  --measure: 62ch;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-variation-settings: "wdth" 100;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; height: auto; display: block; }
+
+a { color: var(--hue); text-decoration-thickness: 1px; text-underline-offset: .2em; }
+a:hover { color: var(--paper); }
+
+code { font-family: var(--mono); font-size: .9em; color: var(--paper); }
+
+/* The masthead is sticky, so a jump link has to stop short of it. */
+section[id] { scroll-margin-top: 4.5rem; }
+
+:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.wrap { max-width: 78rem; margin-inline: auto; padding-inline: var(--pad); }
+
+/* --- masthead ------------------------------------------------------------ */
+
+.masthead {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--ink) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.masthead .wrap {
+  display: flex; align-items: center; gap: 1.5rem;
+  min-height: 4rem;
+}
+.brand { display: flex; align-items: center; gap: .7rem; text-decoration: none; color: var(--paper); }
+.brand img { width: 30px; height: 30px; border-radius: 7px; }
+/* The app's own header sets the name in tracked caps. The site keeps it. */
+.brand span {
+  font-weight: 700; font-size: .95rem;
+  letter-spacing: .34em; text-indent: .34em;
+  font-variation-settings: "wdth" 112;
+}
+.masthead nav { margin-left: auto; display: flex; gap: 1.5rem; font-size: .9rem; }
+.masthead nav a { color: var(--dim); text-decoration: none; }
+.masthead nav a:hover { color: var(--paper); }
+@media (max-width: 34rem) { .masthead nav .hide-s { display: none; } }
+
+/* --- hero ---------------------------------------------------------------- */
+
+.hero { padding-block: clamp(3rem, 8vw, 6.5rem) clamp(2.5rem, 6vw, 5rem); overflow: hidden; }
+.hero .wrap {
+  display: grid; gap: clamp(2.5rem, 5vw, 4rem);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+@media (min-width: 62rem) {
+  .hero .wrap {
+    max-width: none;
+    padding-left: max(var(--pad), calc((100vw - 78rem) / 2 + var(--pad)));
+    padding-right: 0;
+    grid-template-columns: minmax(0, 36rem) minmax(0, 1fr);
+  }
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.75rem, 6.4vw, 4.9rem);
+  font-weight: 800;
+  font-variation-settings: "wdth" 108;
+  line-height: .93;
+  letter-spacing: -.035em;
+}
+.hero p.lead {
+  margin: 1.6rem 0 0;
+  max-width: 34ch;
+  color: var(--dim);
+  font-size: 1.15rem;
+}
+
+.cta { margin-top: 2.2rem; }
+.badge {
+  display: inline-flex; align-items: center; gap: .7rem;
+  padding: .85rem 1.5rem .85rem 1.2rem;
+  border-radius: 999px;
+  font-weight: 700; font-size: 1.02rem;
+  background: var(--leaf); color: var(--on-leaf);
+  border: 0; text-decoration: none;
+}
+.badge svg { width: 20px; height: 20px; flex: none; }
+.badge.pending { background: transparent; color: var(--leaf); border: 1px solid var(--leaf); cursor: default; }
+.cta .note { margin: .95rem 0 0; font-size: .92rem; color: var(--dimmer); }
+
+.shot {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+/* The shelf runs off the right edge of the window, which is the point of it. */
+.hero-shot { position: relative; }
+
+/* --- the four-quadrant rule ---------------------------------------------- */
+
+.quadrule { display: grid; grid-template-columns: repeat(4, 1fr); height: 5px; }
+.quadrule i { display: block; }
+.quadrule i:nth-child(1) { background: var(--q1); }
+.quadrule i:nth-child(2) { background: var(--q2); }
+.quadrule i:nth-child(3) { background: var(--q3); }
+.quadrule i:nth-child(4) { background: var(--q4); }
+
+/* --- sections ------------------------------------------------------------ */
+
+.band { border-top: 1px solid var(--line); padding-block: clamp(3.5rem, 8vw, 6rem); }
+/* minmax(0,1fr), not the default auto: a grid track sized to its content lets
+   the manifest block's long lines push the whole page sideways on a phone
+   instead of scrolling inside their own box. */
+.band > .wrap { display: grid; gap: clamp(2rem, 5vw, 4rem); grid-template-columns: minmax(0, 1fr); }
+.band > .wrap > *, .hero .wrap > * { min-width: 0; }
+@media (min-width: 62rem) {
+  .band.split > .wrap { grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); align-items: center; }
+  /* Flipped, the copy moves to the right — so the narrow column has to move
+     with it, or the screenshot lands in the 26rem slot and the text sprawls. */
+  .band.split.flip > .wrap { grid-template-columns: minmax(0, 1fr) minmax(0, 26rem); }
+  .band.split.flip > .wrap > .copy { order: 2; }
+}
+
+/* Which of the mark's four quadrants this section is. Reads as position in a
+   sequence, which an all-caps eyebrow would only assert. */
+.quadmark { width: 22px; height: 22px; display: block; margin-bottom: 1.1rem; }
+.quadmark rect { fill: var(--line); }
+.quadmark rect.on { fill: var(--hue); }
+
+h2 {
+  margin: 0;
+  font-size: clamp(1.85rem, 3.6vw, 2.7rem);
+  font-weight: 800;
+  font-variation-settings: "wdth" 104;
+  line-height: 1.06;
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+.band p { margin: 1.25rem 0 0; max-width: var(--measure); color: var(--dim); }
+.band p strong { color: var(--paper); font-weight: 600; }
+
+/* Square bullets, because the whole product is made of them. */
+ul.points { list-style: none; margin: 1.8rem 0 0; padding: 0; max-width: var(--measure); }
+ul.points li {
+  position: relative; padding-left: 1.6rem; margin-top: .7rem;
+  color: var(--dim); font-size: .98rem;
+}
+ul.points li::before {
+  content: ""; position: absolute; left: 0; top: .62em;
+  width: 8px; height: 8px; background: var(--hue);
+}
+
+/* --- shelf layout switch -------------------------------------------------- */
+
+.switch {
+  display: inline-flex; margin-bottom: 1.1rem;
+  border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px;
+  background: var(--ink-2);
+}
+.switch button {
+  font: inherit; font-size: .88rem; font-weight: 600;
+  padding: .42rem 1rem; border: 0; border-radius: 7px;
+  background: transparent; color: var(--dim); cursor: pointer;
+}
+.switch button[aria-pressed="true"] { background: var(--q1); color: var(--on-leaf); }
+.switch button:hover:not([aria-pressed="true"]) { color: var(--paper); }
+.switch-note { font-size: .88rem; color: var(--dimmer); margin: .9rem 0 0; }
+
+/* --- the empty permission list ------------------------------------------- */
+
+.manifest {
+  margin: 2rem 0 0;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--q4);
+  border-radius: 10px;
+  padding: 1.15rem 1.3rem;
+  font-family: var(--mono);
+  font-size: .845rem;
+  line-height: 1.75;
+  color: var(--dim);
+  overflow-x: auto;
+}
+.manifest .t { color: var(--q4); }
+.manifest .c { color: var(--dimmer); font-style: italic; }
+
+/* --- specs --------------------------------------------------------------- */
+
+.specs { margin: 2rem 0 0; display: grid; gap: 0; max-width: 46rem; }
+.specs > div {
+  display: grid; gap: .15rem .5rem; padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+@media (min-width: 40rem) { .specs > div { grid-template-columns: 11rem minmax(0, 1fr); gap: 1.5rem; } }
+.specs dt { font-weight: 700; color: var(--paper); font-size: .95rem; }
+.specs dd { margin: 0; color: var(--dim); font-size: .95rem; }
+
+.caveat {
+  margin-top: 2rem; padding: 1rem 1.2rem;
+  border: 1px dashed var(--line); border-radius: 10px;
+  color: var(--dimmer); font-size: .92rem; max-width: 46rem;
+}
+
+/* --- closing ------------------------------------------------------------- */
+
+.closing { text-align: center; padding-block: clamp(4rem, 9vw, 7rem); border-top: 1px solid var(--line); }
+.closing img.mark { width: 74px; height: 74px; margin: 0 auto 1.6rem; border-radius: 17px; }
+.closing h2 { max-width: 18ch; margin-inline: auto; }
+.closing p { margin-inline: auto; text-align: center; }
+
+footer { border-top: 1px solid var(--line); padding-block: 2.5rem 3rem; color: var(--dimmer); font-size: .88rem; }
+footer .wrap { display: grid; gap: 1.2rem; }
+footer .links { display: flex; flex-wrap: wrap; gap: 1.4rem; }
+footer a { color: var(--dim); text-decoration: none; }
+footer a:hover { color: var(--paper); }
+footer .fine { max-width: 60ch; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="assets/mark.svg" alt=""><span>EMULIA</span></a>
+    <nav>
+      <a href="#shelf">Shelf</a>
+      <a href="#picture" class="hide-s">Picture</a>
+      <a href="#nothing">Privacy</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <h1>Your games.<br>Your tablet.<br>Nothing else.</h1>
+      <p class="lead">Emulia plays the 8-bit cartridge files you already own. It brings no
+        games with it, and it has no way to go and find any.</p>
+      <div class="cta">
+        <span class="badge pending">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5v17a1 1 0 0 0 1.5.87l14-8.5a1 1 0 0 0 0-1.74l-14-8.5A1 1 0 0 0 4 3.5Z"/></svg>
+          Coming to Google Play
+        </span>
+        <p class="note">Free, with every feature included. Android 10 and up.</p>
+      </div>
+    </div>
+    <div class="hero-shot">
+      <img class="shot" src="assets/shelf-grid.webp" width="1500" height="993"
+           alt="Emulia's shelf on a tablet: cards for four games, each showing the screen it was last on, with a Resume link and the time played.">
+    </div>
+  </div>
+</section>
+
+<div class="quadrule" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+<section class="band split" id="shelf" style="--hue: var(--q1)">
+  <div class="wrap">
+    <div class="copy">
+      <svg class="quadmark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect class="on" x="0" y="0" width="11" height="11"/><rect x="13" y="0" width="11" height="11"/>
+        <rect x="0" y="13" width="11" height="11"/><rect x="13" y="13" width="11" height="11"/>
+      </svg>
+      <h2>It opens where you left off.</h2>
+      <p>Emulia opens on a shelf, not a file browser. Every game you have added sits
+        there showing the screen you last saw, ordered by what you played most
+        recently. <strong>One tap resumes it</strong> — the app saved your place when
+        you put the tablet down.</p>
+      <ul class="points">
+        <li>Pick the box art you want for each game, or let the last screen stand in</li>
+        <li>Playtime counted per game, so you can see where the afternoon went</li>
+        <li>Put a game away without deleting it, and bring it back later</li>
+        <li>Screenshots go to your device gallery, where you would look for them</li>
+      </ul>
+    </div>
+    <div>
+      <div class="switch" role="group" aria-label="Shelf layout">
+        <button type="button" data-shot="assets/shelf-grid.webp" aria-pressed="true">Cards</button>
+        <button type="button" data-shot="assets/shelf-list.webp" aria-pressed="false">List</button>
+      </div>
+      <img class="shot" id="shelf-shot" src="assets/shelf-grid.webp" width="1500" height="993"
+           alt="The shelf laid out as cards.">
+      <p class="switch-note">The app has both. So does this — try the switch.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band split flip" id="time" style="--hue: var(--q2)">
+  <div class="wrap">
+    <div class="copy">
+      <svg class="quadmark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="0" y="0" width="11" height="11"/><rect class="on" x="13" y="0" width="11" height="11"/>
+        <rect x="0" y="13" width="11" height="11"/><rect x="13" y="13" width="11" height="11"/>
+      </svg>
+      <h2>Hold Undo and the game runs backwards.</h2>
+      <p>One control handles both directions. Drag it away from the centre and time
+        moves — <strong>further out is faster</strong> — or tap to jump back five
+        seconds, or fifteen. The shoulder buttons on a controller drive the same
+        thing without looking.</p>
+      <ul class="points">
+        <li>Ten save slots per game, each with a thumbnail and a timestamp</li>
+        <li>Saves itself when you pause, switch away, or the battery gets low</li>
+        <li>Battery saves kept per game, exactly as the cartridge would have</li>
+        <li>Two controller ports over USB or Bluetooth, plus on-screen controls you can hide</li>
+      </ul>
+    </div>
+    <div>
+      <img class="shot" src="assets/play-rewind.webp" width="1500" height="993"
+           alt="A game playing with the notice “Rewinding 3×” at the top, and the time control at the bottom of the screen showing 3× with jump-back buttons for 5 and 15 seconds.">
+    </div>
+  </div>
+</section>
+
+<section class="band split" id="picture" style="--hue: var(--q3)">
+  <div class="wrap">
+    <div class="copy">
+      <svg class="quadmark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="0" y="0" width="11" height="11"/><rect x="13" y="0" width="11" height="11"/>
+        <rect class="on" x="0" y="13" width="11" height="11"/><rect x="13" y="13" width="11" height="11"/>
+      </svg>
+      <h2>The shape and the look are yours.</h2>
+      <p>Three shapes: the 4:3 a television showed, the 8:7 the hardware actually
+        produced, or pixel-perfect. Ten looks on top of that, from plain scanlines
+        through an old photograph to a cel-shaded cartoon. Colours are a separate
+        choice again, and <strong>you can load a <code>.pal</code> file of your
+        own</strong>.</p>
+      <p>Settings previews all of it with the same shader the game uses, so what you
+        see while choosing is what you get while playing.</p>
+    </div>
+    <div>
+      <img class="shot" src="assets/picture.webp" width="1000" height="1306"
+           alt="Emulia's picture settings: a live preview above rows of choices for Shape, Look and Colours, and a switch for trimming overscan.">
+    </div>
+  </div>
+</section>
+
+<section class="band" id="nothing" style="--hue: var(--q4)">
+  <div class="wrap">
+    <div>
+      <svg class="quadmark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="0" y="0" width="11" height="11"/><rect x="13" y="0" width="11" height="11"/>
+        <rect x="0" y="13" width="11" height="11"/><rect class="on" x="13" y="13" width="11" height="11"/>
+      </svg>
+      <h2>The permission list is empty.</h2>
+      <p>Not “we don’t collect much”. Emulia’s manifest asks Android for
+        <strong>no permissions at all</strong> — including the one an app needs
+        before it can open a network connection. Android enforces that, rather than
+        this page promising it, and you can check it yourself in the permission
+        list on the Play page or in your device settings.</p>
+      <pre class="manifest"><code>&lt;<span class="t">manifest</span> package=<span class="t">"com.bsteinfeld.emulia"</span>&gt;
+    &lt;<span class="t">uses-feature</span> android:glEsVersion=<span class="t">"0x00030000"</span> /&gt;
+    &lt;<span class="t">uses-feature</span> android:name=<span class="t">"android.hardware.usb.host"</span>
+                  android:required=<span class="t">"false"</span> /&gt;
+    <span class="c">&lt;!-- and no uses-permission line, anywhere --&gt;</span>
+&lt;/<span class="t">manifest</span>&gt;</code></pre>
+      <p>Adding a game goes through Android's own file picker, which hands over the
+        one file you chose and nothing else. A wired controller uses the USB feature
+        above, for controller input only. Nothing you do in Emulia leaves the device,
+        because there is nowhere for it to go.</p>
+      <ul class="points">
+        <li>No ads, and no place a future ad could load from</li>
+        <li>No account, no sign-in, nothing to create</li>
+        <li>No analytics, no crash reporting, no telemetry</li>
+        <li>No paid tier — every feature described here is in the free app</li>
+        <li>No games included, and no way to download any</li>
+      </ul>
+      <p><a href="privacy.html">Read the privacy policy</a> — it is short, because
+        there is very little to say.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="built">
+  <div class="wrap">
+    <div>
+      <h2>Written from nothing, and checked against the hardware.</h2>
+      <p>The emulator is Rust, written from scratch rather than wrapped around
+        someone else's. Every CPU instruction with cycle-accurate memory access, all
+        five sound channels through the console's nonlinear mixer, and NTSC, PAL or
+        Dendy timing picked up from the file itself.</p>
+      <dl class="specs">
+        <div><dt>Accuracy</dt><dd>Passes the real <code>nestest</code> CPU trace and a 39-ROM CPU, APU, PPU and MMC3 regression set on every build.</dd></div>
+        <div><dt>Sound</dt><dd>48 kHz through AAudio's low-latency path, with a queue that adapts and a rate that tracks your screen. Around 12–14 ms, shown in Settings.</dd></div>
+        <div><dt>Cartridges</dt><dd>iNES and NES 2.0 files, mappers 0, 1, 2, 3, 4, 7, 9, 10, 11, 66, 69 and 71, with battery-backed saves and repair for headers that lie.</dd></div>
+        <div><dt>Built and signed by CI</dt><dd>Every release is compiled, tested, signed and published by a machine, from a tagged commit.</dd></div>
+      </dl>
+      <p class="caveat">Emulia is young, and honest about it: performance and latency on
+        real hardware have not been measured yet, and some of the rarer cartridge
+        boards have been unit-tested but not yet run against a commercial game.</p>
+    </div>
+  </div>
+</section>
+
+<section class="closing">
+  <div class="wrap">
+    <img class="mark" src="assets/mark.svg" alt="" width="74" height="74">
+    <h2>Bring your own cartridges.</h2>
+    <p>Emulia is free and complete — there is no upgrade to buy, and nothing held
+      back. It arrives on Google Play shortly.</p>
+    <div class="cta">
+      <span class="badge pending">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5v17a1 1 0 0 0 1.5.87l14-8.5a1 1 0 0 0 0-1.74l-14-8.5A1 1 0 0 0 4 3.5Z"/></svg>
+        Coming to Google Play
+      </span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div class="quadrule" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="privacy.html">Privacy policy</a>
+      <a href="mailto:bradley@steinfeld.ca">bradley@steinfeld.ca</a>
+    </div>
+    <p class="fine">Emulia is an emulator. It contains no games, and it cannot obtain any —
+      you supply files you already own. Emulia is not affiliated with, endorsed by, or
+      connected to any console manufacturer or game publisher, and the names of any
+      games shown here belong to their respective owners.</p>
+    <p class="fine">© 2026 Bradley Steinfeld</p>
+  </div>
+</footer>
+
+<script>
+// The shelf switch. Both images are real screenshots of the two layouts the app
+// ships, so the control on the page does the same thing as the control in it.
+(function () {
+  var shot = document.getElementById('shelf-shot');
+  var alts = {
+    'assets/shelf-grid.webp': 'The shelf laid out as cards.',
+    'assets/shelf-list.webp': 'The same shelf laid out as a list, one row per game.'
+  };
+  document.querySelectorAll('.switch button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.switch button').forEach(function (o) {
+        o.setAttribute('aria-pressed', String(o === b));
+      });
+      shot.src = b.dataset.shot;
+      shot.alt = alts[b.dataset.shot] || '';
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

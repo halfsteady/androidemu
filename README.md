@@ -41,6 +41,7 @@ commercial games; the FME-7's 5B expansion audio is not implemented.
 ## Layout
 
 ```
+site/       the website at emulia.website, and the privacy policy Play requires
 core/       nes-core: no I/O, threads or frame-time allocation
 runner/     nes-runner: traces, frame hashes and automated ROM tests
 native/     nes-android: JNI boundary and AAudio output
@@ -117,6 +118,19 @@ The build needs Rust, a JDK 17 or newer, Android SDK 36 and NDK 28.2.13676358.
 Push a `v*` tag and GitHub Actions builds, tests, signs and publishes the APK and
 AAB as release assets. [docs/RELEASING.md](docs/RELEASING.md) covers the signing
 key, the repository secrets and what happens if this ever goes to Play.
+
+## The website
+
+[`site/`](site/) is <https://emulia.website> — static HTML with no build step. A
+push to `main` touching it is mirrored by
+[`publish-site.yml`](.github/workflows/publish-site.yml) into the public
+`bsteinfeld/emulia-site`, which is what GitHub Pages serves; this repository stays
+private. `site/privacy.html` is also the privacy policy URL Google Play requires.
+See [site/README.md](site/README.md).
+
+```sh
+python3 scripts/check-site.py    # every local href and src resolves
+```
 
 To put a local build on the personal shelf instead:
 
