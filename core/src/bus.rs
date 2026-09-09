@@ -60,6 +60,9 @@ impl NesBus {
     }
 
     fn end_cycle(&mut self) {
+        if self.cycles & 1 == 0 {
+            for controller in &mut self.controllers { controller.clock_strobe(); }
+        }
         self.ppu.tick(self.cart.mapper.as_mut());
         if self.cart.header.region == crate::Region::Pal && self.cycles.is_multiple_of(5) { self.ppu.tick(self.cart.mapper.as_mut()); }
     }
@@ -112,14 +115,16 @@ impl Bus for NesBus {
         let v = match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
             0x2000..=0x3FFF => self.ppu.read_register(addr, self.cart.mapper.as_mut()),
-            0x4015 => self.apu.read_register(addr),
+            0x4015 => self.apu.read_register(addr) | (self.open_bus & 0x20),
             0x4016 => (self.open_bus & 0xE0) | self.controllers[0].read(),
             0x4017 => (self.open_bus & 0xE0) | self.controllers[1].read(),
             // $4000-$4014 are write-only, and $4018-$401F are disabled.
             0x4000..=0x401F => self.open_bus,
             0x4020..=0xFFFF => self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus),
         };
-        self.open_bus = v;
+        // APU status is driven on the CPU's internal bus, without changing the
+        // external data-bus latch. Its unconnected bit 5 remains open bus.
+        if addr != 0x4015 { self.open_bus = v; }
         self.end_cycle();
         v
     }
@@ -134,8 +139,8 @@ impl Bus for NesBus {
                 .write_register(addr, val, self.cart.mapper.as_mut()),
             0x4014 => self.oam_dma(val),
             0x4016 => {
-                self.controllers[0].write_strobe(val);
-                self.controllers[1].write_strobe(val);
+                self.controllers[0].set_strobe_line(val);
+                self.controllers[1].set_strobe_line(val);
             }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(addr, val),
             0x4018..=0x401F => {}

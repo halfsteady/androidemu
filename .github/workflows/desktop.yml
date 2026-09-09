@@ -2,9 +2,9 @@ name: Desktop portability
 
 on:
   push:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
   pull_request:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +36,10 @@ jobs:
         run: cargo clippy --locked -p nes-desktop --all-targets --no-deps -- -D warnings
       - name: Exercise SDL video and audio
         run: python3 scripts/check-desktop.py target/release/nes-desktop
+      - name: AccuracyCoin regression
+        run: |
+          curl --fail --location --output "$RUNNER_TEMP/AccuracyCoin.nes" https://raw.githubusercontent.com/100thCoin/AccuracyCoin/affc643aa771028510c4427451ecf5bba5e54592/AccuracyCoin.nes
+          python3 scripts/check-accuracycoin.py "$RUNNER_TEMP/AccuracyCoin.nes" --report "$RUNNER_TEMP/accuracycoin.json"
       - name: Package
         run: |
           mkdir -p dist

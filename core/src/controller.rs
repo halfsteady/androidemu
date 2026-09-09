@@ -32,8 +32,19 @@ impl Controller {
         }
     }
 
+    /// Untimed convenience for controller-only callers. The console bus uses
+    /// the phase-clocked line/latch methods below.
     pub fn write_strobe(&mut self, val: u8) {
+        self.set_strobe_line(val);
+        self.clock_strobe();
+    }
+
+    /// The console updates the line on writes, then latches it on put cycles.
+    pub(crate) fn set_strobe_line(&mut self, val: u8) {
         self.strobe = val & 1 != 0;
+    }
+
+    pub(crate) fn clock_strobe(&mut self) {
         if self.strobe {
             self.shift = self.state;
         }

@@ -224,9 +224,20 @@ impl Cpu {
         self.push(bus, pushed);
         self.p |= flags::I;
 
+        // An NMI edge arriving during the stack pushes hijacks IRQ/BRK's vector,
+        // but does not change the return address or the already-pushed B flag.
+        let vector = if vector == IRQ_VECTOR && self.nmi_ready {
+            self.nmi_pending = false;
+            self.nmi_ready = false;
+            NMI_VECTOR
+        } else { vector };
         let lo = self.read(bus, vector) as u16;
         let hi = self.read(bus, vector + 1) as u16;
         self.pc = lo | (hi << 8);
+        // Vector fetches sample edges but are not instruction interrupt polls.
+        // A later NMI runs after the handler's first instruction, not before it.
+        self.nmi_ready = false;
+        self.irq_ready = false;
     }
 
     /// Execute one instruction, or service a pending interrupt. Returns the number

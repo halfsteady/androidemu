@@ -159,8 +159,8 @@ impl Ppu {
 
         if (self.scanline < 240 || self.scanline == (self.region.scanlines() - 1)) && self.rendering() {
             if (2..=257).contains(&self.dot) || (322..=337).contains(&self.dot) {
-                self.bg_low <<= 1;
-                self.bg_high <<= 1;
+                self.bg_low = (self.bg_low << 1) | 1;
+                self.bg_high = (self.bg_high << 1) | 1;
                 self.attr_low <<= 1;
                 self.attr_high <<= 1;
             }
@@ -196,6 +196,9 @@ impl Ppu {
                 self.v = (self.v & !0x7be0) | (self.t & 0x7be0);
             }
             if (257..=320).contains(&self.dot) {
+                // Sprite fetch forces the primary OAM address to zero. Without
+                // this, a CPU write to OAMADDR misaligns every subsequent DMA.
+                self.oam_addr = 0;
                 let slot = ((self.dot - 257) / 8) as usize;
                 match self.dot % 8 {
                     1 | 3 => {
@@ -261,7 +264,12 @@ impl Ppu {
                 v
             }
             4 => {
-                let v = self.oam[self.oam_addr as usize];
+                let v = if self.rendering() && self.scanline < 240 && (1..=64).contains(&self.dot) {
+                    0xff // Secondary OAM is being cleared.
+                } else {
+                    self.oam[self.oam_addr as usize]
+                        & if self.oam_addr & 3 == 2 { 0xe3 } else { 0xff }
+                };
                 self.open_bus = v;
                 v
             }
@@ -299,8 +307,12 @@ impl Ppu {
             1 => self.mask = val,
             3 => self.oam_addr = val,
             4 => {
-                self.oam[self.oam_addr as usize] = val;
-                self.oam_addr = self.oam_addr.wrapping_add(1);
+                if self.rendering() && (self.scanline < 240 || self.scanline == self.region.scanlines() - 1) {
+                    self.oam_addr = self.oam_addr.wrapping_add(4) & 0xfc;
+                } else {
+                    self.oam[self.oam_addr as usize] = val;
+                    self.oam_addr = self.oam_addr.wrapping_add(1);
+                }
             }
             5 => {
                 if !self.w {
