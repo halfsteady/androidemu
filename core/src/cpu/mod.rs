@@ -25,6 +25,12 @@ pub trait Bus {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);
 
+    /// Whether DMA held RDY low during the most recent read. Unstable stores
+    /// observe this on their indexing dummy read, immediately before writing.
+    fn read_halted(&self) -> bool {
+        false
+    }
+
     /// Level of the /NMI line, sampled by the CPU each cycle. The edge detection
     /// lives in the CPU, so this reports the raw level.
     fn nmi_line(&self) -> bool {
@@ -366,12 +372,22 @@ impl Cpu {
         if !take {
             return;
         }
+        let early_nmi = self.nmi_ready;
+        let early_irq = self.irq_ready;
         // Taken branch: one cycle to add the offset...
         self.read(bus, self.pc);
         let target = (self.pc as i32 + offset as i32) as u16;
         if page_crossed(self.pc, target) {
             // ...and one more to fix up the high byte if it carried.
             self.read(bus, (self.pc & 0xFF00) | (target & 0x00FF));
+            // Page-crossing branches poll again, but an interrupt recognized
+            // by the first poll remains latched even if the line was cleared.
+            self.nmi_ready |= early_nmi;
+            self.irq_ready |= early_irq;
+        } else {
+            // A taken branch's third cycle does not poll for interrupts.
+            self.nmi_ready = early_nmi;
+            self.irq_ready = early_irq;
         }
         self.pc = target;
     }

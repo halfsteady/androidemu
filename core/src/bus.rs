@@ -25,6 +25,8 @@ pub struct NesBus {
 
     /// Value last driven onto the CPU bus, returned for reads of open address space.
     open_bus: u8,
+    /// CPU-side latch, isolated from external DMA data during $4015 reads.
+    internal_bus: u8,
 
     /// Cycles the CPU is stalled by an in-progress OAM DMA. Drained by [`crate::nes::Nes`]
     /// after each instruction, interleaving the actual copy with device clocks.
@@ -32,6 +34,9 @@ pub struct NesBus {
     pub(crate) dma_page: u8,
     cycles: u64,
     pub(crate) extra_cycles: u32,
+    // A property of the last access, consumed within the current instruction.
+    // It is overwritten before use after a snapshot, so it is not serialized.
+    last_read_halted: bool,
 }
 
 impl NesBus {
@@ -45,10 +50,12 @@ impl NesBus {
             cart,
             controllers: Default::default(),
             open_bus: 0,
+            internal_bus: 0,
             dma_stall: 0,
             dma_page: 0,
             cycles: 0,
             extra_cycles: 0,
+            last_read_halted: false,
         }
     }
 
@@ -85,15 +92,19 @@ impl NesBus {
 
     fn dmc_dma(&mut self) {
         if let Some(addr) = self.apu.dmc_request() {
-            // DMA halts on a CPU read. Exact DMC/OAM collision arbitration and
-            // repeated controller reads still need hardware-suite validation.
-            for _ in 0..3 {
+            // DMA halts on a CPU read, then spends a dummy cycle and an optional
+            // alignment cycle before fetching. Initial-load scheduling, DMC/OAM
+            // arbitration and repeated I/O reads remain incomplete.
+            let stall = 3 + (self.cycles as u32 & 1);
+            for _ in 0..stall - 1 {
                 self.tick();
             }
+            self.begin_cycle();
             let byte = self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus);
+            self.open_bus = byte;
             self.apu.supply_dmc(byte);
-            self.tick();
-            self.extra_cycles += 4;
+            self.end_cycle();
+            self.extra_cycles += stall;
         }
     }
 
@@ -110,12 +121,14 @@ impl NesBus {
 
 impl Bus for NesBus {
     fn read(&mut self, addr: u16) -> u8 {
+        let extra_before = self.extra_cycles;
         self.dmc_dma();
+        self.last_read_halted = self.extra_cycles != extra_before;
         self.begin_cycle();
         let v = match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
             0x2000..=0x3FFF => self.ppu.read_register(addr, self.cart.mapper.as_mut()),
-            0x4015 => self.apu.read_register(addr) | (self.open_bus & 0x20),
+            0x4015 => self.apu.read_register(addr) | (self.internal_bus & 0x20),
             0x4016 => (self.open_bus & 0xE0) | self.controllers[0].read(),
             0x4017 => (self.open_bus & 0xE0) | self.controllers[1].read(),
             // $4000-$4014 are write-only, and $4018-$401F are disabled.
@@ -125,13 +138,16 @@ impl Bus for NesBus {
         // APU status is driven on the CPU's internal bus, without changing the
         // external data-bus latch. Its unconnected bit 5 remains open bus.
         if addr != 0x4015 { self.open_bus = v; }
+        self.internal_bus = v;
         self.end_cycle();
         v
     }
 
     fn write(&mut self, addr: u16, val: u8) {
+        self.last_read_halted = false;
         self.begin_cycle();
         self.open_bus = val;
+        self.internal_bus = val;
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = val,
             0x2000..=0x3FFF => self
@@ -151,6 +167,10 @@ impl Bus for NesBus {
 
     fn nmi_line(&self) -> bool {
         self.ppu.nmi_line
+    }
+
+    fn read_halted(&self) -> bool {
+        self.last_read_halted
     }
 
     fn irq_line(&self) -> bool {
@@ -175,13 +195,16 @@ impl NesBus {
         use crate::state::{Codec, StateError};
         self.ram = Codec::decode(input)?;
         self.ppu = Codec::decode(input)?;
+        self.ppu.initialize_legacy_accuracy_state();
         self.apu = Codec::decode(input)?;
         self.controllers = Codec::decode(input)?;
         self.open_bus = Codec::decode(input)?;
+        self.internal_bus = self.open_bus;
         self.dma_stall = Codec::decode(input)?;
         self.dma_page = Codec::decode(input)?;
         self.cycles = Codec::decode(input)?;
         self.extra_cycles = Codec::decode(input)?;
+        self.last_read_halted = false;
         // Timing configuration is immutable cartridge metadata, not serialized
         // device state. Keeping it out of the codec preserves preview-v1 saves.
         self.ppu.region = self.cart.header.region;
@@ -193,6 +216,21 @@ impl NesBus {
         {
             return Err(StateError("Invalid machine state"));
         }
+        Ok(())
+    }
+
+    pub(crate) fn save_accuracy_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.internal_bus.encode(out);
+        self.ppu.save_accuracy_state(out);
+        self.apu.save_accuracy_state(out);
+    }
+
+    pub(crate) fn load_accuracy_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::Codec;
+        self.internal_bus = Codec::decode(input)?;
+        self.ppu.load_accuracy_state(input)?;
+        self.apu.load_accuracy_state(input)?;
         Ok(())
     }
 }

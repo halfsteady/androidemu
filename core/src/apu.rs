@@ -105,6 +105,7 @@ pub struct Apu {
     five_step: bool,
     irq_inhibit: bool,
     frame_irq: bool,
+    frame_irq_clear: bool,
     cycle: u32,
     total: u64,
     reset_delay: u8,
@@ -151,6 +152,7 @@ impl Apu {
             five_step: false,
             irq_inhibit: false,
             frame_irq: false,
+            frame_irq_clear: false,
             cycle: 0,
             total: 0,
             reset_delay: 0,
@@ -221,6 +223,10 @@ impl Apu {
     }
     pub fn tick(&mut self) {
         self.total = self.total.wrapping_add(1);
+        if self.frame_irq_clear && self.total & 1 == 0 {
+            self.frame_irq = false;
+            self.frame_irq_clear = false;
+        }
         self.cycle += 1;
         if self.reset_delay > 0 {
             self.reset_delay -= 1;
@@ -379,7 +385,9 @@ impl Apu {
             | (u8::from(self.dmc_remaining > 0) << 4)
             | (u8::from(self.frame_irq) << 6)
             | (u8::from(self.dmc_irq) << 7);
-        self.frame_irq = false;
+        // Status reads acknowledge the flag on the next APU get phase. A get
+        // followed by a put read can therefore observe it twice.
+        self.frame_irq_clear = true;
         value
     }
     pub fn write_register(&mut self, addr: u16, val: u8) {
@@ -450,7 +458,7 @@ impl Apu {
                 if self.irq_inhibit {
                     self.frame_irq = false;
                 }
-                self.reset_delay = if self.total & 1 == 0 { 3 } else { 4 };
+                self.reset_delay = if self.total & 1 == 0 { 4 } else { 3 };
             }
             _ => {}
         }
@@ -524,5 +532,19 @@ crate::state::state_fields!(
     low_pass,
     samples,
     sample_count;
-    region: Region::Ntsc
+    region: Region::Ntsc,
+    frame_irq_clear: false
 );
+
+impl Apu {
+    pub(crate) fn save_accuracy_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.frame_irq_clear.encode(out);
+    }
+
+    pub(crate) fn load_accuracy_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::Codec;
+        self.frame_irq_clear = Codec::decode(input)?;
+        Ok(())
+    }
+}

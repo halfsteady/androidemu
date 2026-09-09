@@ -1,8 +1,8 @@
 # AccuracyCoin accuracy pass
 
 On `feat/core-accuracy`, based on `feat/portable-desktop`, the unchanged
-AccuracyCoin ROM improves from **92/144 to 103/144**. All 144 tests finish;
-none are skipped, and every previous pass is retained. The 41 remaining failures
+AccuracyCoin ROM improves from **92/144 to 116/144**. All 144 tests finish;
+none are skipped, and every previous pass is retained. The 28 remaining failures
 are explicitly recorded, rather than counted as supported behavior.
 
 The ROM matches upstream [AccuracyCoin revision
@@ -33,12 +33,50 @@ result address and hexadecimal failure code.
 
 These changes apply to both Android and desktop because both use `nes-core`.
 No ROM-name detection or AccuracyCoin-specific behavior was added to the core.
-State fields and the save-state format remain unchanged.
+The initial 103-pass change preserved the original snapshot layout. The follow-up
+below introduces version 2 while retaining a reader for version 1 snapshots.
 
 Newly passing tests: Open Bus; NMI Overlap BRK; NMI Overlap IRQ; Controller
 Strobing; Sprite overflow behavior; Sprite 0 Hit behavior; Suddenly Resize
 Sprite; Misaligned OAM DMA; Rendering Flag Behavior; `$2007` read with rendering;
 Attributes As Tiles.
+
+## Follow-up: 103 to 116 passes
+
+The review fixes were committed as `bdb2100`. Subsequent work resolves 13 of the
+41 failures remaining at that point:
+
+- DMC DMA drives the external data bus and stalls for three or four cycles,
+  depending on alignment. CPU writes defer a pending transfer. DMA bytes do
+  not replace the CPU's internal latch used by `$4015` bit 5.
+- SHA/AHX, SHS/TAS, SHY and SHX drop their data mask when RDY halts the indexing
+  dummy read. Their page-crossing address still uses the masked high byte.
+- Taken branches preserve the early interrupt poll. Only page-crossing branches
+  poll again; clearing an IRQ between the polls does not cancel an interrupt
+  already recognized by the first poll.
+- APU frame-counter reset waits four cycles after a get-phase write and three
+  after a put-phase write. Status acknowledgement waits for the next get phase.
+- PPU register open bus decays independently per bit after a deterministic
+  retention interval. Status reads refresh only the upper three bits; palette
+  reads refresh only the lower six. Reads of write-only registers do not refresh
+  the latch. Real hardware retention varies; the emulated interval is about a
+  third of a second on NTSC.
+
+The 13 newly passing tests are the five DMA-sensitive stores; Interrupt flag
+latency; DMA + Open Bus; Frame Counter 4-step; Frame Counter 5-step; Instruction
+Timing; Internal Data Bus; PPU Register Open Bus; and INC `$4014`.
+
+These changes follow the pinned ROM's hardware tests and the NESdev descriptions
+of [DMA](https://www.nesdev.org/wiki/DMA),
+[unstable stores](https://www.nesdev.org/wiki/Programming_with_unofficial_opcodes)
+and [PPU register open bus](https://www.nesdev.org/wiki/PPU_registers).
+The DMA engine still needs initial-load scheduling, repeated I/O reads and
+shared DMC/OAM arbitration; the additional passes do not establish those features.
+
+Version 2 snapshots preserve the new latches and timing state. Tests load an
+actual v1 fixture, replay snapshots across decay/IRQ acknowledgement, and reject
+malformed v2 extensions without altering the machine. Older releases cannot
+load new v2 snapshots. Battery saves are unchanged.
 
 ## Reproduce
 
@@ -72,11 +110,17 @@ The follow-up [review of PRs #3 and #4](REVIEW-PRS-3-4.md) corrects an OAM
 address-offset bug and strengthens desktop persistence and regression checks.
 Linux validation retained all 103 passes and all 39 external ROM passes.
 
+The follow-up passes all 116 workspace tests (including the real nestest trace),
+all 39 external regression ROMs and the complete 116-pass AccuracyCoin gate.
+Focused tests cover both DMA stall lengths, writes deferring DMA, all five
+unstable store opcodes, early/late branch polls, both APU reset phases and PPU
+partial-latch refresh. The per-test JSON now records this 116-pass baseline;
+the original 92-pass results remain in its `before` fields.
+
 ## Remaining limitations
 
 Most remaining failures involve DMC DMA timing and bus arbitration, APU register
 timing, cycle-by-cycle sprite evaluation/secondary OAM, and PPU fetch-bus overlap.
-Correcting branch interrupt polling in isolation exposes an existing DMC sync
-failure in a later subtest, so that broader timing work is not included here.
+Branch polling now passes together with the DMC alignment corrections.
 The exact failure list is in the JSON report above. This is a measured accuracy
 improvement, not a claim of complete hardware accuracy or PAL/Dendy validation.

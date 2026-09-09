@@ -13,6 +13,9 @@ pub const HEIGHT: usize = 240;
 /// in the scanline vblank starts on, and in the PPU-to-CPU clock ratio, all of
 /// which come from [`Region`].
 const DOTS_PER_SCANLINE: u16 = 341;
+// Charge retention is analogue and varies between PPUs. Use a deterministic
+// roughly 1/3-second interval, within the measured range, independently per bit.
+const OPEN_BUS_DECAY_DOTS: u64 = 341 * 262 * 20;
 
 #[derive(Clone)]
 pub struct Ppu {
@@ -36,8 +39,9 @@ pub struct Ppu {
 
     /// The delayed read buffer behind $2007.
     read_buffer: u8,
-    /// Value on the PPU's data bus, which decays but is not modelled as decaying yet.
+    /// CPU-facing PPU data latch and the last driven time of each bit.
     open_bus: u8,
+    open_bus_refreshed: [u64; 8],
 
     pub vram: [u8; 4096],
     pub palette: [u8; 32],
@@ -96,6 +100,7 @@ impl Ppu {
             w: false,
             read_buffer: 0,
             open_bus: 0,
+            open_bus_refreshed: [0; 8],
             vram: [0; 4096],
             palette: [0; 32],
             dot: 0,
@@ -249,6 +254,7 @@ impl Ppu {
     // ---- CPU-facing registers, $2000-$2007 mirrored to $3FFF ----
 
     pub fn read_register(&mut self, addr: u16, mapper: &mut dyn Mapper) -> u8 {
+        self.decay_open_bus();
         match addr & 7 {
             2 => {
                 if self.scanline == self.region.vblank_scanline() && self.dot == 0 {
@@ -260,7 +266,7 @@ impl Ppu {
                 self.status &= !0x80;
                 self.w = false;
                 self.update_nmi();
-                self.open_bus = v;
+                self.drive_open_bus(v, 0xe0);
                 v
             }
             4 => {
@@ -270,7 +276,7 @@ impl Ppu {
                     self.oam[self.oam_addr as usize]
                         & if self.oam_addr & 3 == 2 { 0xe3 } else { 0xff }
                 };
-                self.open_bus = v;
+                self.drive_open_bus(v, 0xff);
                 v
             }
             7 => {
@@ -288,7 +294,7 @@ impl Ppu {
                 };
                 self.increment_v();
                 mapper.ppu_bus(self.v & 0x3fff, self.total_dots);
-                self.open_bus = v;
+                self.drive_open_bus(v, if addr >= 0x3f00 { 0x3f } else { 0xff });
                 v
             }
             // Write-only registers return the open bus.
@@ -297,7 +303,7 @@ impl Ppu {
     }
 
     pub fn write_register(&mut self, addr: u16, val: u8, mapper: &mut dyn Mapper) {
-        self.open_bus = val;
+        self.drive_open_bus(val, 0xff);
         match addr & 7 {
             0 => {
                 self.ctrl = val;
@@ -362,6 +368,41 @@ impl Ppu {
 
     fn rendering(&self) -> bool {
         self.mask & 0x18 != 0
+    }
+
+    fn decay_open_bus(&mut self) {
+        for bit in 0..8 {
+            if self.total_dots.wrapping_sub(self.open_bus_refreshed[bit]) >= OPEN_BUS_DECAY_DOTS {
+                self.open_bus &= !(1 << bit);
+            }
+        }
+    }
+
+    fn drive_open_bus(&mut self, value: u8, mask: u8) {
+        self.open_bus = (self.open_bus & !mask) | (value & mask);
+        for bit in 0..8 {
+            if mask & (1 << bit) != 0 {
+                self.open_bus_refreshed[bit] = self.total_dots;
+            }
+        }
+    }
+
+    pub(crate) fn initialize_legacy_accuracy_state(&mut self) {
+        // v1 has no retention timers; begin a fresh interval for its latch.
+        self.open_bus_refreshed = std::array::from_fn(|bit| {
+            if self.open_bus & (1 << bit) != 0 { self.total_dots } else { 0 }
+        });
+    }
+
+    pub(crate) fn save_accuracy_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.open_bus_refreshed.encode(out);
+    }
+
+    pub(crate) fn load_accuracy_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::Codec;
+        self.open_bus_refreshed = Codec::decode(input)?;
+        Ok(())
     }
 
     fn pattern_address(&self) -> u16 {
@@ -583,7 +624,8 @@ crate::state::state_fields!(
     pattern_high,
     sprites,
     sprite_count;
-    region: Region::Ntsc
+    region: Region::Ntsc,
+    open_bus_refreshed: [0; 8]
 );
 crate::state::state_fields!(Sprite, x, attributes, low, high, zero, address);
 impl Ppu {

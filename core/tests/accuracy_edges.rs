@@ -11,6 +11,64 @@ fn bus() -> NesBus {
 }
 
 #[test]
+fn dmc_drives_external_bus_without_replacing_the_internal_latch() {
+    // The DMA byte and the CPU's last byte deliberately disagree on bit 5.
+    for (last_cpu, sample) in [(0x20, 0x00), (0x00, 0x20)] {
+        let mut rom = common::rom(0, 0);
+        rom[16 + 0x4000] = sample; // NROM's $C000 DMC sample.
+        let mut bus = NesBus::new(Cartridge::load(&rom).unwrap());
+        bus.write(0, last_cpu);
+        bus.apu.write_register(0x4012, 0);
+        bus.apu.write_register(0x4013, 0);
+        bus.apu.write_register(0x4015, 0x10);
+        assert_eq!(bus.read(0x4015) & 0x20, last_cpu);
+        assert!(bus.read_halted());
+        assert_eq!(bus.read(0x4000), sample);
+        assert!(!bus.read_halted());
+    }
+}
+
+#[test]
+fn dmc_waits_for_a_read_and_accounts_for_three_or_four_stolen_cycles() {
+    for preceding_writes in 0..2 {
+        let mut nes = nes_core::Nes::new(&common::rom(0, 0)).unwrap();
+        nes.cpu.pc = 0x200;
+        nes.bus.ram[0x200] = 0xea; // Two-cycle NOP.
+        nes.bus.apu.write_register(0x4015, 0x10);
+        for _ in 0..preceding_writes {
+            nes.bus.write(0, 0);
+            assert!(nes.bus.apu.dmc_request().is_some(), "a write cannot be halted");
+        }
+        let dot = nes.bus.ppu.dot;
+        let cpu_cycle = nes.cpu.cycles;
+        let elapsed = nes.step();
+        assert_eq!(elapsed, if preceding_writes == 0 { 6 } else { 5 });
+        assert_eq!(nes.cpu.cycles - cpu_cycle, elapsed);
+        assert_eq!(nes.bus.ppu.dot - dot, (elapsed * 3) as u16);
+        assert!(nes.bus.apu.dmc_request().is_none());
+        assert_eq!(nes.step(), 7, "the following BRK must not inherit DMA cycles");
+    }
+}
+
+#[test]
+fn ppu_open_bus_decays_only_bits_that_have_not_been_driven_again() {
+    for (register, expected) in [(0x2000, 0), (0x2002, 0xe0), (0x2004, 0xff), (0x2007, 0x3f)] {
+        let mut bus = bus();
+        let mapper = bus.cart.mapper.as_mut();
+        let ppu = &mut bus.ppu;
+        ppu.write_register(0x2002, 0xff, mapper);
+        for _ in 0..341 * 262 * 10 { ppu.tick(mapper); }
+        ppu.status = 0xe0;
+        ppu.oam[0] = 0xff;
+        ppu.v = 0x3f00;
+        ppu.palette[0] = 0x3f;
+        ppu.read_register(register, mapper);
+        for _ in 0..341 * 262 * 11 { ppu.tick(mapper); }
+        assert_eq!(ppu.read_register(0x2000, mapper), expected, "refresh via {register:04x}");
+    }
+}
+
+#[test]
 fn apu_status_preserves_external_bus_and_floats_bit_five() {
     let mut bus = bus();
     bus.write(0, 0xaf);
@@ -132,6 +190,7 @@ struct EdgeBus {
     cycle: usize,
     edge: usize,
     irq: bool,
+    irq_window: std::ops::Range<usize>,
 }
 impl Bus for EdgeBus {
     fn read(&mut self, addr: u16) -> u8 {
@@ -146,7 +205,7 @@ impl Bus for EdgeBus {
         self.cycle >= self.edge
     }
     fn irq_line(&self) -> bool {
-        self.irq
+        self.irq || self.irq_window.contains(&self.cycle)
     }
 }
 fn interrupt_machine(edge: usize) -> (Cpu, EdgeBus) {
@@ -155,6 +214,7 @@ fn interrupt_machine(edge: usize) -> (Cpu, EdgeBus) {
         cycle: 0,
         edge,
         irq: false,
+        irq_window: 0..0,
     };
     bus.memory[0xfffa..0xfffc].copy_from_slice(&[0, 0xa0]);
     bus.memory[0xfffe..].copy_from_slice(&[0, 0x90]);
@@ -163,6 +223,44 @@ fn interrupt_machine(edge: usize) -> (Cpu, EdgeBus) {
     let mut cpu = Cpu::new();
     cpu.pc = 0x8000; // BRK followed by its padding byte.
     (cpu, bus)
+}
+
+#[test]
+fn taken_branches_poll_before_cycle_three_and_again_only_on_page_crossing() {
+    // Rising IRQ on operand read: a non-crossing branch waits through INX;
+    // a crossing branch recognizes it at the additional poll.
+    for crossing in [false, true] {
+        let (mut cpu, mut bus) = interrupt_machine(usize::MAX);
+        let start = if crossing { 0x80f0 } else { 0x8000 };
+        cpu.pc = start;
+        cpu.p = flags::U;
+        bus.memory[start as usize..start as usize + 2].copy_from_slice(&[0xd0, 0x20]);
+        let target = start + 2 + 0x20;
+        bus.memory[target as usize] = 0xe8;
+        bus.irq_window = 2..usize::MAX;
+        assert_eq!(cpu.step(&mut bus), if crossing { 4 } else { 3 });
+        assert_eq!(cpu.pc, target);
+        if !crossing {
+            assert_eq!(cpu.step(&mut bus), 2);
+            assert_eq!(cpu.x, 1);
+        }
+        assert_eq!(cpu.step(&mut bus), 7);
+        assert_eq!(cpu.pc, 0x9000);
+    }
+}
+
+#[test]
+fn page_crossing_branch_preserves_an_irq_recognized_by_the_first_poll() {
+    let (mut cpu, mut bus) = interrupt_machine(usize::MAX);
+    cpu.pc = 0x80f0;
+    cpu.p = flags::U;
+    bus.memory[0x80f0..0x80f2].copy_from_slice(&[0xd0, 0x20]);
+    bus.irq_window = 1..3; // Asserted on opcode fetch, cleared on dummy read.
+    assert_eq!(cpu.step(&mut bus), 4);
+    assert_eq!(cpu.pc, 0x8112);
+    assert_eq!(cpu.step(&mut bus), 7);
+    assert_eq!(cpu.pc, 0x9000);
+    assert_eq!(&bus.memory[0x1fc..0x1fe], &[0x12, 0x81]);
 }
 
 #[test]
