@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="512" height="512">
+<defs><clipPath id="cp"><rect width="108" height="108" rx="23.76"/></clipPath></defs>
+<g clip-path="url(#cp)"><g transform="scale(1.5) translate(-18,-18)">
+<defs>
+    <radialGradient id="c-g" gradientUnits="userSpaceOnUse" cx="54" cy="54" r="66">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.26"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="54" height="54" fill="#b9e38c"/>
+  <rect x="54" y="0" width="54" height="54" fill="#f0d49a"/>
+  <rect x="0" y="54" width="54" height="54" fill="#7fd2c4"/>
+  <rect x="54" y="54" width="54" height="54" fill="#e8a39a"/>
+  <rect width="108" height="108" fill="url(#c-g)"/>
+<defs>
+    <clipPath id="c-q0"><rect x="0" y="0" width="54" height="54"/></clipPath>
+    <clipPath id="c-q1"><rect x="54" y="0" width="54" height="54"/></clipPath>
+    <clipPath id="c-q2"><rect x="0" y="54" width="54" height="54"/></clipPath>
+    <clipPath id="c-q3"><rect x="54" y="54" width="54" height="54"/></clipPath>
+  </defs>
+  <g clip-path="url(#c-q0)">
+    <rect x="41.12" y="28.24" width="6.44" height="6.44" fill="#0b1a10"/>
+    <rect x="60.44" y="28.24" width="6.44" height="6.44" fill="#0b1a10"/>
+    <rect x="47.56" y="34.68" width="12.88" height="6.44" fill="#0b1a10"/>
+    <rect x="41.12" y="41.12" width="25.76" height="6.44" fill="#0b1a10"/>
+    <rect x="34.68" y="47.56" width="38.64" height="6.44" fill="#0b1a10"/>
+    <rect x="28.24" y="54" width="12.88" height="6.44" fill="#0b1a10"/>
+    <rect x="47.56" y="54" width="12.88" height="6.44" fill="#0b1a10"/>
+    <rect x="66.88" y="54" width="12.88" height="6.44" fill="#0b1a10"/>
+    <rect x="28.24" y="60.44" width="51.52" height="6.44" fill="#0b1a10"/>
+    <rect x="28.24" y="66.88" width="6.44" height="6.44" fill="#0b1a10"/>
+    <rect x="41.12" y="66.88" width="25.76" height="6.44" fill="#0b1a10"/>
+    <rect x="73.32" y="66.88" width="6.44" height="6.44" fill="#0b1a10"/>
+    <rect x="34.68" y="73.32" width="6.44" height="6.44" fill="#0b1a10"/>
+    <rect x="66.88" y="73.32" width="6.44" height="6.44" fill="#0b1a10"/>
+  </g>
+  <g clip-path="url(#c-q1)">
+    <rect x="41.12" y="28.24" width="6.44" height="6.44" fill="#1c1509"/>
+    <rect x="60.44" y="28.24" width="6.44" height="6.44" fill="#1c1509"/>
+    <rect x="47.56" y="34.68" width="12.88" height="6.44" fill="#1c1509"/>
+    <rect x="41.12" y="41.12" width="25.76" height="6.44" fill="#1c1509"/>
+    <rect x="34.68" y="47.56" width="38.64" height="6.44" fill="#1c1509"/>
+    <rect x="28.24" y="54" width="12.88" height="6.44" fill="#1c1509"/>
+    <rect x="47.56" y="54" width="12.88" height="6.44" fill="#1c1509"/>
+    <rect x="66.88" y="54" width="12.88" height="6.44" fill="#1c1509"/>
+    <rect x="28.24" y="60.44" width="51.52" height="6.44" fill="#1c1509"/>
+    <rect x="28.24" y="66.88" width="6.44" height="6.44" fill="#1c1509"/>
+    <rect x="41.12" y="66.88" width="25.76" height="6.44" fill="#1c1509"/>
+    <rect x="73.32" y="66.88" width="6.44" height="6.44" fill="#1c1509"/>
+    <rect x="34.68" y="73.32" width="6.44" height="6.44" fill="#1c1509"/>
+    <rect x="66.88" y="73.32" width="6.44" height="6.44" fill="#1c1509"/>
+  </g>
+  <g clip-path="url(#c-q2)">
+    <rect x="41.12" y="28.24" width="6.44" height="6.44" fill="#081918"/>
+    <rect x="60.44" y="28.24" width="6.44" height="6.44" fill="#081918"/>
+    <rect x="47.56" y="34.68" width="12.88" height="6.44" fill="#081918"/>
+    <rect x="41.12" y="41.12" width="25.76" height="6.44" fill="#081918"/>
+    <rect x="34.68" y="47.56" width="38.64" height="6.44" fill="#081918"/>
+    <rect x="28.24" y="54" width="12.88" height="6.44" fill="#081918"/>
+    <rect x="47.56" y="54" width="12.88" height="6.44" fill="#081918"/>
+    <rect x="66.88" y="54" width="12.88" height="6.44" fill="#081918"/>
+    <rect x="28.24" y="60.44" width="51.52" height="6.44" fill="#081918"/>
+    <rect x="28.24" y="66.88" width="6.44" height="6.44" fill="#081918"/>
+    <rect x="41.12" y="66.88" width="25.76" height="6.44" fill="#081918"/>
+    <rect x="73.32" y="66.88" width="6.44" height="6.44" fill="#081918"/>
+    <rect x="34.68" y="73.32" width="6.44" height="6.44" fill="#081918"/>
+    <rect x="66.88" y="73.32" width="6.44" height="6.44" fill="#081918"/>
+  </g>
+  <g clip-path="url(#c-q3)">
+    <rect x="41.12" y="28.24" width="6.44" height="6.44" fill="#251012"/>
+    <rect x="60.44" y="28.24" width="6.44" height="6.44" fill="#251012"/>
+    <rect x="47.56" y="34.68" width="12.88" height="6.44" fill="#251012"/>
+    <rect x="41.12" y="41.12" width="25.76" height="6.44" fill="#251012"/>
+    <rect x="34.68" y="47.56" width="38.64" height="6.44" fill="#251012"/>
+    <rect x="28.24" y="54" width="12.88" height="6.44" fill="#251012"/>
+    <rect x="47.56" y="54" width="12.88" height="6.44" fill="#251012"/>
+    <rect x="66.88" y="54" width="12.88" height="6.44" fill="#251012"/>
+    <rect x="28.24" y="60.44" width="51.52" height="6.44" fill="#251012"/>
+    <rect x="28.24" y="66.88" width="6.44" height="6.44" fill="#251012"/>
+    <rect x="41.12" y="66.88" width="25.76" height="6.44" fill="#251012"/>
+    <rect x="73.32" y="66.88" width="6.44" height="6.44" fill="#251012"/>
+    <rect x="34.68" y="73.32" width="6.44" height="6.44" fill="#251012"/>
+    <rect x="66.88" y="73.32" width="6.44" height="6.44" fill="#251012"/>
+  </g>
+</g></g>
+</svg>

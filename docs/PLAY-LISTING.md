@@ -83,8 +83,8 @@ for review in Publishing overview"). What is still missing is graphics:
 | App name, short + full description | **done** | the copy above |
 | App icon (512×512) | not uploaded | `brand/png/c-one-in-four/play-512.png` |
 | Feature graphic (1024×500) | not uploaded | `brand/png/c-one-in-four/play-feature-1024x500.png` |
-| Phone screenshots (2–8) | not captured | — |
-| Privacy policy URL | **blocked** | text below, needs hosting |
+| Phone screenshots (2–8) | not captured | tablet ones exist: `site/assets/*.webp` |
+| Privacy policy URL | **done** | `https://emulia.website/privacy.html` |
 | Data safety form | not answered | answers in the checklist below |
 
 Both graphics are built and on the `/stuff` shelf. They cannot be uploaded from
@@ -93,7 +93,37 @@ picker instead, so those three rows are a human at a keyboard.
 
 Screenshots need a real device — the emulator on this machine will not start
 (its KVM check reads group membership rather than the ACL that grants access,
-and forced past that it cannot initialise a Qt platform plugin headless).
+and forced past that it cannot initialise a Qt platform plugin headless). Four
+tablet screenshots were captured by hand and are in `site/assets/`; Play's phone
+screenshots are a separate size and still outstanding.
+
+### The screenshots show other people's games
+
+Every screenshot of an emulator shows a game, and the four in `site/assets/` show
+Super Mario Bros./Duck Hunt, Final Fantasy, Basewars and Bubble Bobble — two of
+them Nintendo titles, named in text on the shelf.
+
+This is worth a deliberate decision rather than a default, because it cuts
+against the reasoning at the top of this file. The app gave up the "NES" name to
+avoid a complaint from a company that files them; a marketing page showing Mario
+running, with "SuperMarioBros-DuckHunt" spelled out beside it, is a louder
+target than the name was, and it is the first thing a reviewer or a rights holder
+sees. Play's own policy is separate from copyright law here: emulators are
+allowed, but a listing that looks like it distributes games attracts the
+enforcement that emulators otherwise avoid.
+
+Three ways out, in order of cost:
+
+1. **Recapture the shelf with homebrew or public-domain ROMs.** There are good
+   free ones, and it removes the issue completely — the app looks the same.
+2. **Keep the play and settings shots, drop the two shelf shots.** The titles in
+   text are the sharpest edge; the gameplay alone is far less identifiable.
+3. **Ship as is.** Common practice among emulators, and mostly untroubled — but
+   it is a bet, and the thing being bet is the developer account that every
+   other listing sits on.
+
+The pages are built so this is a file swap: replace the `.webp` files in
+`site/assets/` and nothing else changes.
 
 **The copy predates two shipped features.** It does not mention the ten picture
 modes and the `.pal` palette import, or the shelf's list/card layouts. Left
@@ -110,7 +140,7 @@ claim, and this is the version that was written and approved.
 | In-app purchases | No | |
 | Data safety | No data collected, no data shared | Verifiable: the manifest declares no `INTERNET` permission |
 | Content rating | Complete the IARC questionnaire | No violence, no user content, no ads, no data sharing |
-| Privacy policy | **Required** — a URL is mandatory even collecting nothing | Draft below |
+| Privacy policy | **Required** — a URL is mandatory even collecting nothing | https://emulia.website/privacy.html |
 | Government app | No | |
 
 A new **personal** developer account created after 13 Nov 2023 must first run a
@@ -120,33 +150,24 @@ account, is exempt.
 
 ## Privacy policy
 
-The text is [docs/PRIVACY.md](PRIVACY.md). **It still needs somewhere public to
-live.** This repository is private, so its GitHub address returns 404 to anyone
-who is not signed in as its owner — including Google's reviewer — and a policy
-URL that only works for one person is not a policy URL.
+**https://emulia.website/privacy.html** — paste that into Play Console at
+**Policy ▸ App content ▸ Privacy policy**.
 
-Two ways to fix that, neither of which makes this repository public:
+The text is [docs/PRIVACY.md](PRIVACY.md), which stays the source. The published
+page is `site/privacy.html`, written out as HTML rather than generated, so the
+two have to be changed together when the policy changes — the alternative was a
+Markdown build step for one page.
 
-1. **A small public repo with Pages** — the tidier answer, and a real web page:
+This repository is private, so a GitHub address for the policy would return 404
+to anyone not signed in as its owner, including Google's reviewer. The site gets
+around that without making this repository public: `site/` is mirrored by
+[`publish-site.yml`](../.github/workflows/publish-site.yml) into the public
+`bsteinfeld/emulia-site`, which is what GitHub Pages serves. See
+[the site's README](../site/README.md).
 
-   ```sh
-   gh repo create emulia-privacy --public --description "Privacy policy for Emulia"
-   # copy docs/PRIVACY.md in as README.md, push, then:
-   gh api -X POST repos/bsteinfeld/emulia-privacy/pages \
-     -f 'source[branch]=main' -f 'source[path]=/'
-   ```
-
-   Final URL: `https://bsteinfeld.github.io/emulia-privacy/`
-
-2. **A public gist** — thirty seconds, slightly informal, works today:
-
-   ```sh
-   gh gist create docs/PRIVACY.md --public --desc "Emulia privacy policy"
-   ```
-
-Whichever is chosen, paste the URL into Play Console at **Policy ▸ App content ▸
-Privacy policy**, and keep `docs/PRIVACY.md` as the source that gets copied
-there when it changes.
+Until the `emulia.website` DNS records are in place the policy is not reachable,
+and Play will reject a policy URL it cannot fetch — so the DNS has to land before
+the listing is sent for review.
 
 It contains a public contact address (`bradley@steinfeld.ca`). Play requires a
 contact email on the listing regardless, so it becomes public either way — but
