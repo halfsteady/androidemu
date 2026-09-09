@@ -1106,8 +1106,8 @@
       "address": "$048D",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "01"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 19,
@@ -1133,8 +1133,8 @@
       "address": "$0458",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 19,
@@ -1142,8 +1142,8 @@
       "address": "$045A",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "01"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 19,
@@ -1151,8 +1151,8 @@
       "address": "$047B",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 20,
@@ -1169,8 +1169,8 @@
       "address": "$045B",
       "before": "FAIL",
       "before_code": "03",
-      "after": "FAIL",
-      "after_code": "08"
+      "after": "PASS",
+      "after_code": "10"
     },
     {
       "page": 20,
@@ -1205,8 +1205,8 @@
       "address": "$048C",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 20,
@@ -1214,8 +1214,8 @@
       "address": "$048E",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 21,
@@ -1232,8 +1232,8 @@
       "address": "$0483",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "03"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 21,
@@ -1241,8 +1241,8 @@
       "address": "$0487",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 21,
@@ -1250,8 +1250,8 @@
       "address": "$0491",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 21,
@@ -1259,8 +1259,8 @@
       "address": "$0492",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 22,
@@ -1268,8 +1268,8 @@
       "address": "$0484",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "01"
     },
     {
       "page": 22,
@@ -1277,8 +1277,8 @@
       "address": "$048F",
       "before": "FAIL",
       "before_code": "03",
-      "after": "FAIL",
-      "after_code": "03"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 22,
@@ -1286,8 +1286,8 @@
       "address": "$0493",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 22,
@@ -1295,8 +1295,8 @@
       "address": "$0495",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     }
   ]
 }

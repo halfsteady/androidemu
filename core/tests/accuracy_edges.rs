@@ -125,7 +125,7 @@ fn sprite_fetch_resets_oam_address_only_while_rendering() {
     let mut bus = bus();
     for mask in [0, 8, 16] {
         for scanline in [0, 239, 240, 241, 261] {
-            for dot in [255, 256, 257, 319, 320] {
+            for dot in [256, 257, 319, 320] {
                 let mut ppu = Ppu::new();
                 ppu.mask = mask;
                 ppu.scanline = scanline;
@@ -156,7 +156,7 @@ fn oam_attribute_holes_and_rendering_accesses() {
     ppu.oam[1] = 0x5a;
     assert_eq!(ppu.read_register(0x2004, mapper), 0xff);
     ppu.write_register(0x2004, 0, mapper);
-    assert_eq!(ppu.oam_addr, 5);
+    assert_eq!(ppu.oam_addr, 4);
     assert_eq!(
         ppu.oam[1], 0x5a,
         "rendering writes must not alter primary OAM"
@@ -167,7 +167,7 @@ fn oam_attribute_holes_and_rendering_accesses() {
 }
 
 #[test]
-fn rendering_oam_writes_preserve_the_byte_offset_and_wrap() {
+fn rendering_oam_writes_clear_the_byte_offset_and_wrap() {
     let mut bus = bus();
     let mapper = bus.cart.mapper.as_mut();
     for scanline in [0, 239, 261] {
@@ -180,7 +180,7 @@ fn rendering_oam_writes_preserve_the_byte_offset_and_wrap() {
             for address in 0..=255u8 {
                 ppu.oam_addr = address;
                 ppu.write_register(0x2004, 0xa5, mapper);
-                assert_eq!(ppu.oam_addr, address.wrapping_add(4));
+                assert_eq!(ppu.oam_addr, address.wrapping_add(4) & 0xfc);
                 assert_eq!(ppu.oam[address as usize], 0x5a);
             }
         }

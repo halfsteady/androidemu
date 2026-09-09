@@ -18,8 +18,8 @@ been walked through deliberately.
 - All five APU channels, nonlinear mixing, 1024-tap FIR anti-aliasing before
   48 kHz output, DC removal and analog low-pass filtering. No per-frame allocation
   in the core; snapshot allocation is outside frame execution.
-- Version-1 deterministic snapshots, checksum and ROM/board identity validation,
-  transactional loading, and exact-size battery-save restoration.
+- Version-3 deterministic snapshots with v1/v2 migration, checksum and ROM/board
+  identity validation, transactional loading, and exact-size battery-save restoration.
 - Compose game shelf, single-file SAF import into private storage, GLES 3 rendering,
   Choreographer scheduling, a region-derived surface frame rate, touch controls and
   standard Android USB/Bluetooth/keyboard input for two players. Portrait controls
@@ -43,7 +43,7 @@ been walked through deliberately.
 
 ## Verification
 
-- Rust workspace tests: 66 passing, including the real nestest reference trace,
+- Rust workspace tests: 146 passing, including the real nestest reference trace,
   GxROM banking under bus conflicts, and per-region frame length, frame height,
   vblank scanline, savestate timing restoration and the rewind chain. Without the optional nestest
   files that harness reports that it skipped. A golden-hash test pins the layout
@@ -69,7 +69,7 @@ a number, plus the paths that need particular hardware or particular ROMs.
   emulator or tablet; review portrait and landscape screenshots. It has not been
   executed anywhere yet — the hand check above is not the same evidence.
 - [ ] Play representative, legally supplied games on each tier-1 mapper. Confirm
-  sprite rendering against captures; the current sprite selection is scanline-based.
+  sprite rendering against captures; sprite evaluation and fetch now run per dot.
 - [ ] Confirm real USB adapters, Bluetooth reconnects, two-player assignments and
   absence of stuck buttons after unplug, backgrounding and touch cancellation.
   Run the mapping wizard on each adapter and confirm the profile survives a
@@ -88,9 +88,11 @@ a number, plus the paths that need particular hardware or particular ROMs.
   The sub-10 ms target is **not achieved**, and [the audio note](AUDIO.md) records
   why it needs emulation paced against the audio clock rather than a smaller
   constant.
-- [ ] Broaden accuracy checks for secondary OAM/overflow quirks, OAM decay,
-  DMC/OAM collision arbitration and repeated controller reads. MMC6 and other
-  board revisions are not covered by the common MMC3 implementation.
+- [ ] Broaden accuracy checks beyond the 144/144 pinned AccuracyCoin tests,
+  particularly OAM decay, PAL sprite evaluation and rendering-time bus conflicts.
+  Secondary OAM/overflow, DMC/OAM arbitration and repeated controller reads now
+  have passing regression coverage. MMC6 and other board revisions remain outside
+  the common MMC3 implementation.
 
 Color emphasis, raw USB HID fallback, D-pad/axis remapping, folder/ZIP import and
 box-art packs remain planned follow-up work. Rewind, fast-forward, box art and
@@ -110,9 +112,10 @@ branch; unknown versions fail without changing the running machine.
 
 Version 2 appends the CPU internal data latch, per-bit PPU open-bus retention
 timestamps and pending APU IRQ acknowledgement after the original mapper data.
-Version 3 appends DMA timing and controller output-enable state. Versions 1 and
-2 still load, initializing absent fields with compatible defaults. Regression
-tests load fixtures from both released writers and replay their migrated states.
+Version 3 appends DMA timing, controller output-enable and PPU pipeline state,
+including pending register effects and sprite flags. Versions 1 and 2 still load,
+converting static sprite records to live counters/shifters and initializing absent
+fields with compatible defaults. Regression tests load fixtures from both released writers and replay their migrated states.
 Older app versions cannot read newly written v3 snapshots; battery saves keep
 their existing format.
 

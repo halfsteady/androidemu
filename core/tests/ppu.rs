@@ -7,19 +7,35 @@ fn cart(flags: u8) -> Cartridge {
     rom[6] = flags;
     Cartridge::load(&rom).unwrap()
 }
+/// Registers settle over the dots that follow a CPU access: PPUADDR copies
+/// into v three dots later and PPUDATA works through its state machine over
+/// five. Space accesses like a CPU would (twelve dots per instruction).
+fn settle(p: &mut Ppu, c: &mut Cartridge) {
+    for _ in 0..12 {
+        p.tick(c.mapper.as_mut());
+    }
+}
 fn write(p: &mut Ppu, c: &mut Cartridge, addr: u16, value: u8) {
     p.write_register(6, (addr >> 8) as u8, c.mapper.as_mut());
+    settle(p, c);
     p.write_register(6, addr as u8, c.mapper.as_mut());
+    settle(p, c);
     p.write_register(7, value, c.mapper.as_mut());
+    settle(p, c);
 }
 fn read(p: &mut Ppu, c: &mut Cartridge, addr: u16) -> u8 {
     p.write_register(6, (addr >> 8) as u8, c.mapper.as_mut());
+    settle(p, c);
     p.write_register(6, addr as u8, c.mapper.as_mut());
+    settle(p, c);
     let v = p.read_register(7, c.mapper.as_mut());
+    settle(p, c);
     if addr >= 0x3f00 {
         v
     } else {
-        p.read_register(7, c.mapper.as_mut())
+        let v = p.read_register(7, c.mapper.as_mut());
+        settle(p, c);
+        v
     }
 }
 fn frame(p: &mut Ppu, c: &mut Cartridge) -> usize {
@@ -59,6 +75,7 @@ fn ppudata_chr_buffering_and_increment() {
     write(&mut p, &mut c, 0x2000, 42);
     assert_eq!(p.v, 0x2020);
     p.write_register(7, 43, c.mapper.as_mut());
+    settle(&mut p, &mut c);
     assert_eq!(read(&mut p, &mut c, 0x2020), 43);
 }
 #[test]
@@ -87,7 +104,9 @@ fn palette_is_immediate_mirrored_and_refills_buffer() {
     assert_eq!(read(&mut p, &mut c, 0x3f10) & 0x3f, 0x3f);
     assert_eq!(p.palette[0], 0x3f);
     p.write_register(6, 0x20, c.mapper.as_mut());
+    settle(&mut p, &mut c);
     p.write_register(6, 0, c.mapper.as_mut());
+    settle(&mut p, &mut c);
     assert_eq!(p.read_register(7, c.mapper.as_mut()), 0x55);
 }
 #[test]
@@ -209,11 +228,26 @@ fn tall_sprites_use_tile_bank_and_both_flip_bits() {
 fn cpu_bus_routes_ppudata_to_cartridge() {
     use nes_core::{cpu::Bus, NesBus};
     let mut bus = NesBus::new(cart(0));
-    bus.write(0x2006, 0x01);
-    bus.write(0x2006, 0x23);
-    bus.write(0x2007, 0x5a);
-    bus.write(0x2006, 0x01);
-    bus.write(0x2006, 0x23);
-    bus.read(0x2007);
-    assert_eq!(bus.read(0x2007), 0x5a);
+    // Consecutive instructions put at least four CPU cycles between accesses,
+    // which is what the delayed PPUADDR copy and PPUDATA pipeline expect.
+    let access = |bus: &mut NesBus, addr: u16, value: Option<u8>| -> u8 {
+        let v = match value {
+            Some(value) => {
+                bus.write(addr, value);
+                0
+            }
+            None => bus.read(addr),
+        };
+        for _ in 0..3 {
+            bus.read(0x8000);
+        }
+        v
+    };
+    access(&mut bus, 0x2006, Some(0x01));
+    access(&mut bus, 0x2006, Some(0x23));
+    access(&mut bus, 0x2007, Some(0x5a));
+    access(&mut bus, 0x2006, Some(0x01));
+    access(&mut bus, 0x2006, Some(0x23));
+    access(&mut bus, 0x2007, None);
+    assert_eq!(access(&mut bus, 0x2007, None), 0x5a);
 }

@@ -156,6 +156,8 @@ impl Nes {
         }
         if version >= 3 {
             candidate.bus.load_pipeline_state(&mut input)?;
+        } else {
+            candidate.bus.ppu.initialize_legacy_pipeline_state();
         }
         if !input.is_empty() {
             return Err(StateError("Unexpected save state data"));

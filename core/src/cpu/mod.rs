@@ -23,14 +23,17 @@ pub mod disasm;
 /// cannot execute during the stall, but its NMI edge detector keeps running.
 #[derive(Clone, Copy)]
 pub struct StalledInterrupts {
+    /// The first stalled sample, compared with the CPU's preceding sample.
     pub first_nmi: bool,
     pub last_nmi: bool,
+    /// A rising edge between stalled samples, excluding the first sample.
     pub nmi_rose: bool,
     pub last_irq: bool,
 }
 
-/// The CPU's view of the system. Both accessors must advance the rest of the
-/// machine by one CPU cycle before returning.
+/// The CPU's view of the system. Both accessors advance the rest of the machine
+/// by one CPU cycle. A read may additionally stall for DMA; its interrupt samples
+/// are exposed through [`Bus::stalled_interrupts`].
 pub trait Bus {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);

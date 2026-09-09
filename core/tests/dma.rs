@@ -43,6 +43,10 @@ fn dmc_halt_and_dummy_cycles_repeat_ppudata_reads() {
         assert!(bus.read_halted());
         // Three-cycle DMA repeats halt/dummy/CPU reads; a four-cycle DMA has
         // an alignment read as well. The sample transfer uses its own address.
+        // The final CPU read has returned its old buffer value, but its PPU
+        // memory transaction and address increment finish four dots later.
+        assert_eq!(bus.ppu.v, 0x2002 + phase);
+        for _ in 0..4 { bus.ppu.tick(bus.cart.mapper.as_mut()); }
         assert_eq!(bus.ppu.v, 0x2003 + phase);
     }
 }
@@ -182,4 +186,17 @@ fn nmi_edges_during_dma_survive_a_later_status_read() {
     assert!(!nes.bus.ppu.nmi_line);
     assert_eq!(nes.step(), 7);
     assert_eq!(nes.cpu.pc, 0x500);
+}
+
+#[test]
+fn oam_dma_samples_sprite_status_at_the_late_read_edge() {
+    let mut nes = Nes::new(&common::rom(0, 0)).unwrap();
+    nes.bus.write(0x4014, 0x20);
+    // The first $2002 get begins on pre-render dot 0 and ends on dot 1.
+    // VBlank remains in the early sample; the sprite flags have cleared.
+    nes.bus.ppu.scanline = 260;
+    nes.bus.ppu.dot = 324;
+    nes.bus.ppu.status = 0xe0;
+    nes.bus.read(0);
+    assert_eq!(nes.bus.ppu.oam[2], 0x80);
 }

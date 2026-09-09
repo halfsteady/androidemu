@@ -40,8 +40,8 @@ is built, tested, signed and published by GitHub Actions — see
 | Shelf | Chosen box art per game, last-played ordering, playtime, screenshots to the device gallery, a readable problem log |
 
 The 39-ROM CPU/APU/PPU/MMC3 regression set and the real `nestest` trace pass.
-AccuracyCoin now passes **129/144 tests**, up from 92/144; all 144 complete. See the
-[accuracy report and remaining failures](docs/ACCURACY.md).
+AccuracyCoin now passes **144/144 tests**, up from 92/144; all 144 complete. See the
+[accuracy report and limitations](docs/ACCURACY.md).
 Device performance and latency are not yet measured. Sprite evaluation, some DMA
 edge cases, PAL/Dendy, raw HID adapters and other board variants need more work.
 Tier-2 boards are implemented and unit-tested but have not been run against

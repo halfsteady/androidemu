@@ -43,3 +43,8 @@ while nes.bus.ppu.scanline != 21 || !(80..=88).contains(&nes.bus.ppu.dot) {
 }
 // Write nes.save_state() here, with no additional clocks.
 ```
+
+`core/tests/ppu_pipeline.rs` includes OAM bus traces documented in AccuracyCoin's
+`$2004 Stress Test`, from the pinned `affc643aa771028510c4427451ecf5bba5e54592`
+revision. Its MIT license is preserved in [ACCURACYCOIN-LICENSE](ACCURACYCOIN-LICENSE).
+The external test ROM is not bundled.

@@ -138,8 +138,7 @@ impl NesBus {
         let mut oam_byte = None;
         // Successful RDY halt: both engines may share this cycle.
         self.begin_cycle();
-        self.read_data(cpu_addr, cpu_addr, true);
-        self.end_cycle();
+        self.finish_read_cycle(cpu_addr, cpu_addr, true);
         self.sample_stalled_interrupts();
         self.extra_cycles += 1;
         dmc_stage = dmc_stage.advance(self.apu.dmc_request().is_some());
@@ -152,14 +151,14 @@ impl NesBus {
             self.begin_cycle();
             if dmc_get {
                 if let Some(address) = self.apu.dmc_request() {
-                    let byte = self.read_data(address, cpu_addr, false);
+                    let byte = self.finish_read_cycle(address, cpu_addr, false);
                     self.apu.supply_dmc(byte);
                 } else {
-                    self.read_data(cpu_addr, cpu_addr, true);
+                    self.finish_read_cycle(cpu_addr, cpu_addr, true);
                 }
                 dmc_stage = DmcDmaStage::Idle;
             } else if get && oam {
-                oam_byte = Some(self.read_data(((self.dma_page as u16) << 8) | offset, cpu_addr, false));
+                oam_byte = Some(self.finish_read_cycle(((self.dma_page as u16) << 8) | offset, cpu_addr, false));
             } else if !get && oam_byte.is_some() {
                 let byte = oam_byte.take().unwrap();
                 self.controller_port = 0;
@@ -167,15 +166,31 @@ impl NesBus {
                 // OAM puts drive the CPU's write bus; DMC gets do not.
                 self.internal_bus = byte;
                 self.ppu.write_register(0x2004, byte, self.cart.mapper.as_mut());
+                self.end_cycle();
                 offset += 1;
                 oam = offset != 256;
             } else {
-                self.read_data(cpu_addr, cpu_addr, true);
+                self.finish_read_cycle(cpu_addr, cpu_addr, true);
             }
-            self.end_cycle();
             self.sample_stalled_interrupts();
             self.extra_cycles += 1;
             dmc_stage = dmc_stage.advance(self.apu.dmc_request().is_some());
+        }
+    }
+
+    /// VBlank is sampled at the early read edge, while the sprite flags
+    /// remain live until the end. DMA reads use the same wiring.
+    fn finish_read_cycle(&mut self, addr: u16, cpu_addr: u16, latch_cpu: bool) -> u8 {
+        let ppu_register = (0x2000..=0x3fff).contains(&addr);
+        let early = self.read_data(addr, cpu_addr, latch_cpu);
+        self.end_cycle();
+        if ppu_register && addr & 7 == 2 {
+            let late = self.ppu.finish_status_read(early);
+            self.open_bus = late;
+            if latch_cpu { self.internal_bus = late; }
+            late
+        } else {
+            early
         }
     }
 
@@ -226,9 +241,7 @@ impl Bus for NesBus {
         self.run_dma(addr);
         self.last_read_halted = self.extra_cycles != extra_before;
         self.begin_cycle();
-        let v = self.read_data(addr, addr, true);
-        self.end_cycle();
-        v
+        self.finish_read_cycle(addr, addr, true)
     }
 
     fn write(&mut self, addr: u16, val: u8) {
@@ -336,6 +349,7 @@ impl NesBus {
         self.apu.save_pipeline_state(out);
         self.controller_port.encode(out);
         self.controller_bit.encode(out);
+        self.ppu.save_pipeline_state(out);
     }
 
     pub(crate) fn load_pipeline_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
@@ -344,6 +358,7 @@ impl NesBus {
         self.controller_port = Codec::decode(input)?;
         self.controller_bit = Codec::decode(input)?;
         if self.controller_port > 2 || self.controller_bit > 1 { return Err(StateError("Invalid controller bus state")); }
+        self.ppu.load_pipeline_state(input)?;
         Ok(())
     }
 }

@@ -90,6 +90,18 @@ jobs:
           path: ${{ runner.temp }}/accuracycoin.json
           if-no-files-found: ignore
 
+      - name: Test Android and JNI bridge
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+
+      - name: Upload Android test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-unit-tests
+          path: android/app/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore
+
       - name: Decode upload keystore
         env:
           KEYSTORE_B64: ${{ secrets.ANDROIDEMU_UPLOAD_KEYSTORE_BASE64 }}

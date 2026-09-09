@@ -147,12 +147,36 @@ fn malformed_snapshot_extensions_are_rejected_transactionally() {
                 invalid_field[extension + offset] = invalid;
                 cases.push(invalid_field);
             }
+            // The PPU block follows the four APU/controller bytes. Exercise
+            // bounds and boolean decoding with a valid enclosing checksum.
+            let ppu = extension + 4;
+            for (offset, invalid) in [
+                (1, 4), (3, 0x80), (4, 4), (5, 2), (45, 32), (46, 2),
+                (48, 2), (49, 2), (50, 4), (51, 4), (52, 2), (54, 0x40),
+                (56, 4), (58, 0x40), (60, 6), (66, 2), (67, 2), (68, 32),
+                (69, 2), (86, 2), (94, 0x80),
+            ] {
+                let mut invalid_field = body.to_vec();
+                invalid_field[ppu + offset] = invalid;
+                cases.push(invalid_field);
+            }
+            let mut invalid_copy = body.to_vec();
+            invalid_copy[ppu + 48] = 1; // In-range copy without any bytes to finish.
+            invalid_copy[ppu + 50] = 0;
+            invalid_copy[ppu + 51] = 0;
+            cases.push(invalid_copy);
+            for (kind, expired_age) in [(1, 5), (2, 4), (3, 4)] {
+                let mut expired = body.to_vec();
+                expired[ppu + 56] = kind;
+                expired[ppu + 60] = expired_age;
+                cases.push(expired);
+            }
         }
         let mut trailing = body.to_vec();
         trailing.push(0);
         cases.push(trailing);
-        for bad in cases {
-            assert!(nes.load_state(&with_checksum(bad)).is_err());
+        for (case, bad) in cases.into_iter().enumerate() {
+            assert!(nes.load_state(&with_checksum(bad)).is_err(), "v{} case {case}", state[4]);
             assert!(nes.save_state() == saved);
         }
     }
@@ -221,7 +245,7 @@ fn snapshots_replay_across_ppu_fetches_and_pending_register_effects() {
     assert_eq!((scene.bus.ppu.scanline, scene.bus.ppu.dot), (21, 0));
     // Include secondary-OAM clearing/evaluation boundaries, individual sprite
     // fetch phases, background reloads, and the end-of-line counter pulse.
-    for dot in [1, 2, 63, 64, 65, 66, 127, 255, 256, 257, 258, 259, 260, 261,
+    for dot in [1, 2, 63, 64, 65, 66, 127, 129, 130, 131, 255, 256, 257, 258, 259, 260, 261,
                 262, 263, 319, 320, 321, 322, 337, 338, 339] {
         let mut at_dot = scene.clone();
         for _ in 0..dot { at_dot.bus.ppu.tick(at_dot.bus.cart.mapper.as_mut()); }

@@ -16,6 +16,11 @@ class RegressionGateTests(unittest.TestCase):
     def setUp(self):
         root = Path(__file__).resolve().parent.parent
         self.expected = json.loads((root / "docs/accuracycoin-results.json").read_text())
+        # Keep a partial synthetic baseline even when the real suite is perfect:
+        # the gate must still detect a lost pass hidden by an unrelated gain.
+        for index, test in enumerate(self.expected["tests"]):
+            test["after"] = "PASS" if index < 142 else "FAIL"
+            test["after_code"] = "00" if index < 142 else "01"
         self.baseline = sum(t["after"] == "PASS" for t in self.expected["tests"])
         self.rows = [
             [t["after"], str(t["page"]), t["name"], t["after_code"], t["address"]]
@@ -43,6 +48,23 @@ class RegressionGateTests(unittest.TestCase):
         report = accuracycoin.check_results(self.output(), 1, self.expected)
         self.assertEqual(report["passed"], self.baseline)
         self.assertEqual(report["regressions"], [lost[2]])
+
+    def test_all_passes_require_success_and_any_loss_is_reported(self):
+        for test, row in zip(self.expected["tests"], self.rows):
+            test["after"] = row[0] = "PASS"
+            test["after_code"] = row[3] = "00"
+        report = accuracycoin.check_results(self.output(), 0, self.expected)
+        self.assertEqual(report["passed"], 144)
+        self.assertEqual(report["regressions"], [])
+        with self.assertRaises(ValueError):
+            accuracycoin.check_results(self.output(), 1, self.expected)
+        self.rows[0][0] = "FAIL"
+        self.rows[0][3] = "01"
+        report = accuracycoin.check_results(self.output(), 1, self.expected)
+        self.assertEqual(report["passed"], 143)
+        self.assertEqual(report["regressions"], [self.rows[0][2]])
+        with self.assertRaises(ValueError):
+            accuracycoin.check_results(self.output(), 0, self.expected)
 
     def test_unfinished_invalid_and_duplicate_rows_are_rejected(self):
         for status in ["PENDING", "RUNNING", "SKIP", "INVALID"]:
