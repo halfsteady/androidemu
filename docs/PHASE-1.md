@@ -100,7 +100,7 @@ handling, and the shoulder buttons are reserved for the time controls.
 
 ## Save format and recovery
 
-Snapshots start with `ANES`, a little-endian version (currently 2), ROM hash,
+Snapshots start with `ANES`, a little-endian version (currently 3), ROM hash,
 mapper and board fingerprint, followed by the CPU, bus/devices and mutable mapper
 state. A trailing FNV-1a checksum detects accidental corruption; it is not an
 authentication mechanism. ROM bytes are not embedded. All decoding is bounded,
@@ -110,9 +110,11 @@ branch; unknown versions fail without changing the running machine.
 
 Version 2 appends the CPU internal data latch, per-bit PPU open-bus retention
 timestamps and pending APU IRQ acknowledgement after the original mapper data.
-Version 1 snapshots still load, initializing the new timing state from the old
-latches. Older app versions cannot read newly written v2 snapshots; battery
-saves keep their existing format.
+Version 3 appends DMA timing and controller output-enable state. Versions 1 and
+2 still load, initializing absent fields with compatible defaults. Regression
+tests load fixtures from both released writers and replay their migrated states.
+Older app versions cannot read newly written v3 snapshots; battery saves keep
+their existing format.
 
 On Android each ROM hash has a private directory under `files/library/` containing
 `game.nes`, `battery.sav`, `auto.state`/`auto.png`, and `slot-0` through `slot-9`

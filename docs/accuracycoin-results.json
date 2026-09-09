@@ -773,8 +773,8 @@
       "address": "$0488",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "01"
     },
     {
       "page": 13,
@@ -782,8 +782,8 @@
       "address": "$044C",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 13,
@@ -791,8 +791,8 @@
       "address": "$044F",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "01"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 13,
@@ -800,8 +800,8 @@
       "address": "$045D",
       "before": "FAIL",
       "before_code": "02",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 13,
@@ -809,7 +809,7 @@
       "address": "$045E",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
+      "after": "PASS",
       "after_code": "01"
     },
     {
@@ -818,8 +818,8 @@
       "address": "$046B",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 13,
@@ -827,8 +827,8 @@
       "address": "$0477",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 13,
@@ -836,8 +836,8 @@
       "address": "$0479",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "02"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 13,
@@ -845,7 +845,7 @@
       "address": "$0478",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
+      "after": "PASS",
       "after_code": "02"
     },
     {
@@ -872,8 +872,8 @@
       "address": "$0467",
       "before": "FAIL",
       "before_code": "07",
-      "after": "FAIL",
-      "after_code": "13"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 14,
@@ -899,8 +899,8 @@
       "address": "$046A",
       "before": "FAIL",
       "before_code": "13",
-      "after": "FAIL",
-      "after_code": "15"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 14,
@@ -908,8 +908,8 @@
       "address": "$045C",
       "before": "FAIL",
       "before_code": "01",
-      "after": "FAIL",
-      "after_code": "01"
+      "after": "PASS",
+      "after_code": "02"
     },
     {
       "page": 14,
@@ -927,7 +927,7 @@
       "before": "PASS",
       "before_code": "02",
       "after": "PASS",
-      "after_code": "02"
+      "after_code": "01"
     },
     {
       "page": 15,
@@ -944,8 +944,8 @@
       "address": "$046D",
       "before": "FAIL",
       "before_code": "03",
-      "after": "FAIL",
-      "after_code": "05"
+      "after": "PASS",
+      "after_code": "00"
     },
     {
       "page": 15,

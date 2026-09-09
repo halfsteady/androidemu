@@ -73,12 +73,22 @@ jobs:
         with:
           workspaces: ". -> target"
 
-      # A release that fails its own accuracy tests is worse than no release.
-      # The external ROM suites need a checkout this job does not have, so this
-      # is the workspace suite: nestest, the mappers, the regions and the
-      # savestate format.
       - name: Test the core
         run: cargo test --workspace --locked
+
+      - name: AccuracyCoin regression
+        run: |
+          python3 scripts/test-accuracycoin.py
+          curl --fail --location --output "$RUNNER_TEMP/AccuracyCoin.nes" https://raw.githubusercontent.com/100thCoin/AccuracyCoin/affc643aa771028510c4427451ecf5bba5e54592/AccuracyCoin.nes
+          python3 scripts/check-accuracycoin.py "$RUNNER_TEMP/AccuracyCoin.nes" --report "$RUNNER_TEMP/accuracycoin.json"
+
+      - name: Upload accuracy results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: accuracycoin-android
+          path: ${{ runner.temp }}/accuracycoin.json
+          if-no-files-found: ignore
 
       - name: Decode upload keystore
         env:

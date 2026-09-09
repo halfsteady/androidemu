@@ -21,6 +21,11 @@ fn dmc_drives_external_bus_without_replacing_the_internal_latch() {
         bus.apu.write_register(0x4012, 0);
         bus.apu.write_register(0x4013, 0);
         bus.apu.write_register(0x4015, 0x10);
+        for _ in 0..3 {
+            if bus.apu.dmc_request().is_some() { break; }
+            bus.write(0, last_cpu);
+        }
+        assert!(bus.apu.dmc_request().is_some());
         assert_eq!(bus.read(0x4015) & 0x20, last_cpu);
         assert!(bus.read_halted());
         assert_eq!(bus.read(0x4000), sample);
@@ -35,6 +40,11 @@ fn dmc_waits_for_a_read_and_accounts_for_three_or_four_stolen_cycles() {
         nes.cpu.pc = 0x200;
         nes.bus.ram[0x200] = 0xea; // Two-cycle NOP.
         nes.bus.apu.write_register(0x4015, 0x10);
+        for _ in 0..3 {
+            if nes.bus.apu.dmc_request().is_some() { break; }
+            nes.bus.write(0, 0);
+        }
+        assert!(nes.bus.apu.dmc_request().is_some());
         for _ in 0..preceding_writes {
             nes.bus.write(0, 0);
             assert!(nes.bus.apu.dmc_request().is_some(), "a write cannot be halted");
@@ -42,7 +52,7 @@ fn dmc_waits_for_a_read_and_accounts_for_three_or_four_stolen_cycles() {
         let dot = nes.bus.ppu.dot;
         let cpu_cycle = nes.cpu.cycles;
         let elapsed = nes.step();
-        assert_eq!(elapsed, if preceding_writes == 0 { 6 } else { 5 });
+        assert_eq!(elapsed, if preceding_writes == 0 { 5 } else { 6 });
         assert_eq!(nes.cpu.cycles - cpu_cycle, elapsed);
         assert_eq!(nes.bus.ppu.dot - dot, (elapsed * 3) as u16);
         assert!(nes.bus.apu.dmc_request().is_none());
@@ -93,6 +103,7 @@ fn one_cycle_controller_strobe_depends_on_apu_phase() {
     let mut missed = bus();
     for _ in 0..8 {
         missed.read(0x4016);
+        missed.read(0);
     }
     missed.write(0x4016, 1); // This high pulse ends before the latch clock.
     missed.write(0x4016, 0);
@@ -101,6 +112,7 @@ fn one_cycle_controller_strobe_depends_on_apu_phase() {
     let mut latched = bus();
     for _ in 0..8 {
         latched.read(0x4016);
+        latched.read(0);
     }
     latched.read(0); // Shift the same pulse by one CPU cycle.
     latched.write(0x4016, 1);

@@ -93,3 +93,42 @@ fn frame_counter_reset_delay_depends_on_the_write_phase_in_both_modes() {
         }
     }
 }
+
+#[test]
+fn inhibited_frame_irq_remains_visible_for_two_clocks_without_asserting_irq() {
+    let mut apu = Apu::new();
+    apu.write_register(0x4017, 0x40);
+    for _ in 0..29831 { apu.tick(); }
+    for expected in [0, 0x40, 0x40, 0] {
+        // Inspect a clone so this read does not acknowledge the live flag.
+        assert_eq!(apu.clone().read_register(0x4015) & 0x40, expected);
+        assert!(!apu.irq_line());
+        apu.tick();
+    }
+}
+
+#[test]
+fn dmc_enable_and_disable_settle_on_the_apu_clock() {
+    for phase in 0..2 {
+        let mut apu = Apu::new();
+        for _ in 0..phase { apu.tick(); }
+        apu.write_register(0x4015, 0x10);
+        let delay = if phase == 0 { 3 } else { 2 };
+        for _ in 0..delay {
+            assert!(apu.dmc_request().is_none());
+            assert_eq!(apu.read_register(0x4015) & 0x10, 0x10);
+            apu.tick();
+        }
+        assert_eq!(apu.dmc_request(), Some(0xc000));
+        // Shift the disable write through both phases as well.
+        for _ in 0..phase { apu.tick(); }
+        apu.write_register(0x4015, 0);
+        let delay = if phase == 0 { 2 } else { 3 };
+        for _ in 0..delay {
+            assert_eq!(apu.dmc_request(), Some(0xc000));
+            apu.tick();
+        }
+        assert!(apu.dmc_request().is_none());
+        assert_eq!(apu.read_register(0x4015) & 0x10, 0);
+    }
+}

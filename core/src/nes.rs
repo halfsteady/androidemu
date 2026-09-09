@@ -2,7 +2,7 @@
 
 use crate::cart::{CartError, Cartridge};
 use crate::controller::Buttons;
-use crate::cpu::{disasm, Bus, Cpu};
+use crate::cpu::{disasm, Cpu};
 use crate::ppu::{HEIGHT, WIDTH};
 use crate::NesBus;
 
@@ -78,6 +78,7 @@ impl Nes {
 
     pub fn reset(&mut self) {
         self.cpu.reset(&mut self.bus);
+        self.cpu.cycles += core::mem::take(&mut self.bus.extra_cycles) as u64;
     }
 
     pub fn set_buttons(&mut self, port: usize, buttons: Buttons) {
@@ -87,29 +88,10 @@ impl Nes {
     /// Run one instruction. Returns the cycles it consumed, OAM DMA included.
     pub fn step(&mut self) -> u64 {
         let mut cycles = self.cpu.step(&mut self.bus);
-        cycles += self.drain_dma();
         let extra = core::mem::take(&mut self.bus.extra_cycles) as u64;
         self.cpu.cycles += extra;
         cycles += extra;
         cycles
-    }
-
-    /// Clock both halves of each DMA byte transfer, preserving OAMADDR wrapping.
-    fn drain_dma(&mut self) -> u64 {
-        let stall = core::mem::take(&mut self.bus.dma_stall);
-        if stall == 0 {
-            return 0;
-        }
-        for _ in 0..stall - 512 {
-            self.bus.read(self.cpu.pc);
-        }
-        let base = (self.bus.dma_page as u16) << 8;
-        for i in 0..256 {
-            let byte = self.bus.read(base + i);
-            self.bus.write(0x2004, byte);
-        }
-        self.cpu.cycles += stall as u64;
-        stall as u64
     }
 
     /// Step one instruction, capturing the CPU state as it was beforehand.

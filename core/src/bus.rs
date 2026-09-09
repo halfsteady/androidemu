@@ -15,6 +15,27 @@ use crate::controller::Controller;
 use crate::cpu::Bus;
 use crate::ppu::Ppu;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DmcDmaStage {
+    Idle,
+    Halt,
+    Dummy,
+    Ready,
+}
+
+impl DmcDmaStage {
+    fn advance(self, requested: bool) -> Self {
+        match self {
+            // Cancellation during halt releases RDY immediately. Once setup
+            // has advanced, the remaining transfer clocks still stall the CPU.
+            Self::Halt if !requested => Self::Idle,
+            Self::Halt => Self::Dummy,
+            Self::Dummy => Self::Ready,
+            other => other,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct NesBus {
     pub ram: [u8; 2048],
@@ -28,8 +49,9 @@ pub struct NesBus {
     /// CPU-side latch, isolated from external DMA data during $4015 reads.
     internal_bus: u8,
 
-    /// Cycles the CPU is stalled by an in-progress OAM DMA. Drained by [`crate::nes::Nes`]
-    /// after each instruction, interleaving the actual copy with device clocks.
+    /// Nonzero while OAM DMA is queued for the next CPU read. The stored cycle
+    /// estimate is retained for compatibility with the released snapshot layout;
+    /// actual timing depends on the halt phase and any overlapping DMC DMA.
     pub dma_stall: u32,
     pub(crate) dma_page: u8,
     cycles: u64,
@@ -37,6 +59,8 @@ pub struct NesBus {
     // A property of the last access, consumed within the current instruction.
     // It is overwritten before use after a snapshot, so it is not serialized.
     last_read_halted: bool,
+    controller_port: u8,
+    controller_bit: u8,
 }
 
 impl NesBus {
@@ -56,14 +80,9 @@ impl NesBus {
             cycles: 0,
             extra_cycles: 0,
             last_read_halted: false,
+            controller_port: 0,
+            controller_bit: 0,
         }
-    }
-
-    /// Advance the rest of the system by one CPU cycle. The PPU runs at three dots
-    /// per CPU cycle on NTSC.
-    fn tick(&mut self) {
-        self.begin_cycle();
-        self.end_cycle();
     }
 
     fn end_cycle(&mut self) {
@@ -83,32 +102,93 @@ impl NesBus {
         self.cart.mapper.tick();
     }
 
-    /// Queue OAM DMA. The assembled machine interleaves reads and writes with
-    /// PPU/APU clocks after the writing instruction completes.
+    /// Queue OAM DMA. Writes (including the second write of an RMW instruction)
+    /// continue until a CPU read can be halted by RDY.
     fn oam_dma(&mut self, page: u8) {
         self.dma_page = page;
         self.dma_stall = 513 + (self.cycles as u32 & 1);
     }
 
-    fn dmc_dma(&mut self) {
-        if let Some(addr) = self.apu.dmc_request() {
-            // DMA halts on a CPU read, then spends a dummy cycle and an optional
-            // alignment cycle before fetching. Initial-load scheduling, DMC/OAM
-            // arbitration and repeated I/O reads remain incomplete.
-            let stall = 3 + (self.cycles as u32 & 1);
-            for _ in 0..stall - 1 {
-                self.tick();
+    /// Both DMA units share the same get/put clock. RDY halts only reads;
+    /// DMC setup overlaps OAM transfers, and its get takes priority over OAM.
+    fn run_dma(&mut self, cpu_addr: u16) {
+        let mut oam = self.dma_stall != 0;
+        let mut dmc_stage = if self.apu.dmc_request().is_some() { DmcDmaStage::Halt } else { DmcDmaStage::Idle };
+        if !oam && dmc_stage == DmcDmaStage::Idle { return; }
+        self.dma_stall = 0;
+        let mut offset = 0u16;
+        let mut oam_byte = None;
+        // Successful RDY halt: both engines may share this cycle.
+        self.begin_cycle();
+        self.read_data(cpu_addr, cpu_addr, true);
+        self.end_cycle();
+        self.extra_cycles += 1;
+        dmc_stage = dmc_stage.advance(self.apu.dmc_request().is_some());
+        while oam || dmc_stage != DmcDmaStage::Idle || self.apu.dmc_request().is_some() {
+            if dmc_stage == DmcDmaStage::Idle && self.apu.dmc_request().is_some() {
+                dmc_stage = DmcDmaStage::Halt;
             }
+            let get = (self.cycles + 1) & 1 == 0;
+            let dmc_get = get && dmc_stage == DmcDmaStage::Ready;
             self.begin_cycle();
-            let byte = self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus);
-            self.open_bus = byte;
-            self.apu.supply_dmc(byte);
+            if dmc_get {
+                if let Some(address) = self.apu.dmc_request() {
+                    let byte = self.read_data(address, cpu_addr, false);
+                    self.apu.supply_dmc(byte);
+                } else {
+                    self.read_data(cpu_addr, cpu_addr, true);
+                }
+                dmc_stage = DmcDmaStage::Idle;
+            } else if get && oam {
+                oam_byte = Some(self.read_data(((self.dma_page as u16) << 8) | offset, cpu_addr, false));
+            } else if !get && oam_byte.is_some() {
+                let byte = oam_byte.take().unwrap();
+                self.controller_port = 0;
+                self.open_bus = byte;
+                // OAM puts drive the CPU's write bus; DMC gets do not.
+                self.internal_bus = byte;
+                self.ppu.write_register(0x2004, byte, self.cart.mapper.as_mut());
+                offset += 1;
+                oam = offset != 256;
+            } else {
+                self.read_data(cpu_addr, cpu_addr, true);
+            }
             self.end_cycle();
-            self.extra_cycles += stall;
+            self.extra_cycles += 1;
+            dmc_stage = dmc_stage.advance(self.apu.dmc_request().is_some());
         }
     }
 
-    /// A read with no side effects on the PPU or APU, for DMA and for debuggers.
+    fn read_data(&mut self, addr: u16, cpu_addr: u16, latch_cpu: bool) -> u8 {
+        let external = match addr {
+            0x0000..=0x1fff => Some(self.ram[(addr & 0x07ff) as usize]),
+            0x2000..=0x3fff => Some(self.ppu.read_register(addr, self.cart.mapper.as_mut())),
+            0x4020..=0xffff => self.cart.mapper.cpu_read(addr),
+            _ => None,
+        };
+        // APU register selection combines the held CPU address's upper bits
+        // with the DMA address's low five bits, even when they name ROM/RAM.
+        let io = if cpu_addr & 0xffe0 == 0x4000 { 0x4000 | (addr & 0x1f) } else { 0 };
+        let port = match io { 0x4016 => 1, 0x4017 => 2, _ => 0 };
+        let mut value = external.unwrap_or(self.open_bus);
+        if port != 0 {
+            if self.controller_port != port {
+                self.controller_bit = self.controllers[(port - 1) as usize].read();
+            }
+            value = (value & 0xe0) | self.controller_bit;
+        }
+        self.controller_port = port;
+        self.open_bus = value;
+        if io == 0x4015 {
+            value = self.apu.read_register(0x4015) | (self.internal_bus & 0x20);
+        }
+        if latch_cpu { self.internal_bus = value; }
+        // The CPU sees the controller input directly, but a DMA reader samples
+        // the contested external pins. A cartridge/RAM zero wins on those pins.
+        if !latch_cpu && port != 0 { value & external.unwrap_or(0xff) } else { value }
+    }
+
+    /// A read with no side effects on the PPU or APU, for debuggers.
     pub fn read_pure(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
@@ -122,29 +202,17 @@ impl NesBus {
 impl Bus for NesBus {
     fn read(&mut self, addr: u16) -> u8 {
         let extra_before = self.extra_cycles;
-        self.dmc_dma();
+        self.run_dma(addr);
         self.last_read_halted = self.extra_cycles != extra_before;
         self.begin_cycle();
-        let v = match addr {
-            0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
-            0x2000..=0x3FFF => self.ppu.read_register(addr, self.cart.mapper.as_mut()),
-            0x4015 => self.apu.read_register(addr) | (self.internal_bus & 0x20),
-            0x4016 => (self.open_bus & 0xE0) | self.controllers[0].read(),
-            0x4017 => (self.open_bus & 0xE0) | self.controllers[1].read(),
-            // $4000-$4014 are write-only, and $4018-$401F are disabled.
-            0x4000..=0x401F => self.open_bus,
-            0x4020..=0xFFFF => self.cart.mapper.cpu_read(addr).unwrap_or(self.open_bus),
-        };
-        // APU status is driven on the CPU's internal bus, without changing the
-        // external data-bus latch. Its unconnected bit 5 remains open bus.
-        if addr != 0x4015 { self.open_bus = v; }
-        self.internal_bus = v;
+        let v = self.read_data(addr, addr, true);
         self.end_cycle();
         v
     }
 
     fn write(&mut self, addr: u16, val: u8) {
         self.last_read_halted = false;
+        self.controller_port = 0;
         self.begin_cycle();
         self.open_bus = val;
         self.internal_bus = val;
@@ -205,6 +273,8 @@ impl NesBus {
         self.cycles = Codec::decode(input)?;
         self.extra_cycles = Codec::decode(input)?;
         self.last_read_halted = false;
+        self.controller_port = 0;
+        self.controller_bit = 0;
         // Timing configuration is immutable cartridge metadata, not serialized
         // device state. Keeping it out of the codec preserves preview-v1 saves.
         self.ppu.region = self.cart.header.region;
@@ -231,6 +301,22 @@ impl NesBus {
         self.internal_bus = Codec::decode(input)?;
         self.ppu.load_accuracy_state(input)?;
         self.apu.load_accuracy_state(input)?;
+        Ok(())
+    }
+
+    pub(crate) fn save_pipeline_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.apu.save_pipeline_state(out);
+        self.controller_port.encode(out);
+        self.controller_bit.encode(out);
+    }
+
+    pub(crate) fn load_pipeline_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::{Codec, StateError};
+        self.apu.load_pipeline_state(input)?;
+        self.controller_port = Codec::decode(input)?;
+        self.controller_bit = Codec::decode(input)?;
+        if self.controller_port > 2 || self.controller_bit > 1 { return Err(StateError("Invalid controller bus state")); }
         Ok(())
     }
 }

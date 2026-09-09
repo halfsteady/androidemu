@@ -1,8 +1,8 @@
 # AccuracyCoin accuracy pass
 
 On `feat/core-accuracy`, based on `feat/portable-desktop`, the unchanged
-AccuracyCoin ROM improves from **92/144 to 116/144**. All 144 tests finish;
-none are skipped, and every previous pass is retained. The 28 remaining failures
+AccuracyCoin ROM improves from **92/144 to 129/144**. All 144 tests finish;
+none are skipped, and every previous pass is retained. The 15 remaining failures
 are explicitly recorded, rather than counted as supported behavior.
 
 The ROM matches upstream [AccuracyCoin revision
@@ -70,13 +70,46 @@ These changes follow the pinned ROM's hardware tests and the NESdev descriptions
 of [DMA](https://www.nesdev.org/wiki/DMA),
 [unstable stores](https://www.nesdev.org/wiki/Programming_with_unofficial_opcodes)
 and [PPU register open bus](https://www.nesdev.org/wiki/PPU_registers).
-The DMA engine still needs initial-load scheduling, repeated I/O reads and
-shared DMC/OAM arbitration; the additional passes do not establish those features.
+At this stage, the DMA engine still lacked initial-load scheduling, repeated
+I/O reads and shared DMC/OAM arbitration. The next follow-up implements them.
 
 Version 2 snapshots preserve the new latches and timing state. Tests load an
 actual v1 fixture, replay snapshots across decay/IRQ acknowledgement, and reject
 malformed v2 extensions without altering the machine. Older releases cannot
 load new v2 snapshots. Battery saves are unchanged.
+
+## Follow-up: 116 to 129 passes
+
+OAM and DMC now share one cycle-by-cycle DMA engine. OAM waits for a CPU read to
+halt, DMC setup overlaps OAM transfers, and DMC sample reads take priority on get
+cycles. Halt, dummy and alignment cycles repeat the held CPU read, including its
+PPU/APU side effects. Reset accounts for its own stolen cycles.
+
+DMC activation and cancellation follow the APU phase. Explicit cancellation can
+produce a one-cycle halt; later cancellation still consumes the remaining DMA
+clocks. A one-byte sample ending just before an output reload can briefly request
+another transfer, which expires entirely if a CPU write prevents its halt.
+
+The APU's internal register decode combines the held CPU address's upper bits
+with the DMA address's low five bits. This models DMA bus conflicts and register
+activation without cartridge-specific rules. OAM writes update the internal
+bus latch, and contiguous controller reads assert output enable only once.
+Controller bus conflicts preserve the distinction between the value observed
+by the CPU and the external bits sampled into DMC audio.
+The frame IRQ status latch is visible briefly even while the CPU IRQ signal is
+inhibited.
+
+The 13 newly passing tests are Frame Counter IRQ; DMA + $2002 Read; DMA + $2007
+Read; DMA + $2007 Write; DMA + $4015 Read; DMA + $4016 Read; DMC DMA + OAM DMA;
+DMC DMA Bus Conflicts; Explicit DMA Abort; Implicit DMA Abort; APU Register
+Activation; Delta Modulation Channel; and Implied Dummy Reads.
+
+Version 3 appends the new timing fields after the unchanged v1 body and v2
+extension. Real fixtures from both released writers still load, preserve their
+serialized fields, and replay deterministically after migration. Focused tests
+cover queued DMA, activation/cancellation delays, controller output enable,
+malformed extensions, and transactional loading. Older app versions cannot read
+new v3 snapshots; battery save files retain their existing format.
 
 ## Reproduce
 
@@ -114,13 +147,17 @@ The follow-up passes all 116 workspace tests (including the real nestest trace),
 all 39 external regression ROMs and the complete 116-pass AccuracyCoin gate.
 Focused tests cover both DMA stall lengths, writes deferring DMA, all five
 unstable store opcodes, early/late branch polls, both APU reset phases and PPU
-partial-latch refresh. The per-test JSON now records this 116-pass baseline;
+partial-latch refresh. That update recorded a 116-pass baseline.
+
+The DMA follow-up completes all 144 tests with 129 passes and retains the 39
+external ROM passes. It adds focused regressions for shared DMA, cancellation
+windows, register side effects, reset accounting, controller contention in audio,
+and v1/v2 save migration. The per-test JSON now protects all 129 passes;
 the original 92-pass results remain in its `before` fields.
 
 ## Remaining limitations
 
-Most remaining failures involve DMC DMA timing and bus arbitration, APU register
-timing, cycle-by-cycle sprite evaluation/secondary OAM, and PPU fetch-bus overlap.
-Branch polling now passes together with the DMC alignment corrections.
+The remaining failures involve PPU flag timing, cycle-by-cycle sprite
+evaluation/secondary OAM, stale rendering data, and PPU fetch-bus overlap.
 The exact failure list is in the JSON report above. This is a measured accuracy
 improvement, not a claim of complete hardware accuracy or PAL/Dendy validation.

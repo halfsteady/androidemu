@@ -108,9 +108,10 @@ fn board_signature(nes: &Nes) -> u64 {
 }
 impl Nes {
     pub fn save_state(&self) -> Vec<u8> {
-        // Keep v1's body layout intact; v2 appends the new timing/latch state
-        // after mapper data. The v1 reader path supplies compatible defaults.
-        let mut out = b"ANES\x02\x00\x00\x00".to_vec();
+        // Retain the released v1 body and v2 extension byte-for-byte in order.
+        // v3 appends the DMA and rendering pipeline state. Older readers' paths
+        // initialize fields absent from those formats with compatible defaults.
+        let mut out = b"ANES\x03\x00\x00\x00".to_vec();
         self.bus.cart.header.hash.encode(&mut out);
         self.bus.cart.header.mapper.encode(&mut out);
         board_signature(self).encode(&mut out);
@@ -118,6 +119,7 @@ impl Nes {
         self.bus.save_state(&mut out);
         self.bus.cart.mapper.save_state(&mut out);
         self.bus.save_accuracy_state(&mut out);
+        self.bus.save_pipeline_state(&mut out);
         checksum(&out).encode(&mut out);
         out
     }
@@ -127,7 +129,7 @@ impl Nes {
             return Err(StateError("Invalid save state size"));
         }
         let version = data[4];
-        if &data[..4] != b"ANES" || !matches!(version, 1 | 2) || data[5..8] != [0; 3] {
+        if &data[..4] != b"ANES" || !matches!(version, 1..=3) || data[5..8] != [0; 3] {
             return Err(StateError("Unsupported save state version"));
         }
         let end = data.len() - 8;
@@ -149,8 +151,11 @@ impl Nes {
         candidate.cpu = crate::Cpu::decode(&mut input)?;
         candidate.bus.load_state(&mut input)?;
         candidate.bus.cart.mapper.load_state(&mut input)?;
-        if version == 2 {
+        if version >= 2 {
             candidate.bus.load_accuracy_state(&mut input)?;
+        }
+        if version >= 3 {
+            candidate.bus.load_pipeline_state(&mut input)?;
         }
         if !input.is_empty() {
             return Err(StateError("Unexpected save state data"));
