@@ -165,9 +165,9 @@ around that without making this repository public: `site/` is mirrored by
 `bsteinfeld/emulia-site`, which is what GitHub Pages serves. See
 [the site's README](../site/README.md).
 
-Until the `emulia.website` DNS records are in place the policy is not reachable,
-and Play will reject a policy URL it cannot fetch — so the DNS has to land before
-the listing is sent for review.
+**Live and serving as of 2026-09-08**, over HTTPS with a valid certificate for
+both `emulia.website` and `www.emulia.website`. It is a real page rather than a
+raw Markdown file, which is what Play's reviewers expect to find at a policy URL.
 
 It contains a public contact address (`bradley@steinfeld.ca`). Play requires a
 contact email on the listing regardless, so it becomes public either way — but
