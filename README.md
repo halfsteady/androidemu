@@ -3,6 +3,13 @@
 A NES emulator for the OnePlus Pad 3, written from scratch in Rust with an Android
 Compose shell. No ads, accounts, feature locks, bundled ROMs or network permission.
 
+The same core also runs on **macOS and Linux** through a portable desktop player.
+See [desktop build instructions and controls](docs/DESKTOP.md):
+
+```sh
+cargo run --release -p nes-desktop -- "/path/to/game.nes"
+```
+
 Ships as **Emulia**, package `com.bsteinfeld.emulia`. `androidemu` is the
 repository, and `dev.androidemu` stays the Kotlin package because it is the JNI
 symbol prefix. The shipping name deliberately carries no third-party trademark.
@@ -44,6 +51,7 @@ commercial games; the FME-7's 5B expansion audio is not implemented.
 site/       the website at emulia.website, and the privacy policy Play requires
 core/       nes-core: no I/O, threads or frame-time allocation
 runner/     nes-runner: traces, frame hashes and automated ROM tests
+desktop/    nes-desktop: macOS/Linux SDL2 video, keyboard, audio and saves
 native/     nes-android: JNI boundary and AAudio output
 android/    Compose shelf, play view, picture and control settings, save UI
 scripts/    native builds and external ROM regression runner
@@ -109,7 +117,7 @@ python3 scripts/build-header-db.py --self-test
 python3 scripts/build-header-db.py --roms ~/roms --db corrections.tsv
 ```
 
-The build needs Rust, a JDK 17 or newer, Android SDK 36 and NDK 28.2.13676358.
+The Android build needs Rust, a JDK 17 or newer, Android SDK 36 and NDK 28.2.13676358.
 `scripts/build-native.sh` locates the NDK at run time from `ANDROID_NDK_HOME` or
 `$ANDROID_HOME/ndk/`, targeting Android API 29, so no absolute path is committed.
 

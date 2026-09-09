@@ -1,0 +1,13 @@
+[package]
+name = "nes-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Portable Emulia desktop player for macOS and Linux"
+
+[dependencies]
+nes-core = { path = "../core" }
+sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
+
+[build-dependencies]
+cc = "1"

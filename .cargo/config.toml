@@ -1,0 +1,6 @@
+[env]
+# Bundled SDL2 declares an old CMake policy version; CMake 4 removed it.
+# Ignored by CMake 3; users can still override this environment default.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# Avoid inheriting the build machine's SDK version as the minimum runtime OS.
+MACOSX_DEPLOYMENT_TARGET = "11.0"
