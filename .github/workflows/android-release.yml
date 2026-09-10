@@ -24,9 +24,11 @@ name: Android release build
 #
 # Where a tag goes, once PLAY_SERVICE_ACCOUNT_JSON exists:
 #   v0.2.3-rc1  ->  Play internal testing, live to testers
-#   v0.2.3      ->  Play production, as a DRAFT, and only when the repository
-#                   variable PLAY_PRODUCTION_ENABLED is `true`
+#   v0.2.3      ->  Play internal testing while production is disabled;
+#                   production as a DRAFT once PLAY_PRODUCTION_ENABLED is `true`
 #   manual run  ->  nowhere
+# Recover a missed internal upload with the "Publish existing release to Play
+# internal testing" workflow; it uses the published AAB without rebuilding it.
 
 on:
   workflow_dispatch:
@@ -127,10 +129,11 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "versionCode=$code  versionName=$name"
 
-      # Which Play track this build belongs on, decided by the tag alone so the
-      # existing tagging habit needs no change: `v0.2.3-rc1` is a candidate and
-      # goes to testers, `v0.2.3` is the real thing and goes to production. A
-      # manual run is neither, and publishes nowhere.
+      # Choose a Play track without changing the existing tagging habit:
+      # `v0.2.3-rc1` is a candidate and
+      # goes to testers. Stable tags also go to testers until production is
+      # enabled; then they create production drafts. A manual build publishes
+      # nowhere. Never silently drop a stable release between the two tracks.
       - name: Route to a Play track
         id: track
         env:
@@ -140,6 +143,7 @@ jobs:
           # otherwise every tag pushed before the service account exists ends in
           # a red run for a step that was never going to work.
           PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_PRODUCTION_ENABLED: ${{ vars.PLAY_PRODUCTION_ENABLED }}
         run: |
           if [ -n "$PLAY_JSON" ]; then configured=true; else configured=false; fi
           echo "configured=$configured" >> "$GITHUB_OUTPUT"
@@ -150,6 +154,9 @@ jobs:
             track=none; status=none
           elif printf '%s' "${{ github.ref_name }}" | grep -Eq -- '-rc[0-9]+$'; then
             track=internal; status=completed
+          elif [ "$PLAY_PRODUCTION_ENABLED" != "true" ]; then
+            track=internal; status=completed
+            echo "::notice::Production is disabled; publishing this stable release to internal testing."
           else
             # draft, not completed: a production release then waits in the
             # console to be looked at rather than going live off a git push.
@@ -268,6 +275,9 @@ jobs:
     needs: build
     if: needs.build.outputs.track == 'internal' && needs.build.outputs.configured == 'true'
     runs-on: ubuntu-latest
+    concurrency:
+      group: play-com.bsteinfeld.emulia
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v7
         with:
@@ -312,6 +322,9 @@ jobs:
       && needs.build.outputs.configured == 'true'
       && vars.PLAY_PRODUCTION_ENABLED == 'true'
     runs-on: ubuntu-latest
+    concurrency:
+      group: play-com.bsteinfeld.emulia
+      cancel-in-progress: false
     environment: play-production
     steps:
       - uses: actions/download-artifact@v7
