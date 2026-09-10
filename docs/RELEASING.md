@@ -80,7 +80,8 @@ this on.
 If a GitHub release exists but its AAB was never uploaded to Play, run
 **Actions → Publish existing release to Play internal testing → Run workflow**
 on `main`, supplying its tag (for example `v0.2.5`). Optional notes override the
-first line of the GitHub release description.
+first line of the GitHub release description. Supply plain-text notes when the
+description contains Markdown formatting, which Play does not render.
 
 ```sh
 gh workflow run play-internal.yml --ref main -f tag=v0.2.5
