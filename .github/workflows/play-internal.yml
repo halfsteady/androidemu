@@ -1,0 +1,100 @@
+name: Publish existing release to Play internal testing
+run-name: Publish ${{ inputs.tag }} to Play internal testing
+
+# Recovery for a release whose build succeeded but never reached Play. The AAB
+# and version code stay exactly as published; this workflow never rebuilds it.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published GitHub release tag (for example v0.2.5)
+        required: true
+        type: string
+      notes:
+        description: Optional release notes for testers
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish-internal:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: play-com.bsteinfeld.emulia
+      cancel-in-progress: false
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download and verify the published AAB
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          NOTE: ${{ inputs.notes }}
+          EXPECTED: 75fdccb5302705abcc12cf628de634cfb61cd57f735d33393984978dc31a0fd5
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::Use a stable or rc release tag, for example v0.2.5."
+            exit 1
+          fi
+          name="${TAG#v}"
+          mkdir -p dist whatsnew
+          gh release view "$TAG" --json tagName,isDraft,body > release.json
+          gh release download "$TAG" --pattern "emulia-$name.aab" \
+            --pattern SHA256SUMS.txt --dir dist
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          tag = os.environ["TAG"]
+          release = json.loads(Path("release.json").read_text())
+          if release["isDraft"] or release["tagName"] != tag:
+              raise SystemExit("Expected a published release matching the tag")
+          name = f"emulia-{tag[1:]}.aab"
+          entries = [line.split() for line in Path("dist/SHA256SUMS.txt").read_text().splitlines()]
+          matches = [parts[0] for parts in entries
+                     if len(parts) == 2 and parts[1] in (name, "./" + name)]
+          digest = hashlib.sha256(Path("dist", name).read_bytes()).hexdigest()
+          if matches != [digest]:
+              raise SystemExit("Published AAB checksum is missing, duplicated or incorrect")
+          print(f"{name}: SHA256 {digest} verified")
+          note = os.environ["NOTE"].strip() or (release["body"] or "").split("\n", 1)[0].strip()
+          note = note or f"Emulia {tag[1:]}"
+          Path("whatsnew/whatsnew-en-US").write_text(note[:480] + "\n")
+          PY
+          digest=$("$JAVA_HOME/bin/keytool" -printcert -jarfile "dist/emulia-$name.aab" \
+            | sed -n 's/.*SHA256: //p' | head -1 | tr -d ': ' | tr 'A-Z' 'a-z')
+          if [ "$digest" != "$EXPECTED" ]; then
+            echo "::error::AAB signer does not match the expected upload key."
+            exit 1
+          fi
+          "$JAVA_HOME/bin/jarsigner" -verify "dist/emulia-$name.aab" > signature.txt
+          grep -q '^jar verified\.' signature.txt
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Play internal testing
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.bsteinfeld.emulia
+          releaseFiles: dist/emulia-${{ steps.release.outputs.name }}.aab
+          tracks: internal
+          status: completed
+          releaseName: ${{ steps.release.outputs.name }}
+          whatsNewDirectory: whatsnew
+
+      - name: Record successful publication
+        env:
+          NAME: ${{ steps.release.outputs.name }}
+        run: |
+          printf 'Emulia %s was uploaded and committed to Play internal testing.\n' "$NAME" >> "$GITHUB_STEP_SUMMARY"
+          printf 'The AAB matches the existing GitHub release; no rebuild or new version code was used.\n' >> "$GITHUB_STEP_SUMMARY"

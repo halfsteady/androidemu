@@ -46,12 +46,15 @@ is loud rather than silent.
 
 ## Publishing to Play from CI
 
-A tag decides its own track. Nothing else changes about how a release is cut.
+A tag and the production setting decide the track. Nothing else changes about
+how a release is cut. While production is disabled, stable releases still reach
+the internal testers who installed the candidates.
 
 | tag | goes to | as |
 |---|---|---|
 | `v0.2.3-rc1` | internal testing | live to testers |
-| `v0.2.3` | production | a **draft**, waiting in the console |
+| `v0.2.3`, production disabled (default) | internal testing | live to testers |
+| `v0.2.3`, `PLAY_PRODUCTION_ENABLED=true` | production | a **draft**, waiting in the console |
 | manual run | nowhere | artifacts on the run only |
 
 The upload is a **separate job** from the build, so a Play API failure — a
@@ -71,6 +74,29 @@ reviewers to that environment and a production upload waits for a click.
 **Without `PLAY_SERVICE_ACCOUNT_JSON` the workflow behaves exactly as it did
 before**, printing a notice and skipping the upload. Setting it is what turns
 this on.
+
+### Recovering a missed internal upload
+
+If a GitHub release exists but its AAB was never uploaded to Play, run
+**Actions → Publish existing release to Play internal testing → Run workflow**
+on `main`, supplying its tag (for example `v0.2.5`). Optional notes override the
+first line of the GitHub release description.
+
+```sh
+gh workflow run play-internal.yml --ref main -f tag=v0.2.5
+```
+
+This downloads the existing AAB, verifies its published checksum, upload-key
+fingerprint and signature, and creates a completed internal-testing release.
+It does not rebuild the app, replace GitHub assets or change its version code.
+Use it for a version that has not already been uploaded: Play rejects reused
+version codes. Automatic uploads and recovery share a concurrency group so
+they do not create competing Play edits.
+
+The original `v0.2.5` build exposed the need for this recovery path: stable tags
+previously selected only the disabled production job, so GitHub publication
+succeeded while both Play jobs were skipped. Desktop release assets are
+independent of Play publishing.
 
 ### One-time setup
 
