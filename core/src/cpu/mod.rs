@@ -19,11 +19,36 @@ pub use table::{Access, Mode, Op};
 
 pub mod disasm;
 
-/// The CPU's view of the system. Both accessors must advance the rest of the
-/// machine by one CPU cycle before returning.
+/// Interrupt samples collected while a bus read was held by DMA. The CPU
+/// cannot execute during the stall, but its NMI edge detector keeps running.
+#[derive(Clone, Copy)]
+pub struct StalledInterrupts {
+    /// The first stalled sample, compared with the CPU's preceding sample.
+    pub first_nmi: bool,
+    pub last_nmi: bool,
+    /// A rising edge between stalled samples, excluding the first sample.
+    pub nmi_rose: bool,
+    pub last_irq: bool,
+}
+
+/// The CPU's view of the system. Both accessors advance the rest of the machine
+/// by one CPU cycle. A read may additionally stall for DMA; its interrupt samples
+/// are exposed through [`Bus::stalled_interrupts`].
 pub trait Bus {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);
+
+    /// Whether DMA held RDY low during the most recent read. Unstable stores
+    /// observe this on their indexing dummy read, immediately before writing.
+    fn read_halted(&self) -> bool {
+        false
+    }
+
+    /// Samples from the stolen cycles preceding the most recent read. The
+    /// ordinary read's final interrupt sample is still taken by the CPU.
+    fn stalled_interrupts(&self) -> Option<StalledInterrupts> {
+        None
+    }
 
     /// Level of the /NMI line, sampled by the CPU each cycle. The edge detection
     /// lives in the CPU, so this reports the raw level.
@@ -130,6 +155,11 @@ impl Cpu {
 
     fn read<B: Bus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let v = bus.read(addr);
+        if let Some(stalled) = bus.stalled_interrupts() {
+            self.nmi_pending |= stalled.nmi_rose || (stalled.first_nmi && !self.nmi_prev);
+            self.nmi_prev = stalled.last_nmi;
+            self.irq_pending = stalled.last_irq;
+        }
         self.cycles += 1;
         self.sample_interrupts(bus);
         v
@@ -224,9 +254,20 @@ impl Cpu {
         self.push(bus, pushed);
         self.p |= flags::I;
 
+        // An NMI edge arriving during the stack pushes hijacks IRQ/BRK's vector,
+        // but does not change the return address or the already-pushed B flag.
+        let vector = if vector == IRQ_VECTOR && self.nmi_ready {
+            self.nmi_pending = false;
+            self.nmi_ready = false;
+            NMI_VECTOR
+        } else { vector };
         let lo = self.read(bus, vector) as u16;
         let hi = self.read(bus, vector + 1) as u16;
         self.pc = lo | (hi << 8);
+        // Vector fetches sample edges but are not instruction interrupt polls.
+        // A later NMI runs after the handler's first instruction, not before it.
+        self.nmi_ready = false;
+        self.irq_ready = false;
     }
 
     /// Execute one instruction, or service a pending interrupt. Returns the number
@@ -355,12 +396,22 @@ impl Cpu {
         if !take {
             return;
         }
+        let early_nmi = self.nmi_ready;
+        let early_irq = self.irq_ready;
         // Taken branch: one cycle to add the offset...
         self.read(bus, self.pc);
         let target = (self.pc as i32 + offset as i32) as u16;
         if page_crossed(self.pc, target) {
             // ...and one more to fix up the high byte if it carried.
             self.read(bus, (self.pc & 0xFF00) | (target & 0x00FF));
+            // Page-crossing branches poll again, but an interrupt recognized
+            // by the first poll remains latched even if the line was cleared.
+            self.nmi_ready |= early_nmi;
+            self.irq_ready |= early_irq;
+        } else {
+            // A taken branch's third cycle does not poll for interrupts.
+            self.nmi_ready = early_nmi;
+            self.irq_ready = early_irq;
         }
         self.pc = target;
     }

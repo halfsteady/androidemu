@@ -13,6 +13,7 @@ struct FlatBus {
     log: Vec<Access>,
     nmi: bool,
     irq: bool,
+    halted_read: Option<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -23,7 +24,7 @@ enum Access {
 
 impl FlatBus {
     fn new() -> FlatBus {
-        FlatBus { mem: vec![0; 0x10000], log: Vec::new(), nmi: false, irq: false }
+        FlatBus { mem: vec![0; 0x10000], log: Vec::new(), nmi: false, irq: false, halted_read: None }
     }
 
     fn load(&mut self, addr: u16, bytes: &[u8]) {
@@ -65,6 +66,39 @@ impl Bus for FlatBus {
     }
     fn irq_line(&self) -> bool {
         self.irq
+    }
+    fn read_halted(&self) -> bool {
+        self.halted_read == Some(self.log.len())
+    }
+}
+
+#[test]
+fn unstable_stores_drop_only_the_data_mask_on_a_halted_indexing_read() {
+    // RDY removes the high-byte mask from the data only when it halts the
+    // indexing dummy read. A page-crossing address still uses the masked high
+    // byte. Exercise every earlier read as well, so a stale RDY latch fails.
+    for opcode in [0x93, 0x9f, 0x9b, 0x9c, 0x9e] {
+        let indirect = opcode == 0x93;
+        let cycles = if indirect { 6 } else { 5 };
+        for crossing in [false, true] {
+            for halted in 0..cycles {
+                let low = if crossing { 0xf0 } else { 0x00 };
+                let code = if indirect { vec![opcode, 0x10] } else { vec![opcode, low, 0x12] };
+                let (cpu, bus, elapsed) = run(&code, |cpu, bus| {
+                    cpu.a = 0xff;
+                    cpu.x = if opcode == 0x9c { 0x30 } else { 0xff };
+                    cpu.y = if opcode == 0x9c { 0xff } else { 0x30 };
+                    bus.load(0x10, &[low, 0x12]);
+                    bus.halted_read = Some(halted);
+                });
+                let address = if crossing { 0x1320 } else { 0x1230 };
+                let value = if halted == cycles - 1 { 0xff } else { 0x13 };
+                assert_eq!(elapsed, cycles as u64);
+                assert_eq!(bus.writes(), [(address, value)], "opcode {opcode:02x}, halted cycle {halted}, crossing={crossing}");
+                assert_eq!(cpu.s, if opcode == 0x9b { 0xff } else { 0xfd });
+                assert_eq!(cpu.p, flags::I | flags::U);
+            }
+        }
     }
 }
 

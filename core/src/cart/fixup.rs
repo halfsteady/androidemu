@@ -192,7 +192,7 @@ pub fn repair(header: &mut Header, raw: &[u8], payload: usize) -> Fixes {
     const CHR_BANK: usize = 8 * 1024;
     let available = raw.len().saturating_sub(payload);
     if header.prg_rom_size > available {
-        if available >= PRG_BANK && available % PRG_BANK == 0 {
+        if available >= PRG_BANK && available.is_multiple_of(PRG_BANK) {
             header.prg_rom_size = available;
             header.chr_rom_size = 0;
             fixes |= Fixes::PRG_TRUNCATED;
@@ -200,7 +200,7 @@ pub fn repair(header: &mut Header, raw: &[u8], payload: usize) -> Fixes {
         // Otherwise left alone, and `load` rejects it as too short.
     } else if header.prg_rom_size + header.chr_rom_size > available {
         let spare = available - header.prg_rom_size;
-        if spare % CHR_BANK == 0 {
+        if spare.is_multiple_of(CHR_BANK) {
             header.chr_rom_size = spare;
             fixes |= Fixes::CHR_TRUNCATED;
         }

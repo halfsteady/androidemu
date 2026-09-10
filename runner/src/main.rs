@@ -6,13 +6,15 @@
 //!   nes-runner frames <rom> <n>          run N frames, print a framebuffer hash
 //! ```
 
+mod accuracycoin;
+
 use nes_core::Nes;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
-        eprintln!("usage: nes-runner <info|trace|frames|rom-test> <rom> [args]");
+        eprintln!("usage: nes-runner <info|trace|frames|rom-test|accuracycoin> <rom> [args]");
         return ExitCode::from(2);
     }
 
@@ -33,6 +35,26 @@ fn main() -> ExitCode {
     };
 
     match args[0].as_str() {
+        "accuracycoin" => {
+            let limit = match args.get(2) {
+                None => 10_000,
+                Some(value) => match value.parse::<usize>() {
+                    Ok(limit) if limit > 0 && args.len() == 3 => limit,
+                    _ => {
+                        eprintln!("accuracycoin expects a positive frame limit");
+                        return ExitCode::from(2);
+                    }
+                },
+            };
+            return match accuracycoin::run(&mut nes, limit) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::from(1),
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::from(2)
+                }
+            };
+        }
         "info" => {
             let h = &nes.bus.cart.header;
             println!("mapper       {} (submapper {})", h.mapper, h.submapper);

@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Exercise the real SDL frontend with a generated NROM, no external ROMs needed."""
+import argparse
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 
 
 def main():
-    binary = str(Path(sys.argv[1] if len(sys.argv) > 1 else "target/debug/nes-desktop").resolve())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary", nargs="?", type=Path, default=Path("target/debug/nes-desktop"))
+    parser.add_argument("--require-native-drivers", action="store_true",
+                        help="also verify that SDL was built with real desktop video and audio backends")
+    args = parser.parse_args()
+    binary = str(args.binary.resolve())
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy", SDL_RENDER_DRIVER="software")
     with tempfile.TemporaryDirectory(prefix="emulia-smoke-") as directory:
         root = Path(directory)
@@ -30,6 +37,17 @@ def main():
             return result
 
         run([binary, "--help"])
+        drivers = run([binary, "--list-drivers"]).stdout
+        print(drivers, end="")
+        if args.require_native_drivers:
+            available = dict(line.split(": ", 1) for line in drivers.splitlines())
+            video = set(available["Video"].split(", "))
+            audio = set(available["Audio"].split(", "))
+            if sys.platform == "darwin":
+                assert "cocoa" in video and "coreaudio" in audio, drivers
+            else:
+                assert video & {"x11", "wayland"}, "SDL has no desktop display backend:\n" + drivers
+                assert audio & {"alsa", "pulseaudio", "pipewire", "jack"}, "SDL has no desktop audio backend:\n" + drivers
         run(command)  # Includes SDL audio creation, queuing and playback.
         save, = saves.glob("*.sav")
         data = save.read_bytes()
@@ -39,6 +57,39 @@ def main():
         save.write_bytes(data)
         run(command + ["--mute"])
         assert save.read_bytes() == data
+        # A temporary autosave failure must leave the game running with its RAM
+        # intact. Recover the directory before clean exit, then check the save.
+        process = subprocess.Popen(command + ["--mute", "--frames", "480"], env=env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        blocked = save.with_suffix(f".tmp-{process.pid}")
+        save_failed = threading.Event()
+        errors = []
+
+        def read_errors():
+            for line in process.stderr:
+                errors.append(line)
+                if str(blocked) in line:
+                    save_failed.set()
+
+        reader = threading.Thread(target=read_errors, daemon=True)
+        reader.start()
+        try:
+            blocked.write_bytes(b"temporary save conflict")
+            assert save_failed.wait(timeout=15), "Expected a periodic autosave error"
+            assert process.poll() is None, "Autosave failure closed the game"
+            blocked.unlink()
+            process.wait(timeout=30)
+            reader.join(timeout=2)
+            assert process.returncode == 0, process.stdout.read() + "".join(errors)
+            assert save.read_bytes() == data
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            reader.join(timeout=2)
+            process.stdout.close()
+            process.stderr.close()
+            blocked.unlink(missing_ok=True)
         # Refuse malformed saves without overwriting them.
         save.write_bytes(b"bad save")
         run(command, success=False)
@@ -46,7 +97,7 @@ def main():
         run([binary, str(path), "--frames", "0"], success=False)
         path.write_bytes(b"not a ROM")
         run(command, success=False)
-    print("Desktop smoke passed: video, audio, muted pacing, SRAM persistence and invalid inputs")
+    print("Desktop smoke passed: video, audio, muted pacing, SRAM persistence, autosave recovery and invalid inputs")
 
 
 if __name__ == "__main__":

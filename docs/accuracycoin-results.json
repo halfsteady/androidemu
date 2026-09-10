@@ -1,0 +1,1302 @@
+{
+  "rom_sha256": "8a563df212d8d87e53b83eb55fc1ac27a75586c25badafbadb3d63acb4b552ed",
+  "source_commit": "affc643aa771028510c4427451ecf5bba5e54592",
+  "tests": [
+    {
+      "page": 1,
+      "name": "ROM is not writable",
+      "address": "$0405",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "RAM Mirroring",
+      "address": "$0403",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "PC Wraparound",
+      "address": "$044D",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "The Decimal Flag",
+      "address": "$0474",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "The B Flag",
+      "address": "$0475",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "Dummy read cycles",
+      "address": "$0406",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "Dummy write cycles",
+      "address": "$0407",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "Open Bus",
+      "address": "$0408",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 1,
+      "name": "All NOP instructions",
+      "address": "$047D",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 2,
+      "name": "Absolute Indexed",
+      "address": "$046E",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 2,
+      "name": "Zero Page Indexed",
+      "address": "$046F",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 2,
+      "name": "Indirect",
+      "address": "$0470",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 2,
+      "name": "Indirect, X",
+      "address": "$0471",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 2,
+      "name": "Indirect, Y",
+      "address": "$0472",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 2,
+      "name": "Relative",
+      "address": "$0473",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$03   SLO indirect,X",
+      "address": "$0409",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$07   SLO zeropage",
+      "address": "$040A",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$0F   SLO absolute",
+      "address": "$040B",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$13   SLO indirect,Y",
+      "address": "$040C",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$17   SLO zeropage,X",
+      "address": "$040D",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$1B   SLO absolute,Y",
+      "address": "$040E",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 3,
+      "name": "$1F   SLO absolute,X",
+      "address": "$040F",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$23   RLA indirect,X",
+      "address": "$0419",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$27   RLA zeropage",
+      "address": "$041A",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$2F   RLA absolute",
+      "address": "$041B",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$33   RLA indirect,Y",
+      "address": "$041C",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$37   RLA zeropage,X",
+      "address": "$041D",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$3B   RLA absolute,Y",
+      "address": "$041E",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 4,
+      "name": "$3F   RLA absolute,X",
+      "address": "$041F",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$43   SRE indirect,X",
+      "address": "$0420",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$47   SRE zeropage",
+      "address": "$047F",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$4F   SRE absolute",
+      "address": "$0422",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$53   SRE indirect,Y",
+      "address": "$0423",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$57   SRE zeropage,X",
+      "address": "$0424",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$5B   SRE absolute,Y",
+      "address": "$0425",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 5,
+      "name": "$5F   SRE absolute,X",
+      "address": "$0426",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$63   RRA indirect,X",
+      "address": "$0427",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$67   RRA zeropage",
+      "address": "$0428",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$6F   RRA absolute",
+      "address": "$0429",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$73   RRA indirect,Y",
+      "address": "$042A",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$77   RRA zeropage,X",
+      "address": "$042B",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$7B   RRA absolute,Y",
+      "address": "$042C",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 6,
+      "name": "$7F   RRA absolute,X",
+      "address": "$042D",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$83   SAX indirect,X",
+      "address": "$042E",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$87   SAX zeropage",
+      "address": "$042F",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$8F   SAX absolute",
+      "address": "$0430",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$97   SAX zeropage,Y",
+      "address": "$0431",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$A3   LAX indirect,X",
+      "address": "$0432",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$A7   LAX zeropage",
+      "address": "$0433",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$AF   LAX absolute",
+      "address": "$0434",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$B3   LAX indirect,Y",
+      "address": "$0435",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$B7   LAX zeropage,Y",
+      "address": "$0436",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 7,
+      "name": "$BF   LAX absolute,Y",
+      "address": "$0437",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$C3   DCP indirect,X",
+      "address": "$0438",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$C7   DCP zeropage",
+      "address": "$0439",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$CF   DCP absolute",
+      "address": "$043A",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$D3   DCP indirect,Y",
+      "address": "$043B",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$D7   DCP zeropage,X",
+      "address": "$043C",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$DB   DCP absolute,Y",
+      "address": "$043D",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 8,
+      "name": "$DF   DCP absolute,X",
+      "address": "$043E",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$E3   ISC indirect,X",
+      "address": "$043F",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$E7   ISC zeropage",
+      "address": "$0440",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$EF   ISC absolute",
+      "address": "$0441",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$F3   ISC indirect,Y",
+      "address": "$0442",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$F7   ISC zeropage,X",
+      "address": "$0443",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$FB   ISC absolute,Y",
+      "address": "$0444",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 9,
+      "name": "$FF   ISC absolute,X",
+      "address": "$0445",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 10,
+      "name": "$93   SHA indirect,Y",
+      "address": "$0446",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 10,
+      "name": "$9F   SHA absolute,Y",
+      "address": "$0447",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 10,
+      "name": "$9B   SHS absolute,Y",
+      "address": "$0448",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 10,
+      "name": "$9C   SHY absolute,X",
+      "address": "$0449",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 10,
+      "name": "$9E   SHX absolute,Y",
+      "address": "$044A",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 10,
+      "name": "$BB   LAE absolute,Y",
+      "address": "$044B",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$0B   ANC Immediate",
+      "address": "$0410",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$2B   ANC Immediate",
+      "address": "$0411",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$4B   ASR Immediate",
+      "address": "$0412",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$6B   ARR Immediate",
+      "address": "$0413",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$8B   ANE Immediate",
+      "address": "$0414",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$AB   LXA Immediate",
+      "address": "$0415",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$CB   AXS Immediate",
+      "address": "$0416",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 11,
+      "name": "$EB   SBC Immediate",
+      "address": "$0417",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 12,
+      "name": "Interrupt flag latency",
+      "address": "$0461",
+      "before": "FAIL",
+      "before_code": "0A",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 12,
+      "name": "NMI Overlap BRK",
+      "address": "$0462",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 12,
+      "name": "NMI Overlap IRQ",
+      "address": "$0463",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "DMA + Open Bus",
+      "address": "$046C",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "DMA + $2002 Read",
+      "address": "$0488",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 13,
+      "name": "DMA + $2007 Read",
+      "address": "$044C",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "DMA + $2007 Write",
+      "address": "$044F",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "DMA + $4015 Read",
+      "address": "$045D",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "DMA + $4016 Read",
+      "address": "$045E",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 13,
+      "name": "DMC DMA Bus Conflicts",
+      "address": "$046B",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "DMC DMA + OAM DMA",
+      "address": "$0477",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "Explicit DMA Abort",
+      "address": "$0479",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 13,
+      "name": "Implicit DMA Abort",
+      "address": "$0478",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "02"
+    },
+    {
+      "page": 14,
+      "name": "Length Counter",
+      "address": "$0465",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "Length Table",
+      "address": "$0466",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "Frame Counter IRQ",
+      "address": "$0467",
+      "before": "FAIL",
+      "before_code": "07",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "Frame Counter 4-step",
+      "address": "$0468",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "Frame Counter 5-step",
+      "address": "$0469",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "Delta Modulation Channel",
+      "address": "$046A",
+      "before": "FAIL",
+      "before_code": "13",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "APU Register Activation",
+      "address": "$045C",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "02"
+    },
+    {
+      "page": 14,
+      "name": "Controller Strobing",
+      "address": "$045F",
+      "before": "FAIL",
+      "before_code": "04",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 14,
+      "name": "Controller Clocking",
+      "address": "$047A",
+      "before": "PASS",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 15,
+      "name": "Instruction Timing",
+      "address": "$0460",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 15,
+      "name": "Implied Dummy Reads",
+      "address": "$046D",
+      "before": "FAIL",
+      "before_code": "03",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 15,
+      "name": "Branch Dummy Reads",
+      "address": "$048B",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 15,
+      "name": "JSR Edge Cases",
+      "address": "$047C",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 15,
+      "name": "Internal Data Bus",
+      "address": "$0490",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 17,
+      "name": "CHR ROM is not writable",
+      "address": "$0485",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 17,
+      "name": "PPU Register Mirroring",
+      "address": "$0404",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 17,
+      "name": "PPU Register Open Bus",
+      "address": "$044E",
+      "before": "FAIL",
+      "before_code": "05",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 17,
+      "name": "PPU Read Buffer",
+      "address": "$0476",
+      "before": "PASS",
+      "before_code": "10",
+      "after": "PASS",
+      "after_code": "10"
+    },
+    {
+      "page": 17,
+      "name": "Palette RAM Quirks",
+      "address": "$047E",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "VBlank beginning",
+      "address": "$0450",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "VBlank end",
+      "address": "$0451",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "NMI Control",
+      "address": "$0452",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "NMI Timing",
+      "address": "$0453",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "NMI Suppression",
+      "address": "$0454",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "NMI at VBlank end",
+      "address": "$0455",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 18,
+      "name": "NMI disabled at VBlank",
+      "address": "$0456",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "Sprite overflow behavior",
+      "address": "$0459",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "Sprite 0 Hit behavior",
+      "address": "$0457",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "$2002 flag timing",
+      "address": "$048D",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "Suddenly Resize Sprite",
+      "address": "$0489",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "Misaligned OAM DMA",
+      "address": "$0494",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "Arbitrary Sprite zero",
+      "address": "$0458",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "Misaligned OAM behavior",
+      "address": "$045A",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 19,
+      "name": "OAM Corruption",
+      "address": "$047B",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 20,
+      "name": "t Register Quirks",
+      "address": "$0482",
+      "before": "PASS",
+      "before_code": "00",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 20,
+      "name": "Address $2004 behavior",
+      "address": "$045B",
+      "before": "FAIL",
+      "before_code": "03",
+      "after": "PASS",
+      "after_code": "10"
+    },
+    {
+      "page": 20,
+      "name": "INC $4014",
+      "address": "$0480",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 20,
+      "name": "Rendering Flag Behavior",
+      "address": "$0486",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 20,
+      "name": "$2007 read w/ rendering",
+      "address": "$048A",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 20,
+      "name": "$2004 Stress Test",
+      "address": "$048C",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 20,
+      "name": "$2007 Stress Test",
+      "address": "$048E",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 21,
+      "name": "Attributes As Tiles",
+      "address": "$0481",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 21,
+      "name": "Stale BG Shift Registers",
+      "address": "$0483",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 21,
+      "name": "BG Serial In",
+      "address": "$0487",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 21,
+      "name": "ALE + Read",
+      "address": "$0491",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 21,
+      "name": "Hybrid Addresses",
+      "address": "$0492",
+      "before": "FAIL",
+      "before_code": "01",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 22,
+      "name": "Sprites On Scanline 0",
+      "address": "$0484",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "01"
+    },
+    {
+      "page": 22,
+      "name": "Stale Sprite Shift Regs",
+      "address": "$048F",
+      "before": "FAIL",
+      "before_code": "03",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 22,
+      "name": "Frozen OAM2 Increment",
+      "address": "$0493",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    },
+    {
+      "page": 22,
+      "name": "Misaligned OAM2 Address",
+      "address": "$0495",
+      "before": "FAIL",
+      "before_code": "02",
+      "after": "PASS",
+      "after_code": "00"
+    }
+  ]
+}

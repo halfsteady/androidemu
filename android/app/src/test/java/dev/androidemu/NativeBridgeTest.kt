@@ -71,4 +71,43 @@ class NativeBridgeTest {
         val corrupt = saved.clone(); corrupt[100] = (corrupt[100].toInt() xor 1).toByte()
         rejects { Native.restore(corrupt, false) }
     }
+    @Test fun resetPowersOnFreshKeepsBatteryAndClearsRewind() {
+        val bytes = rom()
+        Native.load(bytes)
+        val battery = Native.snapshot(true).apply { this[0] = 7; this[100] = 42; this[lastIndex] = 9 }
+        Native.restore(battery, true)
+        val fresh = Native.snapshot(false)
+        val buffer = ByteBuffer.allocateDirect(256 * 240 * 4)
+        repeat(6) { Native.frame(buffer, 0x91, 0x28, true) }
+        val manual = Native.snapshot(false)
+        assertFalse(fresh.contentEquals(manual))
+        assertTrue(Native.rewindDepth() > 0)
+
+        Native.reset(bytes)
+        assertArrayEquals(fresh, Native.snapshot(false))
+        assertArrayEquals(battery, Native.snapshot(true))
+        assertEquals(0, Native.rewindDepth())
+        assertFalse(Native.rewind(buffer))
+        // Reset does not invalidate a manual save made earlier in the game.
+        Native.restore(manual, false)
+        assertArrayEquals(manual, Native.snapshot(false))
+    }
+    @Test fun resetWithoutBatteryRejectsWrongRomsWithoutChangingTheSession() {
+        val bytes = rom().apply { this[6] = 0 }
+        Native.load(bytes)
+        val fresh = Native.snapshot(false)
+        val buffer = ByteBuffer.allocateDirect(256 * 240 * 4)
+        repeat(3) { Native.frame(buffer, 0, 0, true) }
+        val saved = Native.snapshot(false)
+        val depth = Native.rewindDepth()
+        for (bad in listOf(byteArrayOf(1, 2, 3), bytes.clone().apply { this[24] = 7 }, bytes.clone().apply { this[6] = 2 })) {
+            try { Native.reset(bad); fail("Wrong ROM was accepted for reset") } catch (_: IllegalStateException) {}
+            assertArrayEquals(saved, Native.snapshot(false))
+            assertEquals(depth, Native.rewindDepth())
+        }
+        Native.reset(bytes)
+        assertArrayEquals(fresh, Native.snapshot(false))
+        assertEquals(0, Native.snapshot(true).size)
+        assertEquals(0, Native.rewindDepth())
+    }
 }

@@ -37,9 +37,15 @@ impl Cpu {
                 let base = if unstable {
                     addr.wrapping_sub(if mode == Mode::AbsX { self.x } else { self.y } as u16)
                 } else { addr };
-                let v = self.write_value(op, base);
+                let high_mask = ((base >> 8) as u8).wrapping_add(1);
+                let mask = if unstable && bus.read_halted() {
+                    0xff
+                } else {
+                    high_mask
+                };
+                let v = self.write_value(op, mask);
                 let target = if unstable && page_crossed(base, addr) {
-                    ((v as u16) << 8) | (addr & 0xff)
+                    (((v & high_mask) as u16) << 8) | (addr & 0xff)
                 } else { addr };
                 self.write(bus, target, v);
             }
@@ -157,12 +163,9 @@ impl Cpu {
 
     // ---- writes ----
 
-    fn write_value(&mut self, op: Op, addr: u16) -> u8 {
-        // The "unstable" store opcodes AND the source register with the high byte
-        // of the target address plus one. Real hardware sometimes drops the AND
-        // when the address crosses a page; games that rely on it are vanishingly
-        // rare, so the stable form is used.
-        let hi_plus_1 = ((addr >> 8) as u8).wrapping_add(1);
+    fn write_value(&mut self, op: Op, hi_plus_1: u8) -> u8 {
+        // RDY going low during the indexing dummy read removes the high-byte
+        // mask from AHX/SHX/SHY/TAS. Otherwise it is the literal high byte + 1.
         match op {
             Op::Sta => self.a,
             Op::Stx => self.x,

@@ -29,6 +29,12 @@ The tag push builds, tests, signs, and publishes a GitHub Release carrying
 artifacts without cutting a release, run the workflow manually from the Actions
 tab; they attach to the run instead.
 
+Before signing, the workflow runs the workspace tests, the pinned AccuracyCoin
+regression gate, and the Android unit tests against the real host JNI library.
+It rejects any lost recorded pass, unfinished test, incorrect ROM hash or timeout.
+Reports are attached as `accuracycoin-android` and `android-unit-tests`, including
+when their checks fail.
+
 `versionName` comes from the tag with the `v` stripped. `versionCode` is
 chronological — days since the project epoch, shifted four places, plus UTC
 `HHMM` — computed the same way in the workflow and in

@@ -105,6 +105,7 @@ pub struct Apu {
     five_step: bool,
     irq_inhibit: bool,
     frame_irq: bool,
+    frame_irq_clear: bool,
     cycle: u32,
     total: u64,
     reset_delay: u8,
@@ -129,6 +130,8 @@ pub struct Apu {
     dmc_silent: bool,
     dmc_output: u8,
     dmc_irq: bool,
+    dmc_enable_delay: u8,
+    dmc_disable_delay: u8,
     sample_phase: u32,
     history: [f32; 1024],
     history_pos: usize,
@@ -151,6 +154,7 @@ impl Apu {
             five_step: false,
             irq_inhibit: false,
             frame_irq: false,
+            frame_irq_clear: false,
             cycle: 0,
             total: 0,
             reset_delay: 0,
@@ -165,7 +169,7 @@ impl Apu {
             noise_shift: 1,
             noise_length: 0,
             noise_envelope: Default::default(),
-            dmc_timer: 0,
+            dmc_timer: 1,
             dmc_address: 0xc000,
             dmc_remaining: 0,
             dmc_buffer: 0,
@@ -175,6 +179,8 @@ impl Apu {
             dmc_silent: true,
             dmc_output: 0,
             dmc_irq: false,
+            dmc_enable_delay: 0,
+            dmc_disable_delay: 0,
             sample_phase: 0,
             history: [0.0; 1024],
             history_pos: 0,
@@ -186,7 +192,7 @@ impl Apu {
         }
     }
     pub fn irq_line(&self) -> bool {
-        self.frame_irq || self.dmc_irq
+        (self.frame_irq && !self.irq_inhibit) || self.dmc_irq
     }
     pub fn samples(&self) -> &[f32] {
         &self.samples[..self.sample_count]
@@ -221,6 +227,15 @@ impl Apu {
     }
     pub fn tick(&mut self) {
         self.total = self.total.wrapping_add(1);
+        self.dmc_enable_delay = self.dmc_enable_delay.saturating_sub(1);
+        if self.dmc_disable_delay > 0 {
+            self.dmc_disable_delay -= 1;
+            if self.dmc_disable_delay == 0 { self.dmc_remaining = 0; }
+        }
+        if self.frame_irq_clear && self.total & 1 == 0 {
+            self.frame_irq = false;
+            self.frame_irq_clear = false;
+        }
         self.cycle += 1;
         if self.reset_delay > 0 {
             self.reset_delay -= 1;
@@ -243,8 +258,10 @@ impl Apu {
             self.quarter();
             self.half();
         }
-        if !self.five_step && (clocks[3] - 1..=clocks[3] + 1).contains(&self.cycle) && !self.irq_inhibit {
-            self.frame_irq = true;
+        if !self.five_step && (clocks[3] - 1..=clocks[3] + 1).contains(&self.cycle) {
+            // The status latch is visible for two clocks even with IRQs
+            // inhibited. Inhibition gates the CPU's IRQ input separately.
+            self.frame_irq = self.cycle <= clocks[3] || !self.irq_inhibit;
         }
         if self.cycle >= if self.five_step { clocks[4] + 1 } else { clocks[3] + 1 } {
             self.cycle = 0;
@@ -341,13 +358,14 @@ impl Apu {
         }
     }
     pub fn dmc_request(&self) -> Option<u16> {
-        if !self.dmc_full && self.dmc_remaining > 0 {
+        if !self.dmc_full && self.dmc_remaining > 0 && self.dmc_enable_delay == 0 {
             Some(self.dmc_address)
         } else {
             None
         }
     }
     pub fn supply_dmc(&mut self, byte: u8) {
+        if self.dmc_remaining == 0 { return; }
         self.dmc_buffer = byte;
         self.dmc_full = true;
         self.dmc_address = if self.dmc_address == 0xffff {
@@ -362,6 +380,14 @@ impl Apu {
             } else if self.regs[0x10] & 0x80 != 0 {
                 self.dmc_irq = true;
             }
+        }
+        // A one-byte sample ending immediately before the output unit reloads
+        // briefly reasserts the DMA request. It expires after the halt cycle.
+        if self.regs[0x13] == 0 && self.regs[0x10] & 0x40 == 0
+            && self.dmc_bits == 1 && self.dmc_timer < 2
+        {
+            self.restart_dmc();
+            self.dmc_disable_delay = 3;
         }
     }
     fn restart_dmc(&mut self) {
@@ -379,7 +405,9 @@ impl Apu {
             | (u8::from(self.dmc_remaining > 0) << 4)
             | (u8::from(self.frame_irq) << 6)
             | (u8::from(self.dmc_irq) << 7);
-        self.frame_irq = false;
+        // Status reads acknowledge the flag on the next APU get phase. A get
+        // followed by a put read can therefore observe it twice.
+        self.frame_irq_clear = true;
         value
     }
     pub fn write_register(&mut self, addr: u16, val: u8) {
@@ -438,9 +466,12 @@ impl Apu {
                     self.noise_length = 0;
                 }
                 if val & 0x10 == 0 {
-                    self.dmc_remaining = 0;
+                    if self.dmc_disable_delay == 0 {
+                        self.dmc_disable_delay = if self.total & 1 == 0 { 3 } else { 2 };
+                    }
                 } else if self.dmc_remaining == 0 {
                     self.restart_dmc();
+                    self.dmc_enable_delay = if self.total & 1 == 0 { 3 } else { 2 };
                 }
                 self.dmc_irq = false;
             }
@@ -450,7 +481,7 @@ impl Apu {
                 if self.irq_inhibit {
                     self.frame_irq = false;
                 }
-                self.reset_delay = if self.total & 1 == 0 { 3 } else { 4 };
+                self.reset_delay = if self.total & 1 == 0 { 4 } else { 3 };
             }
             _ => {}
         }
@@ -524,5 +555,35 @@ crate::state::state_fields!(
     low_pass,
     samples,
     sample_count;
-    region: Region::Ntsc
+    region: Region::Ntsc,
+    frame_irq_clear: false,
+    dmc_enable_delay: 0,
+    dmc_disable_delay: 0
 );
+
+impl Apu {
+    pub(crate) fn save_accuracy_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.frame_irq_clear.encode(out);
+    }
+
+    pub(crate) fn load_accuracy_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::Codec;
+        self.frame_irq_clear = Codec::decode(input)?;
+        Ok(())
+    }
+
+    pub(crate) fn save_pipeline_state(&self, out: &mut Vec<u8>) {
+        use crate::state::Codec;
+        self.dmc_enable_delay.encode(out);
+        self.dmc_disable_delay.encode(out);
+    }
+
+    pub(crate) fn load_pipeline_state(&mut self, input: &mut &[u8]) -> crate::state::Result<()> {
+        use crate::state::{Codec, StateError};
+        self.dmc_enable_delay = Codec::decode(input)?;
+        self.dmc_disable_delay = Codec::decode(input)?;
+        if self.dmc_enable_delay > 3 || self.dmc_disable_delay > 3 { return Err(StateError("Invalid DMC activation delay")); }
+        Ok(())
+    }
+}

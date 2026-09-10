@@ -19,8 +19,9 @@ const HELP: &str = "Emulia desktop
 Usage: nes-desktop <rom.nes> [--mute] [--save-dir <directory>] [--frames <count>]
 Arrows: move   Z: B   X: A   Enter: Start   Right Shift: Select
 Space: pause   R: reset   F5: save state   F8: load state   Escape: quit
-Battery saves are written every 5 seconds and on clean exit.
---frames runs a finite number of frames (also useful with SDL dummy drivers).";
+Battery saves are written every 5 seconds, when pausing and on clean exit.
+--frames runs a finite number of frames (also useful with SDL dummy drivers).
+--list-drivers lists the compiled SDL video and audio backends.";
 
 struct Options {
     rom: PathBuf,
@@ -57,6 +58,17 @@ fn options(args: impl Iterator<Item = OsString>) -> Result<Option<Options>, Stri
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!("{HELP}");
+                return Ok(None);
+            }
+            Some("--list-drivers") => {
+                println!(
+                    "Video: {}",
+                    sdl2::video::drivers().collect::<Vec<_>>().join(", ")
+                );
+                println!(
+                    "Audio: {}",
+                    sdl2::audio::drivers().collect::<Vec<_>>().join(", ")
+                );
                 return Ok(None);
             }
             Some("--mute") => mute = true,
@@ -162,6 +174,7 @@ fn play(nes: &mut Nes, options: &Options, battery: &Path, state: &Path) -> Resul
     let mut deadline = Instant::now();
     let mut last_save = Instant::now();
     let (mut paused, mut unfocused, mut frames) = (false, false, 0_u64);
+    let mut was_paused = false;
     loop {
         for event in events.poll_iter() {
             match event {
@@ -213,7 +226,21 @@ fn play(nes: &mut Nes, options: &Options, battery: &Path, state: &Path) -> Resul
                 _ => {}
             }
         }
-        if paused || unfocused {
+        let is_paused = paused || unfocused;
+        // Flush when putting a game aside. Otherwise a focus pause can leave
+        // recent progress unsaved indefinitely, even beyond the save interval.
+        if (is_paused && !was_paused) || last_save.elapsed() >= Duration::from_secs(5) {
+            if let Some(bytes) = nes.battery_ram() {
+                if let Err(e) = write_save(battery, bytes) {
+                    // A temporarily unavailable save directory must not close
+                    // the game and discard the only remaining copy in RAM.
+                    eprintln!("{e}");
+                }
+            }
+            last_save = Instant::now();
+        }
+        was_paused = is_paused;
+        if is_paused {
             if let Some(a) = &audio {
                 a.pause();
                 a.clear();
@@ -281,12 +308,6 @@ fn play(nes: &mut Nes, options: &Options, battery: &Path, state: &Path) -> Resul
         if Instant::now().saturating_duration_since(deadline) > frame_time {
             deadline = Instant::now();
         }
-        if last_save.elapsed() >= Duration::from_secs(5) {
-            if let Some(bytes) = nes.battery_ram() {
-                write_save(battery, bytes)?;
-            }
-            last_save = Instant::now();
-        }
     }
 }
 
@@ -328,6 +349,55 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_pause_flushes_battery_without_waiting_for_resume_or_exit() {
+        use nes_core::cpu::Bus;
+
+        std::env::set_var("SDL_VIDEODRIVER", "dummy");
+        std::env::set_var("SDL_AUDIODRIVER", "dummy");
+        std::env::set_var("SDL_RENDER_DRIVER", "software");
+        let sdl = sdl2::init().unwrap();
+        let events = sdl.event().unwrap();
+        let dir = std::env::temp_dir().join(format!("emulia-focus-test-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let battery = dir.join("game.sav");
+        let mut rom = vec![0; 16 + 16384];
+        rom[..4].copy_from_slice(b"NES\x1a");
+        rom[4] = 1;
+        rom[6] = 2;
+        let mut nes = Nes::new(&rom).unwrap();
+        nes.bus.write(0x6000, 0x5a);
+        let options = Options {
+            rom: PathBuf::new(),
+            save_dir: dir.clone(),
+            mute: true,
+            frames: None,
+        };
+        events
+            .push_event(Event::Window {
+                timestamp: 0,
+                window_id: 0,
+                win_event: WindowEvent::FocusLost,
+            })
+            .unwrap();
+        let sender = events.event_sender();
+        let saved = battery.clone();
+        let waiter = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !saved.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            sender.push_event(Event::Quit { timestamp: 0 }).unwrap();
+        });
+        let result = play(&mut nes, &options, &battery, &dir.join("game.state"));
+        waiter.join().unwrap();
+        result.unwrap();
+        // play() deliberately excludes run()'s final save: this must already
+        // be on disk while the window is paused.
+        assert_eq!(fs::read(&battery).unwrap()[0], 0x5a);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn atomic_save_replaces_and_preserves_previous_file_on_collision() {

@@ -69,3 +69,212 @@ fn state_rejects_same_payload_with_different_mirroring() {
     assert!(nes.load_state(&other.save_state()).is_err());
     assert_eq!(nes.save_state(), before);
 }
+
+#[test]
+fn snapshot_preserves_ppu_charge_and_a_pending_apu_acknowledgement() {
+    let mut nes = Nes::new(&common::rom(0, 0)).unwrap();
+    nes.bus.ppu.write_register(0x2002, 0xff, nes.bus.cart.mapper.as_mut());
+    for _ in 0..341 * 262 * 19 { nes.bus.ppu.tick(nes.bus.cart.mapper.as_mut()); }
+    for _ in 0..30000 { nes.bus.apu.tick(); }
+    assert_ne!(nes.bus.apu.read_register(0x4015) & 0x40, 0);
+    let saved = nes.save_state();
+    assert_eq!(&saved[..8], b"ANES\x03\0\0\0");
+    let advance = |nes: &mut Nes| {
+        for _ in 0..2 { nes.bus.apu.tick(); }
+        assert!(!nes.bus.apu.irq_line());
+        for _ in 0..341 * 262 * 2 { nes.bus.ppu.tick(nes.bus.cart.mapper.as_mut()); }
+        assert_eq!(nes.bus.ppu.read_register(0x2000, nes.bus.cart.mapper.as_mut()), 0);
+    };
+    advance(&mut nes);
+    let expected = nes.save_state();
+    nes.load_state(&saved).unwrap();
+    advance(&mut nes);
+    assert!(nes.save_state() == expected, "restored timing must replay identically");
+}
+
+#[test]
+fn snapshot_preserves_distinct_internal_and_dma_bus_values() {
+    let mut rom = common::rom(0, 0);
+    rom[16 + 0x4000] = 0x20;
+    let mut nes = Nes::new(&rom).unwrap();
+    nes.bus.write(0, 0);
+    nes.bus.apu.write_register(0x4015, 0x10);
+    for _ in 0..3 {
+        if nes.bus.apu.dmc_request().is_some() { break; }
+        nes.bus.write(0, 0);
+    }
+    assert!(nes.bus.apu.dmc_request().is_some());
+    assert_eq!(nes.bus.read(0x4015), 0);
+    let saved = nes.save_state();
+    nes.bus.read(0x4000); // Drives DMA's bit 5 onto the CPU's internal bus.
+    assert_eq!(nes.bus.read(0x4015), 0x20);
+    nes.load_state(&saved).unwrap();
+    assert_eq!(nes.bus.read(0x4015), 0);
+    assert_eq!(nes.bus.read(0x4000), 0x20);
+}
+
+fn with_checksum(mut bytes: Vec<u8>) -> Vec<u8> {
+    let hash = bytes.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+    bytes.extend_from_slice(&hash.to_le_bytes());
+    bytes
+}
+
+#[test]
+fn malformed_snapshot_extensions_are_rejected_transactionally() {
+    let mut nes = Nes::new(&common::rom(0, 0)).unwrap();
+    let saved = nes.save_state();
+    let v2 = include_bytes!("fixtures/preview-v2.state");
+    let extension = v2.len() - 8;
+    for state in [&v2[..], &saved[..]] {
+        let body = &state[..state.len() - 8];
+        let mut cases = Vec::new();
+        let mut unknown = body.to_vec();
+        unknown[4] = 4;
+        cases.push(unknown);
+        let mut reserved = body.to_vec();
+        reserved[5] = 1;
+        cases.push(reserved);
+        // Keep a valid checksum so decoding itself must reject missing fields.
+        for missing in [1, 2, 65, 66] {
+            cases.push(body[..body.len() - missing].to_vec());
+        }
+        let mut invalid_bool = body.to_vec();
+        invalid_bool[extension - 1] = 2; // v2's pending frame IRQ acknowledgement.
+        cases.push(invalid_bool);
+        if state[4] == 3 {
+            for (offset, invalid) in [(0, 4), (1, 4), (2, 3), (3, 2)] {
+                let mut invalid_field = body.to_vec();
+                invalid_field[extension + offset] = invalid;
+                cases.push(invalid_field);
+            }
+            // The PPU block follows the four APU/controller bytes. Exercise
+            // bounds and boolean decoding with a valid enclosing checksum.
+            let ppu = extension + 4;
+            for (offset, invalid) in [
+                (1, 4), (3, 0x80), (4, 4), (5, 2), (45, 32), (46, 2),
+                (48, 2), (49, 2), (50, 4), (51, 4), (52, 2), (54, 0x40),
+                (56, 4), (58, 0x40), (60, 6), (66, 2), (67, 2), (68, 32),
+                (69, 2), (86, 2), (94, 0x80),
+            ] {
+                let mut invalid_field = body.to_vec();
+                invalid_field[ppu + offset] = invalid;
+                cases.push(invalid_field);
+            }
+            let mut invalid_copy = body.to_vec();
+            invalid_copy[ppu + 48] = 1; // In-range copy without any bytes to finish.
+            invalid_copy[ppu + 50] = 0;
+            invalid_copy[ppu + 51] = 0;
+            cases.push(invalid_copy);
+            for (kind, expired_age) in [(1, 5), (2, 4), (3, 4)] {
+                let mut expired = body.to_vec();
+                expired[ppu + 56] = kind;
+                expired[ppu + 60] = expired_age;
+                cases.push(expired);
+            }
+        }
+        let mut trailing = body.to_vec();
+        trailing.push(0);
+        cases.push(trailing);
+        for (case, bad) in cases.into_iter().enumerate() {
+            assert!(nes.load_state(&with_checksum(bad)).is_err(), "v{} case {case}", state[4]);
+            assert!(nes.save_state() == saved);
+        }
+    }
+}
+
+#[test]
+fn snapshot_preserves_pending_dma_and_controller_output_enable() {
+    for scenario in 0..4 {
+        let mut nes = Nes::new(&common::rom(0, 0)).unwrap();
+        nes.cpu.pc = 0x300;
+        nes.bus.ram[0x300..0x320].fill(0xea);
+        match scenario {
+            0 => nes.bus.write(0x4015, 0x10), // Waiting for activation.
+            1 => {
+                nes.bus.write(0x4015, 0x10);
+                for _ in 0..3 { nes.bus.write(0, 0); }
+                nes.bus.write(0x4015, 0); // Waiting for cancellation.
+            }
+            2 => {
+                nes.bus.ram[0x200..0x300].fill(0xa5);
+                nes.bus.write(0x4014, 2); // Queued OAM, before its halt.
+            }
+            _ => {
+                nes.set_buttons(0, Buttons(Buttons::A));
+                nes.bus.controllers[0].write_strobe(1);
+                nes.bus.controllers[0].write_strobe(0);
+                assert_eq!(nes.bus.read(0x4016) & 1, 1);
+            }
+        }
+        let saved = nes.save_state();
+        let advance = |nes: &mut Nes| {
+            if scenario == 3 {
+                assert_eq!(nes.bus.read(0x4016) & 1, 1);
+                nes.bus.read(0);
+                assert_eq!(nes.bus.read(0x4016) & 1, 0);
+            }
+            (0..8).map(|_| nes.step()).collect::<Vec<_>>()
+        };
+        let cycles = advance(&mut nes);
+        let expected = nes.save_state();
+        nes.load_state(&saved).unwrap();
+        assert!(nes.save_state() == saved);
+        assert_eq!(advance(&mut nes), cycles);
+        assert!(nes.save_state() == expected, "scenario {scenario}");
+    }
+}
+
+#[test]
+fn snapshots_replay_across_ppu_fetches_and_pending_register_effects() {
+    let mut scene = Nes::new(&common::rom(0, 0)).unwrap();
+    scene.bus.ppu.oam.fill(0xff);
+    for i in 0..12 {
+        scene.bus.ppu.oam[i * 4..i * 4 + 4]
+            .copy_from_slice(&[20, i as u8, (i as u8 & 3) | 0x40, i as u8 * 17]);
+    }
+    scene.bus.ppu.vram.fill(1);
+    for address in 0..256 {
+        scene.bus.cart.mapper.ppu_write(address, (address as u8).wrapping_mul(37));
+    }
+    for (i, color) in scene.bus.ppu.palette.iter_mut().enumerate() { *color = i as u8; }
+    scene.bus.write(0x2001, 0x1e);
+    for _ in 0..341 * 262 {
+        if scene.bus.ppu.scanline == 21 && scene.bus.ppu.dot == 0 { break; }
+        scene.bus.ppu.tick(scene.bus.cart.mapper.as_mut());
+    }
+    assert_eq!((scene.bus.ppu.scanline, scene.bus.ppu.dot), (21, 0));
+    // Include secondary-OAM clearing/evaluation boundaries, individual sprite
+    // fetch phases, background reloads, and the end-of-line counter pulse.
+    for dot in [1, 2, 63, 64, 65, 66, 127, 129, 130, 131, 255, 256, 257, 258, 259, 260, 261,
+                262, 263, 319, 320, 321, 322, 337, 338, 339] {
+        let mut at_dot = scene.clone();
+        for _ in 0..dot { at_dot.bus.ppu.tick(at_dot.bus.cart.mapper.as_mut()); }
+        for effect in 0..3 {
+            let mut nes = at_dot.clone();
+            match effect {
+                1 => nes.bus.ppu.write_register(0x2001, 0, nes.bus.cart.mapper.as_mut()),
+                2 => { nes.bus.ppu.read_register(0x2007, nes.bus.cart.mapper.as_mut()); }
+                _ => {}
+            }
+            let saved = nes.save_state();
+            let advance = |nes: &mut Nes| {
+                let mut reads = Vec::new();
+                for cycle in 0..160 {
+                    reads.push(nes.bus.read(match cycle % 23 {
+                        0 => 0x2002,
+                        1 => 0x2004,
+                        2 => 0x2007,
+                        _ => 0,
+                    }));
+                }
+                reads
+            };
+            let reads = advance(&mut nes);
+            let expected = nes.save_state();
+            nes.load_state(&saved).unwrap();
+            assert!(nes.save_state() == saved, "dot {dot}, effect {effect}");
+            assert_eq!(advance(&mut nes), reads, "dot {dot}, effect {effect}");
+            assert!(nes.save_state() == expected, "dot {dot}, effect {effect}");
+        }
+    }
+}

@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
     private var showArchive by mutableStateOf(false)
     private var archived by mutableStateOf(emptyList<Game>())
     private var forgetting by mutableStateOf<Game?>(null)
+    private var resetting by mutableStateOf<Game?>(null)
     private fun refreshLibrary() {
         games = runCatching { library.games() }.getOrDefault(games)
         archived = runCatching { library.archived() }.getOrDefault(archived)
@@ -424,6 +425,30 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { slots = library.slots(selected); refreshLibrary() }
         }
     }
+    private fun resetGame(selected: Game) {
+        if (busy || game?.id != selected.id || !surface.loaded) return
+        applyScrub(0)
+        rewindAtStart = false
+        work("Resetting game", "This game couldn't be reset.") {
+            Native.reset(library.rom(selected))
+            surface.depth = 0
+            // Replace the autosave with the new start, never restore the old one.
+            // A storage failure leaves the freshly reset game paused for retry.
+            val saveError = runCatching { save(selected, -1) }.exceptionOrNull()
+            surface.requestRender()
+            runOnUiThread {
+                rewindDepth = 0
+                slots = library.slots(selected)
+                refreshLibrary()
+                if (saveError != null) {
+                    paused = true
+                    report("Game reset, but its automatic save couldn't be updated.", saveError.message)
+                } else if (!backgrounded) {
+                    resumeGame()
+                }
+            }
+        }
+    }
     /** The framebuffer as a PNG. Reused by save thumbnails and by screenshots. */
     private val shot = ByteBuffer.allocateDirect(256 * 240 * 4)
     private fun framePng(): ByteArray {
@@ -690,6 +715,15 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 confirmButton = { TextButton(onClick = { showProblems = false }) { Text("Close") } },
+            )
+        }
+        resetting?.let { selected ->
+            AlertDialog(
+                onDismissRequest = { resetting = null },
+                title = { Text("Reset game?") },
+                text = { Text("Restart ${selected.title} from the beginning. In-game saves and manual save slots are kept. The current session and rewind history will be replaced.") },
+                confirmButton = { TextButton(enabled = !busy, onClick = { resetting = null; resetGame(selected) }) { Text("Reset") } },
+                dismissButton = { TextButton(onClick = { resetting = null }) { Text("Cancel") } },
             )
         }
         forgetting?.let { selected ->
@@ -1221,6 +1255,7 @@ class MainActivity : ComponentActivity() {
                 ActionTile(TUNE, "Settings", Modifier.weight(1f).fillMaxHeight(), !busy) { openSettings() }
             }
             Spacer(Modifier.height(2.dp))
+            SecondaryAction("Reset game", Modifier.fillMaxWidth(), enabled = !busy) { resetting = game }
             SecondaryAction("Back to your shelf", Modifier.fillMaxWidth(), SHELF, !busy) {
                 applyFullscreen(false); game = null; showSlots = false
             }

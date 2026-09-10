@@ -175,6 +175,41 @@ pub extern "system" fn Java_dev_androidemu_Native_load(
         }
     }
 }
+
+/// Power on the current game again, keeping its battery-backed RAM. Build the
+/// replacement first so an unreadable or wrong ROM leaves the session intact.
+/// The shell calls this on the GL thread with audio stopped, like load/restore.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_reset(
+    mut env: JNIEnv,
+    _: JClass,
+    rom: JByteArray,
+) {
+    let mut machine = MACHINE.lock().unwrap();
+    let Some(current) = machine.as_ref() else {
+        error(&mut env, "No game is open");
+        return;
+    };
+    let result = (|| {
+        let bytes = env.convert_byte_array(&rom).map_err(|e| e.to_string())?;
+        let mut fresh = Nes::new(&bytes).map_err(|e| e.to_string())?;
+        if fresh.bus.cart.header != current.bus.cart.header {
+            return Err("Reset requires the current game's ROM".to_string());
+        }
+        if let Some(battery) = current.battery_ram() {
+            fresh.load_battery_ram(battery).map_err(|e| e.to_string())?;
+        }
+        Ok(fresh)
+    })();
+    match result {
+        Ok(fresh) => {
+            rewind_reset(&fresh);
+            *machine = Some(fresh);
+        }
+        Err(e) => error(&mut env, e),
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_dev_androidemu_Native_frame(
     mut env: JNIEnv,
