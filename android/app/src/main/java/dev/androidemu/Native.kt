@@ -6,6 +6,8 @@ object Native {
     init { System.loadLibrary("nes_android") }
     external fun frameRate(): Float
     external fun load(rom: ByteArray): String
+    /** Fresh power-on of the same ROM, retaining battery saves and clearing rewind. */
+    external fun reset(rom: ByteArray)
     /**
      * Plain sentences for whatever the loaded ROM's header had to have corrected.
      * Empty when the header was believed as written.

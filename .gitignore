@@ -7,6 +7,7 @@ core/tests/roms/*
 
 # Android
 .gradle/
+.kotlin/
 local.properties
 *.apk
 *.aab

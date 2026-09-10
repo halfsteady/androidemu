@@ -36,6 +36,9 @@ been walked through deliberately.
   the window is bounded in bytes, not frames, so a still screen buys about a
   minute and a full-screen scroll rather less. Loading a savestate abandons the
   chain rather than rewinding into a timeline that was never played.
+- Reset game in the Android pause menu starts a fresh power-on, keeps battery
+  saves and manual slots, clears rewind and replaces the autosave. A failed ROM
+  read or cartridge mismatch leaves the running session intact.
 - Ten manual save slots with screenshots and timestamps, overwrite confirmation,
   a separate autosave on pause/background, resume from the shelf, atomic save and
   SRAM file replacement, and clear error feedback. No network permission or ROMs

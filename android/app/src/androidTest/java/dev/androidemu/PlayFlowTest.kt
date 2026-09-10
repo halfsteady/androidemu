@@ -26,7 +26,7 @@ class PlayFlowTest {
     }
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun showing(text: String, substring: Boolean = false) =
-        compose.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
+        compose.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
     private fun awaitText(text: String, substring: Boolean = false) =
         compose.waitUntil(60_000) { showing(text, substring) }
 
@@ -74,6 +74,44 @@ class PlayFlowTest {
             assertTrue(library.state(game, -1).exists())
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
             compose.onNodeWithText("Take your time").assertIsDisplayed()
+        }
+    }
+
+    /** Reset replaces only the live session/autosave, with cancellation before it. */
+    @Test fun resetKeepsBatteryAndManualSavesAndReplacesAutosave() {
+        val library = Library(context)
+        val bytes = rom().apply { this[31] = 0x7c }
+        val id = Native.load(bytes)
+        val game = library.add(id, "Reset Test", bytes)
+        val battery = Native.snapshot(true).apply { this[100] = 42 }
+        Native.restore(battery, true)
+        val fresh = Native.snapshot(false)
+        val pixels = ByteBuffer.allocateDirect(256 * 240 * 4)
+        repeat(6) { Native.frame(pixels, 0, 0, true) }
+        val manual = Native.snapshot(false)
+        Library.atomic(library.battery(game), battery)
+        Library.atomic(library.state(game, 0), manual)
+        Library.atomic(library.state(game, -1), manual)
+
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitText("Reset Test")
+            compose.onNodeWithText("Reset Test").performClick()
+            awaitText("Menu")
+            compose.onNodeWithText("Menu").performClick()
+            compose.waitUntil(60_000) { runCatching { compose.onNodeWithText("Reset game").assertIsEnabled() }.isSuccess }
+            val beforeCancel = library.state(game, -1).readBytes()
+            compose.onNodeWithText("Reset game").performClick()
+            awaitText("Reset game?")
+            compose.onNodeWithText("Cancel").performClick()
+            assertArrayEquals(beforeCancel, library.state(game, -1).readBytes())
+
+            compose.onNodeWithText("Reset game").performClick()
+            compose.onNodeWithText("Reset").performClick()
+            compose.waitUntil(60_000) { library.state(game, -1).readBytes().contentEquals(fresh) }
+            compose.waitUntil(10_000) { !showing("Take your time") }
+            assertArrayEquals(battery, library.battery(game).readBytes())
+            assertArrayEquals(manual, library.state(game, 0).readBytes())
+            assertTrue(showing("Menu"))
         }
     }
 

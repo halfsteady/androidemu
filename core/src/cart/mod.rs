@@ -63,7 +63,7 @@ impl std::error::Error for CartError {}
 
 /// Everything the header told us, kept separate from the live mapper state so it can
 /// be logged, displayed, and overridden.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
     pub mapper: u16,
     pub submapper: u8,

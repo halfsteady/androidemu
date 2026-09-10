@@ -36,7 +36,7 @@ is built, tested, signed and published by GitHub Actions — see
 | Identity | One mark on the launcher, the round and themed icons, the splash and the empty shelf, generated from [`brand/`](brand/) and measured against eight checks |
 | Time controls | One draggable control for rewind and fast-forward, further from centre is faster, plus 5 s / 15 s jumps back; shoulder buttons drive it too |
 | Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, ten looks from scanlines to a cel-shaded Cartoon, and a separate choice of colours with `.pal` import — previewed in settings by the real shader |
-| Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave on pause, background and low battery |
+| Save UI | Ten slots, thumbnails, timestamps, overwrite confirmation, autosave on pause, background and low battery; Reset game in the pause menu keeps battery saves and manual slots |
 | Shelf | Chosen box art per game, last-played ordering, playtime, screenshots to the device gallery, a readable problem log |
 
 The 39-ROM CPU/APU/PPU/MMC3 regression set and the real `nestest` trace pass.
