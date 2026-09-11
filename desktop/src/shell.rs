@@ -266,6 +266,28 @@ fn escape(app: &App) -> Action {
     }
 }
 
+/// What Space means, which like Escape depends on what is in front of the
+/// game. A question is answered before anything behind it moves: a panel that
+/// walks out from under a confirmation leaves the confirmation floating over a
+/// running game with nothing to confirm.
+fn space(app: &App) -> Action {
+    if app.dialog.is_some() {
+        Action::CloseDialog
+    } else if app.panel == Panel::Pause {
+        Action::Resume
+    } else if app.session.is_some() {
+        Action::Pause
+    } else {
+        Action::CloseDialog
+    }
+}
+
+/// Whether Start — on a pad or on the keyboard — means "back to the game". It
+/// does over the pause panel, and not while a question is in front of it.
+fn start_resumes(app: &App) -> bool {
+    app.panel == Panel::Pause && app.dialog.is_none()
+}
+
 /// Where closing a panel leaves you. The problem log is reached from the
 /// shelf, from the pause panel and from Settings, so it goes back to wherever
 /// it was opened from; everything else sits over a game, or over the shelf.
@@ -553,6 +575,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                     Ok(()) => {
                         app.panel = Panel::None;
                         app.scrub_fraction = 0.0;
+                        // Back to the game, so the same clean slate `Resume`
+                        // leaves: a sentence about what happened before the
+                        // restart has nothing left to be about.
+                        app.message = None;
                         // Nothing else will ask for the fresh frame: the tick
                         // that would have marked it runs after this, and a
                         // reset that is not uploaded leaves the old picture on
@@ -571,14 +597,21 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                         );
                     }
                 }
-                // The slot pictures were of a game that no longer exists.
+                // A reset rewrites the automatic save. The numbered slots
+                // are untouched, but the cache is refilled from disk the
+                // moment the slots panel is opened again, so letting it go
+                // costs a frame and cannot show a picture from before.
                 app.thumbs.clear();
             }
         }
         Action::OpenProblems => {
             // Recorded here rather than by whoever raised it: the log is the
-            // one panel that is opened from three different places.
-            app.panel_before = app.panel;
+            // one panel that is opened from three different places. Raised a
+            // second time from the log itself it would record the log, and
+            // Close would lead back to where it already was.
+            if app.panel != Panel::Problems {
+                app.panel_before = app.panel;
+            }
             app.panel = Panel::Problems;
         }
         Action::BackToShelf => {
@@ -660,13 +693,10 @@ fn handle_event(
                     let action = escape(app);
                     app.actions.push(action);
                 }
-                Scancode::Space => app.actions.push(if app.panel == Panel::Pause {
-                    Action::Resume
-                } else if app.session.is_some() {
-                    Action::Pause
-                } else {
-                    Action::CloseDialog
-                }),
+                Scancode::Space => {
+                    let action = space(app);
+                    app.actions.push(action);
+                }
                 Scancode::F11 => app.actions.push(Action::ToggleFullscreen),
                 Scancode::F5 if app.playing() => app.actions.push(Action::SaveConfirmed(0)),
                 Scancode::F8 if app.playing() => app.actions.push(Action::Load(0)),
@@ -676,9 +706,7 @@ fn handle_event(
                         if app.playing() {
                             app.actions.push(Action::JumpBack(seconds));
                         }
-                    } else if app.panel == Panel::Pause
-                        && app.input.is_start(None, &key_name(*scancode))
-                    {
+                    } else if start_resumes(app) && app.input.is_start(None, &key_name(*scancode)) {
                         app.actions.push(Action::Resume);
                     } else {
                         app.input.key(*scancode, true);
@@ -728,7 +756,7 @@ fn handle_event(
                 }
                 return;
             }
-            if app.panel == Panel::Pause && app.input.is_start(Some(*which), &physical) {
+            if start_resumes(app) && app.input.is_start(Some(*which), &physical) {
                 app.actions.push(Action::Resume);
             }
             app.input.pad_button(*which, *button, true);
@@ -1006,6 +1034,33 @@ mod tests {
         for panel in [Panel::Slots, Panel::Settings, Panel::Mapping] {
             app.panel = panel;
             assert_eq!(closed(&app), Panel::Pause, "{panel:?}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Space and Start answer the question in front of the game before they
+    /// move anything behind it, the same way Escape does. A panel that walks
+    /// out from under a confirmation leaves the confirmation floating over a
+    /// running game with its scrim across the controls.
+    #[test]
+    fn space_and_start_answer_the_question_in_front_of_the_game_first() {
+        let dir = temp_dir("shell-space");
+        let mut app = App::blank(&dir);
+        // On the shelf, Space dismisses whatever is being said.
+        assert_eq!(space(&app), Action::CloseDialog);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        assert_eq!(space(&app), Action::Pause);
+        app.panel = Panel::Pause;
+        assert_eq!(space(&app), Action::Resume);
+        assert!(start_resumes(&app));
+        for panel in [Panel::None, Panel::Pause, Panel::Slots] {
+            app.panel = panel;
+            app.dialog = Some(Dialog::ConfirmReset);
+            assert_eq!(space(&app), escape(&app), "{panel:?}");
+            assert_eq!(space(&app), Action::CloseDialog, "{panel:?}");
+            assert!(!start_resumes(&app), "{panel:?}");
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

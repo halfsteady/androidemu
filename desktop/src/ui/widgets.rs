@@ -395,10 +395,14 @@ pub fn panel(
 }
 
 /// The plain sentence, bottom centre, until dismissed.
+///
+/// Drawn in the top order, with the confirmations: a dialog's scrim covers
+/// everything below it, and the one control that dismisses the sentence has to
+/// stay pressable even when a question is up behind it.
 pub fn message_bar(ctx: &egui::Context, text: &str) -> bool {
     let mut dismissed = false;
     egui::Area::new(egui::Id::new("message"))
-        .order(egui::Order::Tooltip)
+        .order(egui::Order::TOP)
         .anchor(Align2::CENTER_BOTTOM, Vec2::new(0.0, -24.0))
         .show(ctx, |ui| {
             egui::Frame::new()

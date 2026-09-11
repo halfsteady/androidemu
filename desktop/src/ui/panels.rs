@@ -3,8 +3,10 @@
 //!
 //! These sit over a running game rather than beside it, so each is a scrim and
 //! one card: what is underneath stays where it was and stays out of reach.
-//! Nothing here touches the engine, the library or the disk — every control
-//! pushes an `Action` and the shell applies it once the frame is over.
+//! Nothing here changes anything: the slots and the log are read from the
+//! library every frame, but no control here writes to it, to the disk or to
+//! the engine. Each pushes an `Action` and the shell applies it once the frame
+//! is over.
 
 use super::theme::*;
 use super::widgets;
@@ -15,7 +17,11 @@ use egui::{Align2, CornerRadius, Margin, Rect, RichText, Sense, Vec2};
 
 /// How wide a slot tile likes to be, and how tall its picture is for that
 /// width. A NES frame is 4:3 once it has been fitted, which is the 0.75.
-const TILE: f32 = 180.0;
+///
+/// 172 rather than a rounder number because of what it buys: the card is 620
+/// wide and leaves 556 inside, which is three of these and not three of
+/// anything much wider. Three to a row is four rows of slots instead of five.
+const TILE: f32 = 172.0;
 const THUMBNAIL: f32 = 0.75;
 
 /// The widest a confirmation gets. A question laid across a 1440-point window
@@ -149,47 +155,57 @@ fn tile(ui: &mut egui::Ui, app: &mut App, slot: &SaveSlot, width: f32) {
         .corner_radius(CornerRadius::same(CORNER_MEDIUM as u8))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
-            let inner = (width - 20.0).max(0.0);
-            ui.set_width(inner);
-            let (rect, _) =
-                ui.allocate_exact_size(Vec2::new(inner, inner * THUMBNAIL), Sense::hover());
-            match app.slot_texture(ui.ctx(), slot) {
-                Some(texture) => {
-                    ui.painter().image(
-                        texture.id(),
-                        rect,
-                        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
+            // A tile is a column even though the row of tiles holding it is a
+            // row. A frame inherits the layout it was dropped into, which here
+            // is left to right, and that would stand the picture beside the
+            // buttons rather than above them — the same trap the shelf's cards
+            // are laid out around.
+            ui.vertical(|ui| {
+                let inner = (width - 20.0).max(0.0);
+                ui.set_width(inner);
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(inner, inner * THUMBNAIL), Sense::hover());
+                match app.slot_texture(ui.ctx(), slot) {
+                    Some(texture) => {
+                        ui.painter().image(
+                            texture.id(),
+                            rect,
+                            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    // An empty slot is a hole in the card rather than a blank
+                    // one: the row should read as ten places, some filled.
+                    None => {
+                        ui.painter().rect_filled(
+                            rect,
+                            CornerRadius::same(CORNER_SMALL as u8),
+                            WELL,
+                        );
+                    }
                 }
-                // An empty slot is a hole in the card rather than a blank one:
-                // the row should read as ten places, some of them filled.
-                None => {
-                    ui.painter()
-                        .rect_filled(rect, CornerRadius::same(CORNER_SMALL as u8), WELL);
-                }
-            }
-            ui.label(
-                RichText::new(format!("Slot {}", slot.number + 1))
-                    .size(15.0)
-                    .strong()
-                    .color(ON_SURFACE),
-            );
-            widgets::note(ui, &written(slot));
-            ui.horizontal(|ui| {
-                if widgets::compact(ui, "Save", true).clicked() {
-                    // A slot with something in it is asked about first; an
-                    // empty one is written straight away, because there is
-                    // nothing there to lose.
-                    app.actions.push(if slot.time.is_some() {
-                        Action::SaveRequested(slot.number)
-                    } else {
-                        Action::SaveConfirmed(slot.number)
-                    });
-                }
-                if widgets::compact(ui, "Load", slot.time.is_some()).clicked() {
-                    app.actions.push(Action::Load(slot.number));
-                }
+                ui.label(
+                    RichText::new(format!("Slot {}", slot.number + 1))
+                        .size(15.0)
+                        .strong()
+                        .color(ON_SURFACE),
+                );
+                widgets::note(ui, &written(slot));
+                ui.horizontal(|ui| {
+                    if widgets::compact(ui, "Save", true).clicked() {
+                        // A slot with something in it is asked about first; an
+                        // empty one is written straight away, because there is
+                        // nothing there to lose.
+                        app.actions.push(if slot.time.is_some() {
+                            Action::SaveRequested(slot.number)
+                        } else {
+                            Action::SaveConfirmed(slot.number)
+                        });
+                    }
+                    if widgets::compact(ui, "Load", slot.time.is_some()).clicked() {
+                        app.actions.push(Action::Load(slot.number));
+                    }
+                });
             });
         });
 }
@@ -277,8 +293,13 @@ fn confirm(ctx: &egui::Context, app: &mut App, dialog: Dialog) {
     // The safe area, the same one the panels cover: the scrim has to reach the
     // edges of what can be clicked.
     let screen = ctx.content_rect();
+    // Above every panel by being in a higher order than any of them, not by
+    // being drawn after them. Within one order egui sorts whatever appeared
+    // this frame to the top, so a panel raised while the question was already
+    // up — by a stray Space, say — would otherwise come out over the scrim and
+    // take the clicks the question was waiting for.
     egui::Area::new(egui::Id::new("dialog-scrim"))
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Tooltip)
         .fixed_pos(screen.min)
         .interactable(true)
         .show(ctx, |ui| {
@@ -287,11 +308,11 @@ fn confirm(ctx: &egui::Context, app: &mut App, dialog: Dialog) {
             let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::click());
             ui.painter().rect_filled(rect, CornerRadius::ZERO, SCRIM);
         });
-    // Above the scrim by being in a higher order than it, rather than by being
-    // drawn after it: within one order egui puts whatever was last touched on
-    // top, and the card must never end up under its own dimming.
+    // And the card above its own scrim, for the same reason and by the same
+    // means: `Order::TOP`, because there is nothing the question should be
+    // underneath while it is being asked.
     egui::Area::new(egui::Id::new("dialog"))
-        .order(egui::Order::Tooltip)
+        .order(egui::Order::TOP)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
             egui::Frame::new()
@@ -537,8 +558,8 @@ mod tests {
         open(&mut app);
         app.session.as_mut().unwrap().save(Slot::Number(0)).unwrap();
         app.panel = Panel::Slots;
-        // Tall enough for all ten at once: two to a row is five rows, and the
-        // panel scrolls rather than shrinking them in an ordinary window.
+        // Tall enough for all ten at once: three to a row is four rows, and
+        // the panel scrolls rather than shrinking them in a shorter window.
         let said = texts(&drawn(&mut app, &ctx, Vec2::new(1024.0, 1800.0)));
         for slot in 1..=10 {
             let heading = format!("Slot {slot}");
@@ -566,6 +587,40 @@ mod tests {
         // The back chevron leaves the panel rather than the game.
         click(&mut app, &ctx, at(&shapes, widgets::BACK));
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::ClosePanel]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Three tiles across the card, each of them a column. A frame takes the
+    /// layout it was dropped into, so a tile built straight into the row of
+    /// tiles stands its picture beside its own buttons instead of above them —
+    /// which makes every tile twice as wide as it asked to be and carries the
+    /// whole card, back chevron and all, off the side of the window.
+    #[test]
+    fn three_slot_tiles_fit_across_the_card_and_each_is_a_column() {
+        let dir = temp_dir("panels-tiles");
+        let ctx = context();
+        let mut app = App::blank(&dir);
+        open(&mut app);
+        app.panel = Panel::Slots;
+        let shapes = drawn(&mut app, &ctx, WINDOW);
+        let gap = ctx.style_of(egui::Theme::Dark).spacing.item_spacing.x;
+        let first = at(&shapes, "Slot 1");
+        // Three to a row, one tile plus one gap apart...
+        assert!(
+            (at(&shapes, "Slot 3").x - first.x - 2.0 * (TILE + gap)).abs() < 0.5,
+            "{first:?} to {:?}",
+            at(&shapes, "Slot 3")
+        );
+        // ...and the fourth back under the first, on the next row down.
+        let fourth = at(&shapes, "Slot 4");
+        assert!((fourth.x - first.x).abs() < 0.5, "{first:?} to {fourth:?}");
+        assert!(fourth.y > first.y, "{first:?} to {fourth:?}");
+        // Within a tile the buttons are under the heading, not beside it,
+        // and the card they are on starts inside the window.
+        let save = in_tile(&shapes, "Slot 1", "Save");
+        assert!(save.y > first.y, "{first:?} to {save:?}");
+        assert!(save.x < first.x + TILE, "{first:?} to {save:?}");
+        assert!(at(&shapes, widgets::BACK).x > 0.0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -643,23 +698,40 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// A question raised from a panel covers it: the panel is still there to
-    /// be read, and none of it can be pressed until the question is answered.
+    /// A question covers the panel it was raised from: the panel is still
+    /// there to be read, and none of it can be pressed until the question is
+    /// answered. Either order — and the second one matters, because a panel
+    /// that appears while the scrim is already up is a new layer, and a new
+    /// layer is one egui sorts to the top of its own order.
     #[test]
     fn a_question_swallows_the_clicks_meant_for_the_panel_behind_it() {
         let dir = temp_dir("panels-scrim");
         let ctx = context();
         let mut app = App::blank(&dir);
         open(&mut app);
-        app.panel = Panel::Pause;
-        let shapes = drawn(&mut app, &ctx, WINDOW);
-        let resume = at(&shapes, "Resume game");
-        app.dialog = Some(Dialog::ConfirmReset);
-        // Still drawn, still in the same place, and no longer reachable.
-        let shapes = drawn(&mut app, &ctx, WINDOW);
-        assert_eq!(at(&shapes, "Resume game"), resume);
-        click(&mut app, &ctx, resume);
-        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        for panel_first in [true, false] {
+            app.panel = Panel::None;
+            app.dialog = None;
+            drawn(&mut app, &ctx, WINDOW);
+            if panel_first {
+                app.panel = Panel::Pause;
+                drawn(&mut app, &ctx, WINDOW);
+                app.dialog = Some(Dialog::ConfirmReset);
+            } else {
+                app.dialog = Some(Dialog::ConfirmReset);
+                drawn(&mut app, &ctx, WINDOW);
+                app.panel = Panel::Pause;
+            }
+            let shapes = drawn(&mut app, &ctx, WINDOW);
+            // Still readable, and no longer reachable.
+            assert!(texts(&shapes).iter().any(|t| t == "Take your time"));
+            click(&mut app, &ctx, at(&shapes, "Resume game"));
+            assert!(
+                app.actions.is_empty(),
+                "panel first: {panel_first}, {:?}",
+                app.actions
+            );
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
