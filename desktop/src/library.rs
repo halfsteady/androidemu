@@ -44,10 +44,14 @@ pub struct Library {
 }
 
 impl Library {
+    /// Opens the shelf and reads the index once, so an index that cannot be read
+    /// or parsed is reported at startup rather than quietly replaced later.
     pub fn open(data_dir: &Path) -> Result<Library, String> {
         let root = data_dir.join("library");
         fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
-        Ok(Library { root })
+        let library = Library { root };
+        library.read()?;
+        Ok(library)
     }
 
     /// The same shelf, adopted from a folder someone else already made.
@@ -69,12 +73,16 @@ impl Library {
         self.root.join("index.json")
     }
 
-    fn read(&self) -> Vec<Game> {
-        read_optional(&self.index())
-            .ok()
-            .flatten()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// No index yet is an empty shelf; an index that will not read or parse is an
+    /// error, because the alternative is writing an empty one over someone's games.
+    fn read(&self) -> Result<Vec<Game>, String> {
+        let path = self.index();
+        match read_optional(&path)? {
+            None => Ok(Vec::new()),
+            Some(bytes) => {
+                serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+            }
+        }
     }
 
     fn write(&self, games: &[Game]) -> Result<(), String> {
@@ -88,21 +96,37 @@ impl Library {
     }
 
     /// The shelf: most recently played first, falling back to when it was added.
+    /// Empty if the index cannot be read — `open` has already refused that shelf.
     pub fn games(&self) -> Vec<Game> {
-        Self::sorted(self.read().into_iter().filter(|g| !g.archived).collect())
+        Self::sorted(
+            self.read()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|g| !g.archived)
+                .collect(),
+        )
     }
 
     /// Put away rather than deleted, newest first.
     pub fn archived(&self) -> Vec<Game> {
-        Self::sorted(self.read().into_iter().filter(|g| g.archived).collect())
+        Self::sorted(
+            self.read()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|g| g.archived)
+                .collect(),
+        )
     }
 
     pub fn find(&self, id: &str) -> Option<Game> {
-        self.read().into_iter().find(|g| g.id == id)
+        self.read()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|g| g.id == id)
     }
 
     pub fn add(&self, id: &str, title: &str, rom: &[u8]) -> Result<Game, String> {
-        let mut games = self.read();
+        let mut games = self.read()?;
         if let Some(existing) = games.iter().find(|g| g.id == id) {
             return Ok(existing.clone());
         }
@@ -121,7 +145,7 @@ impl Library {
     }
 
     fn update(&self, id: &str, change: impl FnOnce(&mut Game)) -> Result<(), String> {
-        let mut games = self.read();
+        let mut games = self.read()?;
         if let Some(game) = games.iter_mut().find(|g| g.id == id) {
             change(game);
             self.write(&games)?;
@@ -137,7 +161,7 @@ impl Library {
 
     /// The one that does not come back: the whole folder and the index row.
     pub fn forget(&self, id: &str) -> Result<(), String> {
-        let games: Vec<Game> = self.read().into_iter().filter(|g| g.id != id).collect();
+        let games: Vec<Game> = self.read()?.into_iter().filter(|g| g.id != id).collect();
         self.write(&games)?;
         let dir = self.directory(id);
         if dir.exists() {
@@ -175,45 +199,61 @@ impl Library {
         self.folder(id).join("battery.sav")
     }
     pub fn state_path(&self, id: &str, slot: Slot) -> PathBuf {
-        self.folder(id).join(match slot {
-            Slot::Auto => "auto.state".to_string(),
-            Slot::Number(n) => format!("slot-{n}.state"),
-        })
+        self.folder(id).join(Self::state_name(slot))
     }
     pub fn thumbnail_path(&self, id: &str, slot: Slot) -> PathBuf {
-        self.folder(id).join(match slot {
-            Slot::Auto => "auto.png".to_string(),
-            Slot::Number(n) => format!("slot-{n}.png"),
-        })
+        self.folder(id).join(Self::thumbnail_name(slot))
     }
     /// Box art chosen by hand. It outranks the saved screenshot on the shelf.
     pub fn art_path(&self, id: &str) -> PathBuf {
         self.folder(id).join("art.png")
     }
 
+    fn state_name(slot: Slot) -> String {
+        match slot {
+            Slot::Auto => "auto.state".to_string(),
+            Slot::Number(n) => format!("slot-{n}.state"),
+        }
+    }
+    fn thumbnail_name(slot: Slot) -> String {
+        match slot {
+            Slot::Auto => "auto.png".to_string(),
+            Slot::Number(n) => format!("slot-{n}.png"),
+        }
+    }
+
+    /// Ten slots, each with when it was saved if it was. Built from `directory`,
+    /// so looking at a forgotten game does not make its folder again.
     pub fn slots(&self, id: &str) -> Vec<SaveSlot> {
+        let dir = self.directory(id);
         (0..10)
             .map(|n| SaveSlot {
                 number: n,
-                time: fs::metadata(self.state_path(id, Slot::Number(n)))
+                time: fs::metadata(dir.join(Self::state_name(Slot::Number(n))))
                     .ok()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_millis() as i64),
-                thumbnail: self.thumbnail_path(id, Slot::Number(n)),
+                thumbnail: dir.join(Self::thumbnail_name(Slot::Number(n))),
             })
             .collect()
     }
 
     pub fn has_autosave(&self, id: &str) -> bool {
-        self.state_path(id, Slot::Auto).exists()
+        self.directory(id)
+            .join(Self::state_name(Slot::Auto))
+            .exists()
     }
 
     /// Chosen art, else the last saved moment, else nothing.
     pub fn cover(&self, id: &str) -> Option<PathBuf> {
-        [self.art_path(id), self.thumbnail_path(id, Slot::Auto)]
-            .into_iter()
-            .find(|p| p.exists())
+        let dir = self.directory(id);
+        [
+            dir.join("art.png"),
+            dir.join(Self::thumbnail_name(Slot::Auto)),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
     }
 
     /// Box art: decoded, shrunk so the longest edge is at most 1024, stored as PNG.
@@ -366,6 +406,34 @@ mod tests {
         let lib = Library::open(&dir).unwrap();
         let g = &lib.games()[0];
         assert_eq!((g.played, g.seconds, g.archived), (0, 0, false));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_index_is_reported_and_never_written_over() {
+        let dir = temp_dir("library-corrupt");
+        fs::create_dir_all(dir.join("library")).unwrap();
+        let index = dir.join("library/index.json");
+        fs::write(&index, b"[{\"id\":\"abcd\",\"title\":\"Old\"").unwrap();
+        assert!(Library::open(&dir).is_err());
+        let lib = Library::from_root(dir.join("library"));
+        assert!(lib.add("aaaa", "Game A", b"rom").is_err());
+        assert!(lib.set_archived("abcd", true).is_err());
+        assert!(lib.record("abcd", 30).is_err());
+        assert!(lib.forget("abcd").is_err());
+        assert_eq!(
+            fs::read(&index).unwrap(),
+            b"[{\"id\":\"abcd\",\"title\":\"Old\""
+        );
+        assert!(!lib.directory("aaaa").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_shelf_adopted_from_its_root_still_knows_its_data_folder() {
+        let dir = temp_dir("library-root");
+        let lib = Library::open(&dir).unwrap();
+        assert_eq!(Library::from_root(lib.root().to_path_buf()).data_dir(), dir);
         fs::remove_dir_all(dir).unwrap();
     }
 
