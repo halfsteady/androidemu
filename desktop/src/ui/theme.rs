@@ -22,7 +22,6 @@ pub const ON_LEAF: Color32 = Color32::from_rgb(0x17, 0x30, 0x0c);
 pub const RAISED: Color32 = Color32::from_rgb(0x2a, 0x3a, 0x2e);
 pub const ON_RAISED: Color32 = Color32::from_rgb(0xc3, 0xd1, 0xbd);
 pub const ERROR: Color32 = Color32::from_rgb(0xff, 0xb4, 0xa6);
-pub const ON_ERROR: Color32 = Color32::from_rgb(0x5f, 0x14, 0x09);
 pub const AMBER: Color32 = Color32::from_rgb(0xf0, 0xd4, 0x9a);
 pub const ON_TIME: Color32 = Color32::from_rgb(0x15, 0x22, 0x10);
 pub const NOTICE_BACK: Color32 = Color32::from_rgb(0x2b, 0x24, 0x10);

@@ -27,9 +27,11 @@ pub enum Panel {
     Problems,
 }
 
+/// Every question the shell asks is a confirmation, so the shared prefix is
+/// what the type means rather than noise on the variants.
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
-    Message(String),
     ConfirmReset,
     ConfirmReplace(u8),
     ConfirmDelete(Game),

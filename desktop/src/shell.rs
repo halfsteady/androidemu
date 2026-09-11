@@ -683,6 +683,9 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.panel = Panel::None;
             app.dialog = None;
             app.scrub_fraction = 0.0;
+            // The shelf's Settings panel reads this: with no game open there
+            // is no audio queue, and the last game's figure is not it.
+            app.audio_ms = 0.0;
             app.input.clear();
         }
         Action::OpenSettings => {

@@ -287,9 +287,6 @@ fn confirm(ctx: &egui::Context, app: &mut App, dialog: Dialog) {
             true,
             Action::DeleteConfirmed(game.clone()),
         ),
-        // The plain notice with one way out. It has no title: the sentence is
-        // the whole of it.
-        Dialog::Message(text) => (String::new(), text.clone(), "OK", "", false, Action::CloseDialog),
     };
     // The safe area, the same one the panels cover: the scrim has to reach the
     // edges of what can be clicked.
@@ -493,7 +490,6 @@ mod tests {
                 None,
                 Some(Dialog::ConfirmReset),
                 Some(Dialog::ConfirmReplace(3)),
-                Some(Dialog::Message("Something to read.".into())),
             ] {
                 app.dialog = dialog;
                 for fullscreen in [false, true] {
@@ -670,18 +666,13 @@ mod tests {
                 "Delete forever",
                 Action::DeleteConfirmed(game.clone()),
             ),
-            (
-                Dialog::Message("Something to read.".into()),
-                "OK",
-                Action::CloseDialog,
-            ),
         ] {
             app.dialog = Some(dialog.clone());
             let shapes = drawn(&mut app, &ctx, WINDOW);
             click(&mut app, &ctx, at(&shapes, yes));
             assert_eq!(std::mem::take(&mut app.actions), vec![wanted], "{dialog:?}");
         }
-        // And every one of them but the notice can be backed out of.
+        // And every one of them can be backed out of.
         for (dialog, no) in [
             (Dialog::ConfirmReset, "Cancel"),
             (Dialog::ConfirmReplace(2), "Keep it"),

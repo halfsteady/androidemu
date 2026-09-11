@@ -2,7 +2,6 @@ mod bridge;
 mod engine;
 mod files;
 mod input;
-#[allow(dead_code)] // `thumbnail_pixels` is still waiting for a caller.
 mod library;
 mod palette;
 #[allow(dead_code)] // `model::bytes` writes a .pal file, which only tests need.
@@ -11,8 +10,6 @@ mod scrub;
 mod session;
 mod settings;
 mod shell;
-#[allow(dead_code)] // `Dialog::Message` has no caller, and ON_ERROR completes a
-// pair of tokens whose other half is used.
 mod ui;
 mod video;
 

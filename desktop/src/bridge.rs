@@ -77,7 +77,9 @@ impl Bridge {
     }
 
     /// What is held down right now, for the panels that read a shift-click.
-    #[allow(dead_code)] // Read by the panels in Tasks 11 to 14.
+    // No panel reads a shift-click, and egui is handed the modifiers on every
+    // event anyway, so this accessor is the bridge's surface rather than a use.
+    #[allow(dead_code)]
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
     }

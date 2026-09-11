@@ -1,7 +1,7 @@
 //! A game on the shelf and everything it owns on disk. Ported from Library.kt,
 //! same folder layout, same index, so the two shells are one design.
 
-use crate::files::{now_millis, read_optional, read_png, write_atomic, write_png};
+use crate::files::{now_millis, read_optional, write_atomic, write_png};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -339,11 +339,6 @@ pub fn playtime(seconds: i64) -> Option<String> {
         s if s < 3600 => Some(format!("{} min played", s / 60)),
         s => Some(format!("{} h {} min played", s / 3600, (s % 3600) / 60)),
     }
-}
-
-/// A cover or thumbnail as RGBA8, or nothing if it cannot be read.
-pub fn thumbnail_pixels(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
-    read_png(path).ok()
 }
 
 #[cfg(test)]
