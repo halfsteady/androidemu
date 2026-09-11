@@ -5,11 +5,14 @@ I/O, and `nes-runner` uses Rust's standard library. CPU, PPU, APU, cartridge
 mappers, input registers, rewind and state serialization all live in `core/`.
 The Android JNI and AAudio integration lives separately in `native/`.
 
-`nes-desktop` supplies a small playable desktop frontend using that same core.
-It provides a resizable, letterboxed 256×240 picture, 48 kHz mono sound,
-one keyboard controller, pause/reset, one save-state slot per ROM and battery
-save persistence. It does not yet include Android's library UI, picture settings,
-gamepad mapping or rewind controls. Colour emphasis remains a core limitation.
+`nes-desktop` is the whole shell on that core, in SDL2, OpenGL and egui: the
+box-art shelf with import, archive and playtime; a letterboxed 256×240 picture
+at 48 kHz with the same ten looks, the same palettes and the same `.pal` import
+Android has; the draggable time control for rewind and fast-forward; the pause
+menu with ten save slots, thumbnails, screenshots and a readable problem log;
+settings previewed by the real shader; and two controller ports with a mapping
+wizard. The saves and the folder layout are Android's, file for file. Colour
+emphasis remains a core limitation.
 
 ## Build
 
@@ -66,47 +69,187 @@ cargo run --release -p nes-runner -- frames "/path/to/game.nes" 60
 The default workspace members remain core, runner and Android bridge, so a bare
 `cargo build` does not require desktop dependencies. `--workspace` includes SDL.
 
-## Play and saves
+## Shelf and play
+
+With no arguments the shelf opens. A ROM path on the command line, or a `.nes`
+file dropped on the window, is copied into the library and opened; the copy is
+keyed by the ROM's payload hash, so adding the same game twice adds it once.
+"Add a game" opens the system file chooser for the same thing.
+
+Each card carries its box art, or the newest autosave thumbnail when there is
+none. The card menu chooses and clears box art, and dropping a `.png`, `.jpg`
+or `.jpeg` on the window while a game is open sets that game's art. "Put this
+away" moves a game to the archive, which "Put away (n)" opens; from there it
+can be brought back or deleted. Deleting removes the game's folder — the ROM
+copy, the battery save and all ten states. The Cards/List toggle is remembered.
+
+In a game, the Menu button, Escape and Space all open the pause menu: Resume
+game, Save states, Screenshot, Full screen, Settings, Reset game and Back to
+your shelf. Escape backs out one level at a time. F11 is full screen; after
+five seconds with no key, no mouse and no touch of the time control the chrome
+fades, and any of those brings it back.
+
+```
+nes-desktop [rom.nes] [--data-dir <dir>] [--mute] [--frames <n>] [--list-drivers] [--help]
+```
+
+Sound clocks the emulation, independently of the display's refresh rate.
+`--mute` plays without it, pacing on the ROM region's frame rate and a
+monotonic clock instead; use it where there is no audio device. `--frames <n>`
+needs a ROM and runs that many frames with no window and no GL context at all,
+with the same audio, battery and autosave behaviour, printing where the data
+went — it is what CI runs under SDL's dummy drivers. `--list-drivers` prints
+the compiled SDL video and audio backends.
+
+## Keys and controllers
 
 | Key | Action |
 |---|---|
 | Arrow keys | Direction pad |
 | X / Z | A / B |
 | Enter / Right Shift | Start / Select |
-| Space | Pause/resume |
-| R | Reset |
-| F5 / F8 | Save/load state (use Fn on Macs where needed) |
-| Escape | Quit |
+| Escape or Space | Pause menu (Escape also backs out of panels) |
+| F11 | Full screen |
+| F5 / F8 | Save / load slot 1 |
+| . / , (hold) | Fast-forward / rewind 2×, Shift for 6× |
+| Backspace | Jump back 5 s, Shift for 15 s |
 
-Losing window focus pauses emulation and clears queued audio. Sound clocks the
-emulation independently of display refresh rate; `--mute` uses the ROM region's
-frame rate and a monotonic clock. Use `--mute` when no audio device is available.
+Any SDL game controller works without configuration. The south face button is
+NES B and the east one NES A, because a thumb rests on the south button and
+the other way round makes every game feel backwards; Back is Select and Start
+is Start. The direction pad and the left stick both steer. The shoulders run
+time at 2× and the triggers at 6×, left for backwards and right for forwards,
+held rather than toggled. Two controllers are taken, in the order they are
+plugged in, as the two ports.
 
-Saves are keyed by ROM payload identity, so moving or renaming a ROM retains its
-saves. The default directory is `~/Library/Application Support/Emulia` on macOS
-and `$XDG_DATA_HOME/emulia` (or `~/.local/share/emulia`) on Linux. Override it with
-`--save-dir /path/to/saves`, including a directory on removable storage.
-Battery RAM is saved every five seconds, on pause/focus loss and on clean exit. Save
-replacement is atomic; malformed existing SRAM is reported and left intact.
-Autosave errors appear in the launching terminal and are retried at the next
-interval, including while paused; the game stays open so its progress remains
-in memory. Avoid running two copies of the same
-game against the same save directory, since the last writer wins.
+Settings → Controller buttons → Set up remaps A, B, Select and Start, either
+for a controller or for the keyboard: press the four buttons in turn and the
+profile is saved under that controller's SDL GUID, or under `keyboard`. The
+direction pad and stick are not remapped. Escape cancels.
 
-F5/F8 use the existing core's versioned state format. Android save containers
-and metadata are not imported automatically. Force-quitting can lose battery
-changes since the last periodic save.
+## Saves and data
+
+The data directory is `~/Library/Application Support/Emulia` on macOS and
+`$XDG_DATA_HOME/emulia` (or `~/.local/share/emulia`) on Linux. Pass
+`--data-dir /path/to/dir` to override it, including a directory on removable
+storage; `--save-dir` is still accepted as an alias for it.
+
+```
+settings.json                     shape, look, palette, trim, shelf view, full screen
+controllers.json                  one button profile per SDL GUID, plus "keyboard"
+palette.pal                       the imported palette, raw bytes
+library/index.json                one entry per game: id, title, added, played, seconds, archived
+library/problems.log              the last 200 lines of what went wrong, and why
+library/<hash>/game.nes           the private copy, bounded to 16 MB on import
+library/<hash>/battery.sav        the battery RAM, shared by every slot
+library/<hash>/auto.state         the automatic save, with auto.png beside it
+library/<hash>/slot-0.state …     the ten slots (slot 1 is slot-0), each with
+library/<hash>/slot-9.state       a slot-N.png thumbnail beside it
+library/<hash>/art.png            chosen box art, longest edge at most 1024
+```
+
+`<hash>` is a hash of the ROM's payload rather than of its file name, and it is
+the key Android uses too, so moving or renaming a game file keeps its saves.
+Every write is atomic — a temp file in the same directory, fsync, rename — so a
+crash never leaves half a save, index or setting behind.
+
+Battery RAM is written every five seconds while a game runs, the moment it is
+paused (losing the window's focus pauses it), whenever a slot is saved, on the
+way back to the shelf and on quit. Leaving and quitting also write the
+automatic save, which is what the game resumes from next time. Force-quitting
+can still lose the few seconds since the last flush.
+
+A battery save that will not load is never written over: it is renamed
+`battery.sav.unreadable` beside itself, the reason goes in the problem log, and
+the game opens paused saying it had to start from an earlier point. If it
+cannot even be renamed, the session writes no battery at all rather than
+replacing someone's adventure with empty RAM. An autosave that will not load is
+reported the same way and the game starts from the battery instead.
+
+The first desktop player kept `<identity>.sav` and `<identity>.state` loose in
+the data directory. Opening a game moves them once into its folder, as
+`battery.sav` and slot 1, and says so in the problem log; nothing is deleted.
+Android save containers and their metadata are not imported.
+
+Screenshots are the raw 256×240 frame with no shape, trim or look, written to
+`~/Pictures/Emulia/<title> yyyy-MM-dd HH.mm.ss.png`. On Linux a
+`XDG_PICTURES_DIR` set in `~/.config/user-dirs.dirs` is honoured.
+
+Avoid running two copies of the same game against the same data directory: the
+last writer wins.
 
 ## Verification
 
 ```sh
+cargo fmt -p nes-desktop -- --check
 cargo test --workspace --locked
+cargo clippy --locked -p nes-core -p nes-runner -p nes-desktop --all-targets --no-deps -- -D warnings
+cargo build --release --locked -p nes-desktop -p nes-runner
 python3 scripts/check-desktop.py target/release/nes-desktop --require-native-drivers
+python3 scripts/check-shaders.py
 ```
 
-The smoke test creates its own NROM, runs the real frontend with SDL dummy video
-and audio drivers, and checks SRAM persistence and invalid-input handling. CI
-runs this on each OS/architecture above. Dummy drivers cannot verify physical
-keyboard behavior, audible output or GPU presentation; check those interactively
-with a ROM you own. The separate external ROM accuracy suite requires the files
-described in `core/tests/roms/README.md`; its absence is not an accuracy pass.
+`cargo fmt` is checked for `nes-desktop` alone; `core/` and `native/` predate it
+and are not rustfmt-clean. The smoke test creates its own NROM, runs the real
+executable headlessly through `--frames` with SDL's dummy video and audio
+drivers, and checks audio pacing, muted pacing, the library import and its
+deduplication, SRAM persistence, autosave recovery and invalid inputs. CI runs
+it on Ubuntu 22.04 and macOS 15, x86-64 and ARM64. `check-shaders.py` compiles
+the desktop GLSL in `desktop/src/shaders` as well as Android's, using
+`glslangValidator` from `PATH` or the Android SDK's emulator, and skips when
+neither is present.
+
+Dummy drivers cannot verify a window, physical keys, a controller, audible
+sound or GPU presentation. Those need a person, a ROM they own and one
+controller. Working through the shell:
+
+- [ ] The game runs in the letterboxed area with sound, and the arrow keys,
+      X, Z, Enter and Right Shift play it.
+- [ ] Space freezes the picture and stops the sound; F11 is full screen; F5
+      then F8 restores; `.` fast-forwards, `,` rewinds and Backspace jumps
+      back.
+- [ ] Closing the window writes `library/<hash>/auto.state` and `battery.sav`.
+- [ ] A bad ROM path shows "That game file didn't work." with an OK button
+      that dismisses it.
+- [ ] The shelf shows the game with its autosave thumbnail as the cover,
+      "Resume ›" and its playtime.
+- [ ] "Add a game" opens a native file chooser and imports; a second import of
+      the same file does not add a second card.
+- [ ] The card menu sets and clears box art, and dragging an image onto the
+      window while a game is open sets it.
+- [ ] "Put this away" moves a game to the archive; "Put away (1)" shows it
+      with "Bring back" and "Delete"; clicking a card opens the game.
+- [ ] The Cards/List toggle survives a restart.
+- [ ] Dragging the time handle left rewinds with an amber "Rewinding N×" pill
+      and an amber handle; dragging right gives a green "Fast-forward N×";
+      releasing springs the handle back and play resumes.
+- [ ] ↺5 and ↺15 are dim until there is history to jump back into, and jump
+      back when there is; at the end of the tape "That's as far back as this
+      goes." shows for about two seconds.
+- [ ] In full screen the chrome hides after five idle seconds, and a mouse
+      move brings back the pill and the time row.
+- [ ] The pause menu says "Take your time"; "Save states" shows ten tiles;
+      saving into an empty slot 1 is immediate and saving again asks "Replace
+      slot 1?".
+- [ ] Load restores and says "Save loaded. Press Resume when you're ready."
+- [ ] "Screenshot" writes into `~/Pictures/Emulia` and says so.
+- [ ] "Reset game" asks first and restarts with the battery save kept.
+- [ ] "Back to your shelf" returns with the autosave thumbnail as the cover,
+      and Escape backs out one level at a time.
+- [ ] Start on a controller resumes from the pause panel.
+- [ ] From the shelf, Settings previews the newest thumbnail or the built
+      pattern; every Look changes it through the real shader; Shape and Trim
+      change the letterbox; Colours restains it.
+- [ ] "From a file" opens the picker: a valid `.pal` shows "Palette loaded."
+      and a Replace row, and a too-short one shows "That palette file didn't
+      work." with the reason in the problem log.
+- [ ] From a game, the preview is the paused frame, "Done" returns to the
+      pause menu, and the game takes the chosen look and palette at once.
+- [ ] Controller buttons → Set up: four presses on the keyboard save it and
+      say "Buttons saved for Keyboard…", and the new keys play; the same four
+      on a controller save under its GUID in `controllers.json`; pressing one
+      button twice is ignored; Escape cancels.
+- [ ] "Audio delay" in Settings shows about 30 ms while a game plays.
+
+The separate external ROM accuracy suite requires the files described in
+`core/tests/roms/README.md`; its absence is not an accuracy pass.

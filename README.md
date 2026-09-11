@@ -3,8 +3,10 @@
 A NES emulator for the OnePlus Pad 3, written from scratch in Rust with an Android
 Compose shell. No ads, accounts, feature locks, bundled ROMs or network permission.
 
-The same core also runs on **macOS and Linux** through a portable desktop player.
-See [desktop build instructions and controls](docs/DESKTOP.md):
+The same core also runs on **macOS and Linux**, with the whole shell rather than
+a player: the box-art shelf, ten save slots, rewind and fast-forward, the ten
+looks and palettes, and gamepads with a mapping wizard, in SDL2, OpenGL and egui.
+See [desktop build instructions, controls and data layout](docs/DESKTOP.md):
 
 ```sh
 cargo run --release -p nes-desktop -- "/path/to/game.nes"
@@ -53,7 +55,7 @@ commercial games; the FME-7's 5B expansion audio is not implemented.
 site/       the website at emulia.website, and the privacy policy Play requires
 core/       nes-core: no I/O, threads or frame-time allocation
 runner/     nes-runner: traces, frame hashes and automated ROM tests
-desktop/    nes-desktop: macOS/Linux SDL2 video, keyboard, audio and saves
+desktop/    nes-desktop: macOS/Linux SDL2 + OpenGL + egui shell: shelf, saves, time control, looks, gamepads
 native/     nes-android: JNI boundary and AAudio output
 android/    Compose shelf, play view, picture and control settings, save UI
 scripts/    native builds and external ROM regression runner
