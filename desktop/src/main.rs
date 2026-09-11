@@ -2,6 +2,8 @@
 mod engine;
 #[allow(dead_code)] // pictures_dir and read_png wait for screenshots and art in Task 9.
 mod files;
+#[allow(dead_code)] // Pads, profiles and the wizard gain their callers in Task 9.
+mod input;
 #[allow(dead_code)] // Playtime and thumbnails are for the shelf screen in Task 9.
 mod library;
 mod palette;
