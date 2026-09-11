@@ -60,6 +60,10 @@ pub struct Session {
     pub paused: bool,
     pub scrub: i32,
     battery: PathBuf,
+    /// Set when a battery save that would not load could not be moved aside
+    /// either. The only copy of it is still on disk, so this session writes no
+    /// battery at all rather than replacing it with empty RAM.
+    battery_unreadable: bool,
     library_root: PathBuf,
     audio: Option<Box<dyn Audio>>,
     target_bytes: u32,
@@ -90,32 +94,56 @@ impl Session {
         let mut warnings = Vec::new();
         let battery = library.battery_path(&game.id);
         let mut paused = false;
+        let mut battery_unreadable = false;
         if engine.battery_ram().is_some() {
-            match read_optional(&battery) {
-                Ok(Some(bytes)) => {
-                    if let Err(e) = engine.load_battery(&bytes) {
-                        library.log_problem(&game.title, &format!("{}: {e}", battery.display()));
-                        warnings.push(START_EARLIER.to_string());
-                        paused = true;
+            let failure = match read_optional(&battery) {
+                Ok(Some(bytes)) => engine
+                    .load_battery(&bytes)
+                    .err()
+                    .map(|e| format!("{}: {e}", battery.display())),
+                Ok(None) => None,
+                Err(e) => Some(e),
+            };
+            if let Some(detail) = failure {
+                // Those bytes are the only copy of someone's adventure. Move
+                // them out of the way before this session's empty RAM takes
+                // the name, and say where they went.
+                let kept = kept_aside(&battery);
+                match fs::rename(&battery, &kept) {
+                    Ok(()) => library.log_problem(
+                        &game.title,
+                        &format!("{detail}; kept as {}", kept.display()),
+                    ),
+                    Err(e) => {
+                        library.log_problem(
+                            &game.title,
+                            &format!(
+                                "{detail}; unreadable and cannot be moved to {}: {e}",
+                                kept.display()
+                            ),
+                        );
+                        battery_unreadable = true;
                     }
                 }
-                Ok(None) => {}
-                Err(e) => {
-                    library.log_problem(&game.title, &e);
-                    warnings.push(START_EARLIER.to_string());
-                    paused = true;
-                }
+                warnings.push(START_EARLIER.to_string());
+                paused = true;
             }
         }
         let auto = library.state_path(&game.id, Slot::Auto);
-        if let Ok(Some(bytes)) = read_optional(&auto) {
-            if let Err(e) = engine.load_state(&bytes) {
-                library.log_problem(&game.title, &format!("{}: {e}", auto.display()));
-                if warnings.is_empty() {
-                    warnings.push(START_EARLIER.to_string());
-                }
-                paused = true;
+        let failure = match read_optional(&auto) {
+            Ok(Some(bytes)) => engine
+                .load_state(&bytes)
+                .err()
+                .map(|e| format!("{}: {e}", auto.display())),
+            Ok(None) => None,
+            Err(e) => Some(e),
+        };
+        if let Some(detail) = failure {
+            library.log_problem(&game.title, &detail);
+            if warnings.is_empty() {
+                warnings.push(START_EARLIER.to_string());
             }
+            paused = true;
         }
         let frame_time = Duration::from_secs_f64(1.0 / engine.frame_rate());
         let target_bytes = (48_000.0 * frame_time.as_secs_f64() * 2.0).ceil() as u32 * 4;
@@ -127,13 +155,17 @@ impl Session {
                 paused,
                 scrub: 0,
                 battery,
+                battery_unreadable,
                 library_root: library.root().to_path_buf(),
                 audio,
                 target_bytes,
                 frame_time,
                 deadline: now,
                 last_flush: now,
-                was_paused: false,
+                // A game that opened paused has not been put aside by anyone,
+                // so the first tick must not read as a pause transition and
+                // flush a battery nobody has played yet.
+                was_paused: paused,
                 played_since: now,
                 error: None,
             },
@@ -202,7 +234,9 @@ impl Session {
             // Only the last frame is heard, and only if there is room for it.
             if let Some(a) = &mut self.audio {
                 if a.queued_bytes() < self.target_bytes {
-                    let _ = a.queue(self.engine.samples());
+                    if let Err(e) = a.queue(self.engine.samples()) {
+                        self.error = Some(e);
+                    }
                     a.resume();
                 }
             }
@@ -248,6 +282,9 @@ impl Session {
     }
 
     pub fn flush_battery(&mut self) -> Result<(), String> {
+        if self.battery_unreadable {
+            return Ok(());
+        }
         if let Some(bytes) = self.engine.battery_ram() {
             write_atomic(&self.battery, bytes)?;
         }
@@ -332,6 +369,15 @@ impl Session {
     }
 }
 
+/// `battery.sav.unreadable` beside the original, so bytes that would not load
+/// stay where someone can find them. An older one is replaced: a save that
+/// already failed once is worth less than the one that just did.
+fn kept_aside(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".unreadable");
+    PathBuf::from(name)
+}
+
 /// The first desktop release keyed `<identity>.sav` and `<identity>.state` at
 /// the data directory root. Move them into the game's folder once.
 pub fn migrate_flat_saves(
@@ -363,7 +409,7 @@ pub fn migrate_flat_saves(
 mod tests {
     use super::*;
     use crate::engine::tests::test_rom;
-    use std::fs;
+    use std::{cell::RefCell, fs, rc::Rc};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("emulia-{name}-{}", std::process::id()));
@@ -372,33 +418,39 @@ mod tests {
         dir
     }
 
-    /// Records what an audio device would have been asked to do.
+    /// What an audio device was asked to do. Shared with the test, because the
+    /// session owns the device once it is handed over.
     #[derive(Default)]
-    struct FakeAudio {
+    struct AudioRecord {
         queued: u32,
         cleared: usize,
         paused: bool,
     }
+
+    /// Records what an audio device would have been asked to do.
+    #[derive(Default, Clone)]
+    struct FakeAudio(Rc<RefCell<AudioRecord>>);
     impl Audio for FakeAudio {
         fn queued_bytes(&self) -> u32 {
-            self.queued
+            self.0.borrow().queued
         }
         fn queue(&mut self, samples: &[f32]) -> Result<(), String> {
-            self.queued += samples.len() as u32 * 4;
+            self.0.borrow_mut().queued += samples.len() as u32 * 4;
             Ok(())
         }
         fn clear(&mut self) {
-            self.queued = 0;
-            self.cleared += 1;
+            let mut record = self.0.borrow_mut();
+            record.queued = 0;
+            record.cleared += 1;
         }
         fn pause(&mut self) {
-            self.paused = true;
+            self.0.borrow_mut().paused = true;
         }
         fn resume(&mut self) {
-            self.paused = false;
+            self.0.borrow_mut().paused = false;
         }
         fn queued_ms(&self) -> f32 {
-            self.queued as f32 / 4.0 / 48.0
+            self.0.borrow().queued as f32 / 4.0 / 48.0
         }
     }
 
@@ -471,8 +523,10 @@ mod tests {
     fn pausing_flushes_battery_and_silences_audio() {
         let dir = temp_dir("session-pause");
         let (library, game) = library_with_game(&dir);
+        let audio = FakeAudio::default();
+        let record = audio.0.clone();
         let (mut session, _) =
-            Session::open(&library, game.clone(), Some(Box::new(FakeAudio::default()))).unwrap();
+            Session::open(&library, game.clone(), Some(Box::new(audio))).unwrap();
         use nes_core::cpu::Bus;
         session.engine.nes.bus.write(0x6000, 0x5a);
         session.paused = true;
@@ -480,6 +534,50 @@ mod tests {
         assert_eq!(paused.frames, 0);
         assert_eq!(fs::read(library.battery_path(&game.id)).unwrap()[0], 0x5a);
         assert!(session.take_error().is_none());
+        assert!(record.borrow().paused, "the device was left playing");
+        assert!(record.borrow().cleared >= 1, "the queue was left to drain");
+        assert_eq!(record.borrow().queued, 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_battery_is_kept_aside_and_never_written_over() {
+        let dir = temp_dir("session-battery");
+        let (library, game) = library_with_game(&dir);
+        let battery = library.battery_path(&game.id);
+        fs::write(&battery, b"not a battery save").unwrap();
+        let (mut session, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert_eq!(warnings, vec![START_EARLIER.to_string()]);
+        assert!(session.paused);
+        let kept = PathBuf::from(format!("{}.unreadable", battery.display()));
+        assert_eq!(fs::read(&kept).unwrap(), b"not a battery save");
+        assert!(
+            !battery.exists(),
+            "the empty machine must not claim the name"
+        );
+        assert!(library.problems()[0].contains("unreadable"));
+        // A paused tick, then ordinary play, then closing: none of them may
+        // reach past the file that was moved out of the way.
+        session.advance(Buttons(0), Buttons(0));
+        session.paused = false;
+        session.advance(Buttons(0), Buttons(0));
+        session.advance(Buttons(0), Buttons(0));
+        session.close();
+        assert_eq!(fs::read(&battery).unwrap().len(), 8192);
+        assert_eq!(fs::read(&kept).unwrap(), b"not a battery save");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_autosave_that_cannot_be_read_is_reported_and_pauses() {
+        let dir = temp_dir("session-autoerr");
+        let (library, game) = library_with_game(&dir);
+        // A directory where the autosave belongs: it exists, and it will never read.
+        fs::create_dir_all(library.state_path(&game.id, Slot::Auto)).unwrap();
+        let (session, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert_eq!(warnings, vec![START_EARLIER.to_string()]);
+        assert!(session.paused);
+        assert!(library.problems()[0].contains("auto.state"));
         fs::remove_dir_all(dir).unwrap();
     }
 
