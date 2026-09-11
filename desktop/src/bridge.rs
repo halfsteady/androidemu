@@ -10,7 +10,7 @@
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
 use sdl2::event::{Event as SdlEvent, WindowEvent};
 use sdl2::keyboard::{Keycode, Mod, Scancode};
-use sdl2::mouse::MouseButton;
+use sdl2::mouse::{MouseButton, MouseWheelDirection};
 use sdl2::video::Window;
 use std::{sync::Arc, time::Instant};
 
@@ -19,6 +19,13 @@ pub struct Bridge {
     painter: egui_glow::Painter,
     events: Vec<Event>,
     modifiers: Modifiers,
+    /// Whether the window has the keyboard. egui dims what it draws and drops
+    /// held keys when it does not.
+    focused: bool,
+    /// What the last pass scaled by. The painter has to use the same number
+    /// the shapes were tessellated with, not whatever the window says now: a
+    /// display change between the two would smear the frame.
+    scale: f32,
     start: Instant,
 }
 
@@ -63,6 +70,8 @@ impl Bridge {
             painter,
             events: Vec::new(),
             modifiers: Modifiers::default(),
+            focused: true,
+            scale: 1.0,
             start: Instant::now(),
         })
     }
@@ -97,13 +106,23 @@ impl Bridge {
             SdlEvent::MouseWheel {
                 precise_x,
                 precise_y,
+                direction,
                 ..
-            } => self.events.push(Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Line,
-                delta: Vec2::new(*precise_x, *precise_y),
-                phase: egui::TouchPhase::Move,
-                modifiers: self.modifiers,
-            }),
+            } => {
+                // Natural scrolling arrives as a flipped wheel rather than
+                // negated numbers, so the sign has to be put back by hand or
+                // every list scrolls the wrong way on a Mac trackpad.
+                let sign = match direction {
+                    MouseWheelDirection::Flipped => -1.0,
+                    _ => 1.0,
+                };
+                self.events.push(Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: Vec2::new(*precise_x * sign, *precise_y * sign),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: self.modifiers,
+                });
+            }
             SdlEvent::KeyDown {
                 keycode: Some(keycode),
                 keymod,
@@ -136,11 +155,21 @@ impl Bridge {
             SdlEvent::Window {
                 win_event: WindowEvent::FocusGained,
                 ..
-            } => self.events.push(Event::WindowFocused(true)),
+            } => {
+                self.focused = true;
+                self.events.push(Event::WindowFocused(true));
+            }
             SdlEvent::Window {
                 win_event: WindowEvent::FocusLost,
                 ..
             } => {
+                // Modifiers released while another window had the keyboard are
+                // never reported, so a Shift held on the way out would stay
+                // held for ever. Nothing is down once we cannot see it.
+                self.focused = false;
+                self.modifiers = Modifiers::default();
+                self.events
+                    .push(Event::ModifiersChanged(Modifiers::default()));
                 self.events.push(Event::WindowFocused(false));
                 self.events.push(Event::PointerGone);
             }
@@ -180,7 +209,7 @@ impl Bridge {
         egui::TexturesDelta,
     ) {
         let (w, h) = window.size();
-        let input = RawInput {
+        let mut input = RawInput {
             screen_rect: Some(Rect::from_min_size(
                 Pos2::ZERO,
                 Vec2::new(w as f32, h as f32),
@@ -188,11 +217,18 @@ impl Bridge {
             max_texture_side: Some(self.painter.max_texture_side()),
             time: Some(self.start.elapsed().as_secs_f64()),
             events: std::mem::take(&mut self.events),
+            focused: self.focused,
             ..Default::default()
         };
-        self.ctx
-            .set_pixels_per_point(Self::pixels_per_point(window));
+        // Told as the display's own scale rather than as a zoom, so that a
+        // reader who wants bigger text later has a zoom factor left to turn.
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(Self::pixels_per_point(window));
         let output = self.ctx.run_ui(input, build);
+        self.scale = output.pixels_per_point;
         let primitives = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         (output.platform_output, primitives, output.textures_delta)
     }
@@ -204,12 +240,8 @@ impl Bridge {
         textures: &mut egui::TexturesDelta,
     ) {
         let (dw, dh) = window.drawable_size();
-        self.painter.paint_and_update_textures(
-            [dw, dh],
-            Self::pixels_per_point(window),
-            primitives,
-            textures,
-        );
+        self.painter
+            .paint_and_update_textures([dw, dh], self.scale, primitives, textures);
     }
 
     /// Gives the painter's GL objects back while the context is still current.

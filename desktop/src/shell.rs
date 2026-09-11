@@ -20,6 +20,7 @@ use crate::Options;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Scancode;
 use sdl2::video::{FullscreenType, GLProfile, SwapInterval};
+use sdl2::{GameControllerSubsystem, JoystickSubsystem};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,6 +64,10 @@ pub struct App {
     pub scrub_fraction: f32,
     pub rewind_depth: usize,
     pub audio_ms: f32,
+    /// Whether the framebuffer has changed since it was last handed to the
+    /// GPU. A paused game shows the same 245 KB every tick; uploading it
+    /// sixty times a second buys nothing.
+    pub frame_dirty: bool,
     /// Cover art by game id, keyed on the file's mtime so replacing the
     /// picture replaces the texture.
     pub covers: HashMap<String, (i64, egui::TextureHandle)>,
@@ -204,9 +209,10 @@ fn escape(app: &App) -> Action {
     ) {
         (true, ..) => Action::CloseDialog,
         (_, _, true, _, _) => Action::CancelWizard,
-        (_, Panel::Problems, ..) | (_, Panel::Settings, ..) | (_, Panel::Slots, ..) => {
-            Action::ClosePanel
-        }
+        (_, Panel::Problems, ..)
+        | (_, Panel::Settings, ..)
+        | (_, Panel::Slots, ..)
+        | (_, Panel::Mapping, ..) => Action::ClosePanel,
         (_, Panel::Pause, ..) => Action::Resume,
         (_, Panel::None, _, true, _) => Action::Pause,
         (_, Panel::None, _, false, true) => Action::ToggleFullscreen,
@@ -240,6 +246,15 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
 }
 
 fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
+    // Whatever is open is being put away, not abandoned: its autosave and its
+    // playtime are written before the window belongs to something else. A
+    // .nes dropped on a running game used to cost both.
+    if let Some(mut open) = app.session.take() {
+        open.close();
+    }
+    app.thumbs.clear();
+    app.scrub_fraction = 0.0;
+    app.input.clear();
     let audio = match sdl {
         Some(sdl) => match crate::open_audio(sdl) {
             Ok(a) => Some(a),
@@ -256,7 +271,7 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
                 .engine
                 .set_palette(app.settings.colours(&app.data_dir));
             app.session = Some(session);
-            app.thumbs.clear();
+            app.frame_dirty = true;
             app.panel = if warnings.is_empty() {
                 Panel::None
             } else {
@@ -309,14 +324,22 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.message = None;
         }
         Action::ToggleFullscreen => {
-            app.fullscreen = !app.fullscreen;
-            app.settings.fullscreen = app.fullscreen;
-            app.settings_dirty = true;
-            let _ = window.set_fullscreen(if app.fullscreen {
+            // Remembered only once the window has actually gone there: a
+            // refused change that is saved anyway comes back wrong next time.
+            let wanted = !app.fullscreen;
+            let state = if wanted {
                 FullscreenType::Desktop
             } else {
                 FullscreenType::Off
-            });
+            };
+            match window.set_fullscreen(state) {
+                Ok(()) => {
+                    app.fullscreen = wanted;
+                    app.settings.fullscreen = wanted;
+                    app.settings_dirty = true;
+                }
+                Err(e) => app.report("Full screen didn't work.", &e),
+            }
         }
         Action::SaveConfirmed(n) => {
             if let Some(session) = &mut app.session {
@@ -331,7 +354,8 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             if let Some(session) = &mut app.session {
                 match session.load(Slot::Number(n)) {
                     Ok(()) => {
-                        app.message = Some("Save loaded. Press Resume when you're ready.".into())
+                        app.frame_dirty = true;
+                        app.message = Some("Save loaded. Press Resume when you're ready.".into());
                     }
                     Err(e) => app.report("That save couldn't be loaded.", &e),
                 }
@@ -344,6 +368,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                 while done < frames && session.engine.rewind_step() {
                     done += 1;
                 }
+                app.frame_dirty |= done > 0;
                 if done < frames {
                     app.notice(END_OF_TAPE);
                 }
@@ -375,6 +400,153 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         // Tasks 11 to 14 bring the panels that raise the rest. Saying so out
         // loud beats a silent no-op while the shell is half built.
         other => eprintln!("unhandled {other:?}"),
+    }
+}
+
+/// One SDL event, turned into whatever it means here: a held button, a raised
+/// action, or a key the wizard is learning. Lifted out of the loop so that the
+/// loop stays six numbered steps long.
+fn handle_event(
+    app: &mut App,
+    event: &Event,
+    bridge: &Bridge,
+    controllers: &GameControllerSubsystem,
+    joysticks: &JoystickSubsystem,
+) {
+    match event {
+        Event::Quit { .. } => app.quit = true,
+        Event::Window {
+            win_event: WindowEvent::FocusLost,
+            ..
+        } => {
+            // Walking away from a running game should not cost progress, and a
+            // pause that is already up stays up.
+            let playing = app.session.is_some() && app.panel == Panel::None && app.wizard.is_none();
+            if playing {
+                app.actions.push(Action::Pause);
+            }
+        }
+        Event::DropFile { filename, .. } => {
+            let action = dropped(app, PathBuf::from(filename));
+            app.actions.push(action);
+        }
+        Event::MouseMotion { .. } | Event::MouseButtonDown { .. } => {
+            app.chrome_until = Instant::now() + CHROME_IDLE;
+        }
+        Event::KeyDown {
+            scancode: Some(scancode),
+            keymod,
+            repeat: false,
+            ..
+        } => {
+            app.chrome_until = Instant::now() + CHROME_IDLE;
+            let shift =
+                keymod.intersects(sdl2::keyboard::Mod::LSHIFTMOD | sdl2::keyboard::Mod::RSHIFTMOD);
+            if app.wizard.is_some() {
+                // The wizard has the keyboard: every key is a button it is
+                // trying to learn. Every key but Escape, which is the way out
+                // of anything, and would otherwise become someone's A button.
+                if *scancode == Scancode::Escape {
+                    let action = escape(app);
+                    app.actions.push(action);
+                } else if let Some(wizard) = app.wizard.as_mut() {
+                    let pressed =
+                        wizard.press(Profiles::KEYBOARD, "Keyboard", &key_name(*scancode));
+                    if let WizardEvent::Done(key, profile) = pressed {
+                        finish_wizard(app, key, profile);
+                    }
+                }
+                return;
+            }
+            // A text field, once there is one, gets the key instead.
+            if bridge.ctx.egui_wants_keyboard_input() {
+                return;
+            }
+            match scancode {
+                Scancode::Escape => {
+                    let action = escape(app);
+                    app.actions.push(action);
+                }
+                Scancode::Space => app.actions.push(if app.panel == Panel::Pause {
+                    Action::Resume
+                } else if app.session.is_some() {
+                    Action::Pause
+                } else {
+                    Action::CloseDialog
+                }),
+                Scancode::F11 => app.actions.push(Action::ToggleFullscreen),
+                Scancode::F5 if app.playing() => app.actions.push(Action::SaveConfirmed(0)),
+                Scancode::F8 if app.playing() => app.actions.push(Action::Load(0)),
+                _ => {
+                    let jump = app.input.jump_back(*scancode, shift);
+                    if let Some(seconds) = jump {
+                        if app.playing() {
+                            app.actions.push(Action::JumpBack(seconds));
+                        }
+                    } else if app.panel == Panel::Pause
+                        && app.input.is_start(None, &key_name(*scancode))
+                    {
+                        app.actions.push(Action::Resume);
+                    } else {
+                        app.input.key(*scancode, true);
+                    }
+                }
+            }
+        }
+        Event::KeyUp {
+            scancode: Some(scancode),
+            ..
+        } => app.input.key(*scancode, false),
+        Event::ControllerDeviceAdded { which, .. } => {
+            if let (Ok(controller), Ok(guid)) =
+                (controllers.open(*which), joysticks.device_guid(*which))
+            {
+                app.input.pad_added(controller, guid.string());
+            }
+        }
+        Event::ControllerDeviceRemoved { which, .. } => {
+            let was_ours = app.input.pad_removed(*which).is_some();
+            if was_ours && app.session.is_some() {
+                // Always say so. Pause only when the game is the thing in
+                // front of you: a pause raised over a dialog or the wizard
+                // would close what you were in the middle of.
+                app.message = Some("Controller disconnected. Your game is paused.".into());
+                if app.panel == Panel::None && app.dialog.is_none() && app.wizard.is_none() {
+                    app.actions.push(Action::Pause);
+                }
+            }
+        }
+        Event::ControllerButtonDown { which, button, .. } => {
+            app.chrome_until = Instant::now() + CHROME_IDLE;
+            let physical = button.string();
+            if app.wizard.is_some() {
+                let device = app
+                    .input
+                    .pad(*which)
+                    .map(|pad| (pad.guid.clone(), pad.name.clone()));
+                let pressed = match (device, app.wizard.as_mut()) {
+                    (Some((guid, name)), Some(wizard)) => {
+                        Some(wizard.press(&guid, &name, &physical))
+                    }
+                    _ => None,
+                };
+                if let Some(WizardEvent::Done(key, profile)) = pressed {
+                    finish_wizard(app, key, profile);
+                }
+                return;
+            }
+            if app.panel == Panel::Pause && app.input.is_start(Some(*which), &physical) {
+                app.actions.push(Action::Resume);
+            }
+            app.input.pad_button(*which, *button, true);
+        }
+        Event::ControllerButtonUp { which, button, .. } => {
+            app.input.pad_button(*which, *button, false)
+        }
+        Event::ControllerAxisMotion {
+            which, axis, value, ..
+        } => app.input.pad_axis(*which, *axis, *value),
+        _ => {}
     }
 }
 
@@ -443,6 +615,7 @@ pub fn run(options: Options) -> Result<(), String> {
         scrub_fraction: 0.0,
         rewind_depth: 0,
         audio_ms: 0.0,
+        frame_dirty: true,
         covers: HashMap::new(),
         thumbs: HashMap::new(),
         preview: None,
@@ -451,7 +624,12 @@ pub fn run(options: Options) -> Result<(), String> {
         quit: false,
     };
     if app.fullscreen {
-        let _ = window.set_fullscreen(FullscreenType::Desktop);
+        // A refused full screen must not leave the layout believing it got
+        // one; the saved preference is left alone, so the next run tries again.
+        if let Err(e) = window.set_fullscreen(FullscreenType::Desktop) {
+            app.fullscreen = false;
+            app.report("Full screen didn't work.", &e);
+        }
     }
     if let Some(rom) = &options.rom {
         match crate::import(&app.library, rom) {
@@ -464,140 +642,12 @@ pub fn run(options: Options) -> Result<(), String> {
     } else {
         Some(sdl.clone())
     };
-    let mut last_frame_uploaded = false;
     let mut upload_reported = false;
     while !app.quit {
         // 1. Events.
         for event in events.poll_iter() {
             bridge.handle(&event);
-            match &event {
-                Event::Quit { .. } => app.quit = true,
-                Event::Window {
-                    win_event: WindowEvent::FocusLost,
-                    ..
-                } => {
-                    // Walking away from a running game should not cost
-                    // progress, and a pause that is already up stays up.
-                    let playing =
-                        app.session.is_some() && app.panel == Panel::None && app.wizard.is_none();
-                    if playing {
-                        app.actions.push(Action::Pause);
-                    }
-                }
-                Event::DropFile { filename, .. } => {
-                    let action = dropped(&app, PathBuf::from(filename));
-                    app.actions.push(action);
-                }
-                Event::MouseMotion { .. } | Event::MouseButtonDown { .. } => {
-                    app.chrome_until = Instant::now() + CHROME_IDLE
-                }
-                Event::KeyDown {
-                    scancode: Some(scancode),
-                    keymod,
-                    repeat: false,
-                    ..
-                } => {
-                    app.chrome_until = Instant::now() + CHROME_IDLE;
-                    let shift = keymod.intersects(
-                        sdl2::keyboard::Mod::LSHIFTMOD | sdl2::keyboard::Mod::RSHIFTMOD,
-                    );
-                    if app.wizard.is_some() {
-                        let pressed = app.wizard.as_mut().expect("wizard is open").press(
-                            Profiles::KEYBOARD,
-                            "Keyboard",
-                            &key_name(*scancode),
-                        );
-                        if let WizardEvent::Done(key, profile) = pressed {
-                            finish_wizard(&mut app, key, profile);
-                        }
-                        continue;
-                    }
-                    // A text field, once there is one, gets the key instead.
-                    if bridge.ctx.egui_wants_keyboard_input() {
-                        continue;
-                    }
-                    match scancode {
-                        Scancode::Escape => {
-                            let action = escape(&app);
-                            app.actions.push(action);
-                        }
-                        Scancode::Space => app.actions.push(if app.panel == Panel::Pause {
-                            Action::Resume
-                        } else if app.session.is_some() {
-                            Action::Pause
-                        } else {
-                            Action::CloseDialog
-                        }),
-                        Scancode::F11 => app.actions.push(Action::ToggleFullscreen),
-                        Scancode::F5 if app.playing() => app.actions.push(Action::SaveConfirmed(0)),
-                        Scancode::F8 if app.playing() => app.actions.push(Action::Load(0)),
-                        _ => {
-                            let jump = app.input.jump_back(*scancode, shift);
-                            if let Some(seconds) = jump {
-                                if app.playing() {
-                                    app.actions.push(Action::JumpBack(seconds));
-                                }
-                            } else if app.panel == Panel::Pause
-                                && app.input.is_start(None, &key_name(*scancode))
-                            {
-                                app.actions.push(Action::Resume);
-                            } else {
-                                app.input.key(*scancode, true);
-                            }
-                        }
-                    }
-                }
-                Event::KeyUp {
-                    scancode: Some(scancode),
-                    ..
-                } => app.input.key(*scancode, false),
-                Event::ControllerDeviceAdded { which, .. } => {
-                    if let (Ok(controller), Ok(guid)) =
-                        (controllers.open(*which), joysticks.device_guid(*which))
-                    {
-                        app.input.pad_added(controller, guid.string());
-                    }
-                }
-                Event::ControllerDeviceRemoved { which, .. } => {
-                    let was_ours = app.input.pad_removed(*which).is_some();
-                    if was_ours && app.session.is_some() {
-                        app.actions.push(Action::Pause);
-                        app.message = Some("Controller disconnected. Your game is paused.".into());
-                    }
-                }
-                Event::ControllerButtonDown { which, button, .. } => {
-                    app.chrome_until = Instant::now() + CHROME_IDLE;
-                    let physical = button.string();
-                    if app.wizard.is_some() {
-                        let device = app
-                            .input
-                            .pad(*which)
-                            .map(|pad| (pad.guid.clone(), pad.name.clone()));
-                        if let Some((guid, name)) = device {
-                            let pressed = app
-                                .wizard
-                                .as_mut()
-                                .expect("wizard is open")
-                                .press(&guid, &name, &physical);
-                            if let WizardEvent::Done(key, profile) = pressed {
-                                finish_wizard(&mut app, key, profile);
-                            }
-                        }
-                        continue;
-                    }
-                    if app.panel == Panel::Pause && app.input.is_start(Some(*which), &physical) {
-                        app.actions.push(Action::Resume);
-                    }
-                    app.input.pad_button(*which, *button, true);
-                }
-                Event::ControllerButtonUp { which, button, .. } => {
-                    app.input.pad_button(*which, *button, false)
-                }
-                Event::ControllerAxisMotion {
-                    which, axis, value, ..
-                } => app.input.pad_axis(*which, *axis, *value),
-                _ => {}
-            }
+            handle_event(&mut app, &event, &bridge, &controllers, &joysticks);
         }
         // 2. UI. The pass ends here without painting: the actions it raised
         // have to be applied before the engine runs.
@@ -628,13 +678,14 @@ pub fn run(options: Options) -> Result<(), String> {
             } else {
                 app.input.buttons()
             };
-            hit_end = session.advance(p1, p2).hit_end;
+            let advanced = session.advance(p1, p2);
+            hit_end = advanced.hit_end;
             trouble = session
                 .take_error()
                 .map(|e| (session.game.title.clone(), e));
             app.rewind_depth = session.engine.rewind_depth();
             app.audio_ms = session.audio_ms();
-            last_frame_uploaded = false;
+            app.frame_dirty |= advanced.frames > 0;
         }
         if hit_end {
             app.notice(END_OF_TAPE);
@@ -651,14 +702,13 @@ pub fn run(options: Options) -> Result<(), String> {
             video.gl().clear(glow::COLOR_BUFFER_BIT);
         }
         if app.session.is_some() {
-            let uploaded = if last_frame_uploaded {
-                Ok(())
-            } else {
-                video.upload(app.session.as_ref().expect("a game is open").engine.frame())
+            let uploaded = match (&app.session, app.frame_dirty) {
+                (Some(session), true) => video.upload(session.engine.frame()),
+                _ => Ok(()),
             };
             match uploaded {
                 Ok(()) => {
-                    last_frame_uploaded = true;
+                    app.frame_dirty = false;
                     let scale = Bridge::pixels_per_point(&window);
                     let top = if app.fullscreen {
                         0.0
