@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile-check the GLSL in ScreenRenderer.kt without a device.
+"""Compile-check the GLSL in ScreenRenderer.kt and desktop/src/shaders without a device.
 
 A shader that fails to compile is a black screen, and the only place that shows
 up is on hardware — the Kotlin compiles either way, because the shader is a
@@ -28,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "android/app/src/main/java/dev/androidemu/ScreenRenderer.kt"
+DESKTOP = ROOT / "desktop/src/shaders"
 
 
 def find_validator(explicit: str | None) -> str | None:
@@ -42,12 +43,13 @@ def find_validator(explicit: str | None) -> str | None:
 
 
 def shaders() -> list[tuple[str, str, str]]:
-    """Every GLSL literal in the file, as (name, source, suffix).
+    """Every GLSL source in the project, as (name, source, suffix).
 
     Found rather than listed, so a shader added to the renderer is checked
     without anyone remembering to add it here. A constant counts as a shader
     when its literals begin with a #version line; the stage comes from whether
-    it writes gl_Position.
+    it writes gl_Position. The desktop player keeps its ported copies as files
+    under desktop/src/shaders, and those are checked the same way.
     """
     found: list[tuple[str, str, str]] = []
     name: str | None = None
@@ -81,6 +83,8 @@ def shaders() -> list[tuple[str, str, str]]:
     flush()
     if not found:
         raise SystemExit(f"no shaders found in {SOURCE}")
+    for path in sorted(DESKTOP.glob("*.vert")) + sorted(DESKTOP.glob("*.frag")):
+        found.append((path.stem + "-desktop", path.read_text(), path.suffix[1:]))
     return found
 
 
@@ -94,11 +98,15 @@ def main() -> int:
         print("skipped: no glslangValidator found (PATH or $ANDROID_HOME/emulator/lib64/vulkan)")
         return 0
 
-    # The SDK's copy is not executable where it sits, so run a copy.
     with tempfile.TemporaryDirectory() as work:
-        runnable = Path(work) / "glslangValidator"
-        shutil.copy2(validator, runnable)
-        runnable.chmod(0o755)
+        # The SDK's copy is not executable where it sits, so run a copy of it.
+        # A validator already executable is run where it is: a packaged one can
+        # be linked against libraries next to it that a copy would not find.
+        runnable = Path(validator)
+        if not os.access(validator, os.X_OK):
+            runnable = Path(work) / "glslangValidator"
+            shutil.copy2(validator, runnable)
+            runnable.chmod(0o755)
         failed = False
         for name, source, suffix in shaders():
             path = Path(work) / f"{name.lower()}.{suffix}"

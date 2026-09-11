@@ -16,6 +16,8 @@ mod session;
 #[allow(dead_code)] // Settings and controller profiles gain their callers in Task 9.
 mod settings;
 mod shell;
+#[allow(dead_code)] // The picture pipeline gains its caller with the window in Task 9.
+mod video;
 
 use library::{Game, Library};
 use session::{Audio, Session};
