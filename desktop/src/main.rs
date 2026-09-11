@@ -1,4 +1,8 @@
+#[allow(dead_code)] // pictures_dir, now_millis and read_png gain callers in Task 4.
+mod files;
 mod palette;
+#[allow(dead_code)] // The scrubber gains its caller with the play screen in Task 9.
+mod scrub;
 
 use nes_core::{Buttons, Nes};
 use sdl2::{
@@ -28,23 +32,6 @@ struct Options {
     save_dir: PathBuf,
     mute: bool,
     frames: Option<u64>,
-}
-
-fn default_save_dir() -> Result<PathBuf, String> {
-    if cfg!(target_os = "macos") {
-        return std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join("Library/Application Support/Emulia"))
-            .ok_or("HOME is unset; use --save-dir".into());
-    }
-    if let Some(path) = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-    {
-        return Ok(path.join("emulia"));
-    }
-    std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".local/share/emulia"))
-        .ok_or("HOME is unset; use --save-dir".into())
 }
 
 fn options(args: impl Iterator<Item = OsString>) -> Result<Option<Options>, String> {
@@ -94,40 +81,11 @@ fn options(args: impl Iterator<Item = OsString>) -> Result<Option<Options>, Stri
         rom: rom.ok_or("Provide a ROM path")?,
         save_dir: match save_dir {
             Some(p) => p,
-            None => default_save_dir()?,
+            None => files::default_data_dir()?,
         },
         mute,
         frames,
     }))
-}
-
-// Write in the same directory so rename atomically replaces the old save on
-// macOS/Linux. create_new avoids accidentally following an existing temp file.
-fn write_save(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .map_err(|e| format!("{}: {e}", temp.display()))?;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result.map_err(|e| format!("Cannot save {}: {e}", path.display()))
-}
-
-fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", path.display())),
-    }
 }
 
 fn play(nes: &mut Nes, options: &Options, battery: &Path, state: &Path) -> Result<(), String> {
@@ -204,7 +162,7 @@ fn play(nes: &mut Nes, options: &Options, battery: &Path, state: &Path) -> Resul
                         }
                     }
                     Keycode::F5 => {
-                        if let Err(e) = write_save(state, &nes.save_state()) {
+                        if let Err(e) = files::write_atomic(state, &nes.save_state()) {
                             eprintln!("{e}");
                         }
                     }
@@ -231,7 +189,7 @@ fn play(nes: &mut Nes, options: &Options, battery: &Path, state: &Path) -> Resul
         // recent progress unsaved indefinitely, even beyond the save interval.
         if (is_paused && !was_paused) || last_save.elapsed() >= Duration::from_secs(5) {
             if let Some(bytes) = nes.battery_ram() {
-                if let Err(e) = write_save(battery, bytes) {
+                if let Err(e) = files::write_atomic(battery, bytes) {
                     // A temporarily unavailable save directory must not close
                     // the game and discard the only remaining copy in RAM.
                     eprintln!("{e}");
@@ -323,7 +281,7 @@ fn run() -> Result<(), String> {
     let battery = options.save_dir.join(format!("{id}.sav"));
     let state = options.save_dir.join(format!("{id}.state"));
     if nes.battery_ram().is_some() {
-        if let Some(bytes) = read_optional(&battery)? {
+        if let Some(bytes) = files::read_optional(&battery)? {
             nes.load_battery_ram(&bytes)
                 .map_err(|e| format!("{}: {e}", battery.display()))?;
         }
@@ -331,7 +289,7 @@ fn run() -> Result<(), String> {
     println!("{HELP}\nSaves: {}", options.save_dir.display());
     let result = play(&mut nes, &options, &battery, &state);
     if let Some(bytes) = nes.battery_ram() {
-        write_save(&battery, bytes)?;
+        files::write_atomic(&battery, bytes)?;
     }
     result
 }
@@ -400,22 +358,6 @@ mod tests {
     }
 
     #[test]
-    fn atomic_save_replaces_and_preserves_previous_file_on_collision() {
-        let dir = std::env::temp_dir().join(format!("emulia-save-test-{}", std::process::id()));
-        fs::create_dir(&dir).unwrap();
-        let path = dir.join("game.sav");
-        write_save(&path, b"old").unwrap();
-        write_save(&path, b"new").unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"new");
-        let temp = path.with_extension(format!("tmp-{}", std::process::id()));
-        fs::write(&temp, b"existing temporary file").unwrap();
-        assert!(write_save(&path, b"replacement").is_err());
-        assert_eq!(fs::read(&path).unwrap(), b"new");
-        assert_eq!(fs::read(&temp).unwrap(), b"existing temporary file");
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     fn file_save_state_restores_the_machine_and_replays() {
         let mut rom = vec![0; 16 + 16384];
         rom[..4].copy_from_slice(b"NES\x1a");
@@ -427,7 +369,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("emulia-state-test-{}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         let path = dir.join("game.state");
-        write_save(&path, &nes.save_state()).unwrap();
+        files::write_atomic(&path, &nes.save_state()).unwrap();
         nes.step_frame();
         let expected = nes.save_state();
         nes.load_state(&fs::read(&path).unwrap()).unwrap();
