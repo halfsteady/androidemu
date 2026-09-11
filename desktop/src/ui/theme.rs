@@ -13,7 +13,9 @@ pub const BACKGROUND: Color32 = Color32::from_rgb(0x11, 0x18, 0x13);
 pub const SURFACE: Color32 = Color32::from_rgb(0x1d, 0x28, 0x20);
 pub const SURFACE_HIGH: Color32 = Color32::from_rgb(0x24, 0x31, 0x28);
 pub const ON_SURFACE: Color32 = Color32::from_rgb(0xed, 0xf4, 0xe9);
-pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(0xb3, 0xc4, 0xad);
+/// Android's `onSurfaceVariant`, which `Ui.kt` sets to `onRaised`: the two
+/// names are one colour, and hint text under a title is drawn in it.
+pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(0xc3, 0xd1, 0xbd);
 pub const OUTLINE: Color32 = Color32::from_rgb(0x6d, 0x7f, 0x68);
 pub const LEAF: Color32 = Color32::from_rgb(0xb9, 0xe3, 0x8c);
 pub const ON_LEAF: Color32 = Color32::from_rgb(0x17, 0x30, 0x0c);

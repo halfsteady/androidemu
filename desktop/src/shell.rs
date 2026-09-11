@@ -188,8 +188,14 @@ fn draw(ui: &mut egui::Ui, app: &mut App, _video: &mut Video) {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.4);
-                ui.heading("EMULIA");
-                ui.label("Drop a .nes file here");
+                // Both say what colour they are: egui would otherwise
+                // resolve a heading through the style, and this shell's
+                // style paints `strong` text in the chip colour.
+                ui.heading(egui::RichText::new("EMULIA").color(crate::ui::theme::ON_SURFACE));
+                ui.label(
+                    egui::RichText::new("Drop a .nes file here")
+                        .color(crate::ui::theme::ON_SURFACE_VARIANT),
+                );
             });
         });
     }
