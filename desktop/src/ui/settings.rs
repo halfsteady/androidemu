@@ -491,7 +491,7 @@ mod tests {
     /// is a file it is a choice like any other, with a row for replacing it.
     #[test]
     fn choosing_a_file_palette_asks_for_a_file_until_there_is_one() {
-        let dir = temp_dir("settings-palette");
+        let dir = temp_dir("ui-settings-palette");
         let ctx = context();
         let mut app = App::blank(&dir);
         app.panel = Panel::Settings;

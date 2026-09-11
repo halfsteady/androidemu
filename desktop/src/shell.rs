@@ -385,6 +385,22 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
     ));
 }
 
+/// Putting the open game away: it writes its autosave and its playtime, and
+/// the shell forgets everything that was only true while it was open. Its own
+/// function so that leaving can be tested without a window.
+fn close_session(app: &mut App) {
+    if let Some(mut session) = app.session.take() {
+        session.close();
+    }
+    app.panel = Panel::None;
+    app.dialog = None;
+    app.scrub_fraction = 0.0;
+    // The shelf's Settings panel reads this: with no game open there is no
+    // audio queue, and the last game's figure is not it.
+    app.audio_ms = 0.0;
+    app.input.clear();
+}
+
 fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
     // Whatever is open is being put away, not abandoned: its autosave and its
     // playtime are written before the window belongs to something else. A
@@ -676,18 +692,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             }
             app.panel = Panel::Problems;
         }
-        Action::BackToShelf => {
-            if let Some(mut session) = app.session.take() {
-                session.close();
-            }
-            app.panel = Panel::None;
-            app.dialog = None;
-            app.scrub_fraction = 0.0;
-            // The shelf's Settings panel reads this: with no game open there
-            // is no audio queue, and the last game's figure is not it.
-            app.audio_ms = 0.0;
-            app.input.clear();
-        }
+        Action::BackToShelf => close_session(app),
         Action::OpenSettings => {
             app.panel = Panel::Settings;
             // Both halves of the preview — the settings and the frame it is
@@ -1301,6 +1306,33 @@ mod tests {
         // And held, not zeroed, once a panel is what is on screen.
         sample_audio(&mut app, start + AUDIO_SAMPLE * 3, 0.0, false);
         assert_eq!(app.audio_ms, 44.0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Going back to the shelf puts the game away and leaves nothing of it
+    /// behind. The held audio delay is part of that: the Settings panel opened
+    /// from the shelf would otherwise print the last game's figure, and there
+    /// is no queue behind it to sample a new one from.
+    #[test]
+    fn leaving_a_game_puts_it_away_and_keeps_none_of_it() {
+        let dir = temp_dir("shell-back-to-shelf");
+        let mut app = App::blank(&dir);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        app.panel = Panel::Pause;
+        app.dialog = Some(Dialog::ConfirmReset);
+        app.scrub_fraction = -0.4;
+        app.audio_ms = 44.0;
+        close_session(&mut app);
+        assert!(app.session.is_none());
+        assert_eq!(app.panel, Panel::None);
+        assert_eq!(app.dialog, None);
+        assert_eq!(app.scrub_fraction, 0.0);
+        assert_eq!(app.audio_ms, 0.0);
+        // Put away, not dropped: the autosave it left is what the shelf shows
+        // as its cover and what opening it again resumes from.
+        assert!(app.library.has_autosave("aaaa"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

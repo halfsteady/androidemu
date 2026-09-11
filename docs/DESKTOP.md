@@ -86,8 +86,8 @@ copy, the battery save and all ten states. The Cards/List toggle is remembered.
 In a game, the Menu button, Escape and Space all open the pause menu: Resume
 game, Save states, Screenshot, Full screen, Settings, Reset game and Back to
 your shelf. Escape backs out one level at a time. F11 is full screen; after
-five seconds with no key, no mouse and no touch of the time control the chrome
-fades, and any of those brings it back.
+five seconds with no key, no mouse, no controller button and no touch of the
+time control the chrome fades, and any of those brings it back.
 
 ```
 nes-desktop [rom.nes] [--data-dir <dir>] [--mute] [--frames <n>] [--list-drivers] [--help]
@@ -97,9 +97,12 @@ Sound clocks the emulation, independently of the display's refresh rate.
 `--mute` plays without it, pacing on the ROM region's frame rate and a
 monotonic clock instead; use it where there is no audio device. `--frames <n>`
 needs a ROM and runs that many frames with no window and no GL context at all,
-with the same audio, battery and autosave behaviour, printing where the data
-went — it is what CI runs under SDL's dummy drivers. `--list-drivers` prints
-the compiled SDL video and audio backends.
+printing where the data went — it is what CI runs under SDL's dummy drivers.
+Audio and the battery behave as they do in the window, and the run starts from
+the autosave as usual, refusing to carry on if it cannot be read; it writes no
+new one, because with nothing on screen there is nobody to decide whether
+losing that progress is acceptable. `--list-drivers` prints the compiled SDL
+video and audio backends.
 
 ## Keys and controllers
 
@@ -190,14 +193,18 @@ python3 scripts/check-shaders.py
 ```
 
 `cargo fmt` is checked for `nes-desktop` alone; `core/` and `native/` predate it
-and are not rustfmt-clean. The smoke test creates its own NROM, runs the real
-executable headlessly through `--frames` with SDL's dummy video and audio
-drivers, and checks audio pacing, muted pacing, the library import and its
-deduplication, SRAM persistence, autosave recovery and invalid inputs. CI runs
-it on Ubuntu 22.04 and macOS 15, x86-64 and ARM64. `check-shaders.py` compiles
-the desktop GLSL in `desktop/src/shaders` as well as Android's, using
-`glslangValidator` from `PATH` or the Android SDK's emulator, and skips when
-neither is present.
+and are not rustfmt-clean. Clippy is green for `-p nes-desktop -p nes-runner`;
+`nes-core` trips `collapsible_match` at `core/src/apu.rs:451` under a clippy
+newer than the one CI runs, and that code predates the desktop shell and has
+nothing to do with it.
+
+The smoke test creates its own NROM, runs the real executable headlessly
+through `--frames` with SDL's dummy video and audio drivers, and checks audio
+pacing, muted pacing, the library import and its deduplication, SRAM
+persistence, autosave recovery and invalid inputs. CI runs it on Ubuntu 22.04
+and macOS 15, x86-64 and ARM64. `check-shaders.py` compiles the desktop GLSL in
+`desktop/src/shaders` as well as Android's, using `glslangValidator` from
+`PATH` or the Android SDK's emulator, and skips when neither is present.
 
 Dummy drivers cannot verify a window, physical keys, a controller, audible
 sound or GPU presentation. Those need a person, a ROM they own and one
@@ -220,9 +227,9 @@ controller. Working through the shell:
 - [ ] "Put this away" moves a game to the archive; "Put away (1)" shows it
       with "Bring back" and "Delete"; clicking a card opens the game.
 - [ ] The Cards/List toggle survives a restart.
-- [ ] Dragging the time handle left rewinds with an amber "Rewinding N×" pill
-      and an amber handle; dragging right gives a green "Fast-forward N×";
-      releasing springs the handle back and play resumes.
+- [ ] Dragging the time handle left rewinds, with the handle amber under an
+      amber "Rewinding N×" pill; dragging right turns the handle green under
+      an amber "Fast-forward N×"; releasing springs it back and play resumes.
 - [ ] ↺5 and ↺15 are dim until there is history to jump back into, and jump
       back when there is; at the end of the tape "That's as far back as this
       goes." shows for about two seconds.

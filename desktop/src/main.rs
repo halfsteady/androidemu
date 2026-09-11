@@ -4,7 +4,6 @@ mod files;
 mod input;
 mod library;
 mod palette;
-#[allow(dead_code)] // `model::bytes` writes a .pal file, which only tests need.
 mod picture;
 mod scrub;
 mod session;

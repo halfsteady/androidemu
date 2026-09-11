@@ -319,15 +319,13 @@ fn confirm(ctx: &egui::Context, app: &mut App, dialog: Dialog) {
                 .inner_margin(Margin::same(24))
                 .show(ui, |ui| {
                     ui.set_width(DIALOG.min(screen.width() - 48.0).max(0.0));
-                    if !title.is_empty() {
-                        ui.label(RichText::new(&title).size(22.0).strong().color(ON_SURFACE));
-                    }
+                    ui.label(RichText::new(&title).size(22.0).strong().color(ON_SURFACE));
                     ui.label(RichText::new(&body).size(15.0).color(ON_SURFACE_VARIANT));
                     ui.add_space(12.0);
                     if widgets::quiet(ui, yes, danger).clicked() {
                         app.actions.push(yes_action);
                     }
-                    if !no.is_empty() && widgets::quiet(ui, no, false).clicked() {
+                    if widgets::quiet(ui, no, false).clicked() {
                         app.actions.push(Action::CloseDialog);
                     }
                 });

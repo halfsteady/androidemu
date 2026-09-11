@@ -328,6 +328,9 @@ pub mod model {
         build(0.90, 0.0, 1.0, 0.0, 1.0)
     }
 
+    /// A `.pal` file's bytes. Only the round trip below reads it: the shell
+    /// imports palettes and never writes one out.
+    #[allow(dead_code)]
     pub fn bytes(colours: &[u32; 64]) -> Vec<u8> {
         colours
             .iter()
