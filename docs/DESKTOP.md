@@ -42,6 +42,12 @@ packages are missing. Check `nes-desktop --list-drivers`: Linux needs `x11` or
 `pulseaudio`; macOS needs `cocoa` and `coreaudio`. The CI smoke test checks these
 compiled backends as well as exercising the dummy drivers.
 
+"Add a game" and "Choose box art" open the system file chooser. On Linux that is
+the XDG desktop portal, spoken over D-Bus, so it needs no extra build packages —
+but it does need `xdg-desktop-portal` running with a backend for the desktop in
+use (`xdg-desktop-portal-gtk`, `-kde` or `-wlr`). Without one, dragging a `.nes`
+file or a picture onto the window does the same job.
+
 The executable can be copied out of the repository and run directly. Linux
 still needs the system C runtime and display/audio services; it is not a fully
 static executable for arbitrary distributions. CI builds on Ubuntu 22.04 for

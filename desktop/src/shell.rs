@@ -118,7 +118,6 @@ impl App {
             .map_or(0, |d| d.as_millis() as i64)
     }
 
-    #[allow(dead_code)] // The shelf in Task 11.
     pub fn cover_texture(
         &mut self,
         ctx: &egui::Context,
@@ -180,24 +179,11 @@ impl App {
 }
 
 /// What the panels draw, into the root `Ui` of the pass. Each screen arrives
-/// with its own task; until then the shelf is a wordmark and an invitation,
-/// and a running game is the picture with nothing on top of it.
+/// with its own task; until then a running game is the picture with nothing on
+/// top of it.
 fn draw(ui: &mut egui::Ui, app: &mut App, _video: &mut Video) {
     if app.session.is_none() {
-        // Task 11 replaces this with `crate::ui::shelf::show(ui, app)`.
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.4);
-                // Both say what colour they are: egui would otherwise
-                // resolve a heading through the style, and this shell's
-                // style paints `strong` text in the chip colour.
-                ui.heading(egui::RichText::new("EMULIA").color(crate::ui::theme::ON_SURFACE));
-                ui.label(
-                    egui::RichText::new("Drop a .nes file here")
-                        .color(crate::ui::theme::ON_SURFACE_VARIANT),
-                );
-            });
-        });
+        crate::ui::shelf::show(ui, app);
     }
     // Task 12 draws the play screen, Task 13 the panels, and Task 14 the
     // settings preview, which is what `_video` is for. The message is drawn
@@ -301,10 +287,67 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
 fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
     match action {
         Action::OpenGame(game) => open_game(app, game, sdl),
+        // The file dialogs are modal and block this thread, which is the one
+        // drawing the window: the loop stops for as long as the dialog is up
+        // and picks up again with the answer. Nothing is running behind it —
+        // the shelf is the only screen that raises either of these.
+        Action::Import => {
+            let picked = rfd::FileDialog::new()
+                .add_filter("NES game", &["nes"])
+                .set_title("Add a game")
+                .pick_file();
+            if let Some(path) = picked {
+                apply(app, Action::ImportFrom(path), window, sdl);
+            }
+        }
         Action::ImportFrom(path) => match crate::import(&app.library, &path) {
             Ok(game) => open_game(app, game, sdl),
             Err(e) => app.report("That game file didn't work.", &e),
         },
+        Action::ChooseArt(game) => {
+            let picked = rfd::FileDialog::new()
+                .add_filter("Picture", &["png", "jpg", "jpeg"])
+                .set_title("Choose box art")
+                .pick_file();
+            if let Some(path) = picked {
+                apply(app, Action::ChooseArtFrom(game, path), window, sdl);
+            }
+        }
+        // The cached texture goes with the file it was made from: a new
+        // picture under the same name would otherwise keep showing the old one.
+        Action::ChooseArtFrom(game, path) => match app.library.set_art(&game.id, &path) {
+            Ok(()) => {
+                app.covers.remove(&game.id);
+            }
+            Err(e) => app.report("That picture didn't work as box art.", &e),
+        },
+        Action::ClearArt(game) => {
+            if let Err(e) = app.library.clear_art(&game.id) {
+                app.report("The box art couldn't be cleared.", &e);
+            }
+            app.covers.remove(&game.id);
+        }
+        Action::SetArchived(game, archived) => {
+            if let Err(e) = app.library.set_archived(&game.id, archived) {
+                app.report("The shelf couldn't be updated.", &e);
+            }
+        }
+        // Asked before done: deleting a game takes its saves with it. Task 13
+        // draws the question; until then the dialog is raised and answered by
+        // Escape, and nothing is lost.
+        Action::DeleteRequested(game) => app.dialog = Some(Dialog::ConfirmDelete(game)),
+        Action::DeleteConfirmed(game) => {
+            if let Err(e) = app.library.forget(&game.id) {
+                app.report("The game couldn't be deleted.", &e);
+            }
+            app.covers.remove(&game.id);
+            app.dialog = None;
+        }
+        Action::ShowArchive(show) => app.show_archive = show,
+        Action::ToggleShelfList => {
+            app.settings.shelf_list = !app.settings.shelf_list;
+            app.settings_dirty = true;
+        }
         Action::Pause => {
             if let Some(session) = &mut app.session {
                 session.paused = true;
@@ -410,7 +453,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.scrub_fraction = 0.0;
             app.input.clear();
         }
-        // Tasks 11 to 14 bring the panels that raise the rest. Saying so out
+        // Tasks 12 to 14 bring the panels that raise the rest. Saying so out
         // loud beats a silent no-op while the shell is half built.
         other => eprintln!("unhandled {other:?}"),
     }
