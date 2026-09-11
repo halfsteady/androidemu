@@ -33,12 +33,19 @@ const PREPARING: &str = "Preparing a preview…";
 const DONE: &str = "•";
 
 pub fn show(ui: &mut egui::Ui, app: &mut App, video: &mut Video) {
+    if app.panel == Panel::Settings {
+        refresh_preview(ui.ctx(), app, video);
+    }
+    panels(ui.ctx(), app);
+}
+
+/// Whichever of the two is up. Everything `show` does apart from the preview,
+/// which is the one step that needs a GL context: the tests draw through here,
+/// so a panel wired to the wrong screen fails one of them.
+fn panels(ctx: &egui::Context, app: &mut App) {
     match app.panel {
-        Panel::Settings => {
-            refresh_preview(ui.ctx(), app, video);
-            settings(ui.ctx(), app);
-        }
-        Panel::Mapping => mapping(ui.ctx(), app),
+        Panel::Settings => settings(ctx, app),
+        Panel::Mapping => mapping(ctx, app),
         _ => {}
     }
 }
@@ -58,14 +65,7 @@ fn refresh_preview(ctx: &egui::Context, app: &mut App, video: &mut Video) {
         PREVIEW_WIDTH,
         PREVIEW_HEIGHT,
     );
-    // The preview borrows the one texture the game's frames go into, so the
-    // picture behind this panel is now the sample. Asking for it again puts
-    // the game back; it costs one upload, and only when a choice changed.
-    app.frame_dirty |= app.session.is_some();
-    // Spent either way. A preview that cannot be drawn cannot be drawn sixty
-    // times a second either, and every attempt would be another line in the
-    // log; the next choice asks for a fresh one.
-    app.preview_dirty = false;
+    refreshed(app);
     match drawn {
         Ok(rgba) => {
             let image = egui::ColorImage::from_rgba_unmultiplied(
@@ -86,6 +86,18 @@ fn refresh_preview(ctx: &egui::Context, app: &mut App, video: &mut Video) {
     }
 }
 
+/// What an attempt at a preview costs, whichever way it went.
+///
+/// The preview borrows the one texture the game's frames go into, so the
+/// picture behind this panel is now the sample and has to be asked for again;
+/// it costs one upload, and only when something changed. And the request is
+/// spent either way: a preview that cannot be drawn cannot be drawn sixty
+/// times a second either, and every attempt would be another line in the log.
+fn refreshed(app: &mut App) {
+    app.frame_dirty |= app.session.is_some();
+    app.preview_dirty = false;
+}
+
 /// Every choice that changes what the screen looks like, with the picture
 /// above them showing what they do.
 fn settings(ctx: &egui::Context, app: &mut App) {
@@ -93,7 +105,7 @@ fn settings(ctx: &egui::Context, app: &mut App) {
     // settings are and push actions, and the two cannot borrow at once.
     let settings = app.settings.clone();
     let audio_ms = app.audio_ms;
-    let has_file = crate::settings::imported_palette(&app.data_dir).is_some();
+    let has_file = app.has_palette_file;
     widgets::panel(ctx, "settings", "Settings", None, false, |ui| {
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, width * 0.75), Sense::hover());
@@ -225,8 +237,10 @@ fn mapping(ctx: &egui::Context, app: &mut App) {
                 // wizard is finished on the same press, and a panel that
                 // blanks for the frame in between reads as a mistake.
                 let waiting = NesButton::ORDER[step.min(NesButton::ORDER.len() - 1)].label();
+                // One space, where Android has two: at 44 points a doubled
+                // space is a hole in the biggest line on the screen.
                 ui.label(
-                    RichText::new(format!("Press  {waiting}"))
+                    RichText::new(format!("Press {waiting}"))
                         .size(44.0)
                         .strong()
                         .color(LEAF),
@@ -270,6 +284,7 @@ fn mapping(ctx: &egui::Context, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::tests::test_rom;
     use crate::picture::model;
     use egui::epaint::ClippedShape;
     use std::path::PathBuf;
@@ -290,10 +305,10 @@ mod tests {
         ctx
     }
 
-    /// One frame of the panel. Everything `show` does apart from the preview,
-    /// which needs a live GL context and so cannot be run in a test; without
-    /// one the panel says it is preparing a preview, which is the other half
-    /// of what it has to draw properly anyway.
+    /// One frame of the panel, through the dispatch `show` itself uses.
+    /// Everything but the preview, which needs a live GL context and so cannot
+    /// be run in a test; without one the panel says it is preparing a preview,
+    /// which is the other half of what it has to draw properly anyway.
     fn pass(
         app: &mut App,
         ctx: &egui::Context,
@@ -305,11 +320,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let mut output = ctx.run_ui(input, |ui| match app.panel {
-            Panel::Settings => settings(ui.ctx(), app),
-            Panel::Mapping => mapping(ui.ctx(), app),
-            _ => {}
-        });
+        let mut output = ctx.run_ui(input, |ui| panels(ui.ctx(), app));
         output.textures_delta.clear();
         output.shapes
     }
@@ -413,6 +424,7 @@ mod tests {
         app.wizard = Some(crate::input::Wizard::new());
         for palette in PaletteChoice::ALL {
             app.settings.palette = palette;
+            app.has_palette_file = palette == PaletteChoice::File;
             for panel in [Panel::Settings, Panel::Mapping] {
                 app.panel = panel;
                 // Roomy, tight, and narrower than the card asks to be.
@@ -490,7 +502,11 @@ mod tests {
             std::mem::take(&mut app.actions),
             vec![Action::ImportPalette]
         );
+        // What `Action::OpenSettings` asks the disk once, so that the panel
+        // does not ask it sixty times a second.
         crate::settings::store_palette(&dir, &model::bytes(&model::standard())).unwrap();
+        app.has_palette_file = crate::settings::imported_palette(&dir).is_some();
+        assert!(app.has_palette_file);
         let shapes = drawn(&mut app, &ctx, WINDOW);
         click(&mut app, &ctx, at(&shapes, PaletteChoice::File.label()));
         assert_eq!(
@@ -554,7 +570,7 @@ mod tests {
         for line in [
             "Controller buttons",
             "Press each button on the controller or keyboard you want to use.",
-            "Press  A",
+            "Press A",
             "Step 1 of 4",
             "Cancel",
         ] {
@@ -571,7 +587,7 @@ mod tests {
             let said = texts(&drawn(&mut app, &ctx, WINDOW));
             let step_line = format!("Step {} of 4", (step + 2).min(4));
             assert!(
-                said.iter().any(|t| t == &format!("Press  {waiting}")),
+                said.iter().any(|t| t == &format!("Press {waiting}")),
                 "{said:?}"
             );
             assert!(said.contains(&step_line), "no {step_line:?} in {said:?}");
@@ -588,6 +604,29 @@ mod tests {
         let shapes = drawn(&mut app, &ctx, WINDOW);
         click(&mut app, &ctx, at(&shapes, "Cancel"));
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::CancelWizard]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An attempt at a preview is spent whether or not it worked, and it
+    /// leaves the game's own frame needing to be uploaded again, because the
+    /// two of them share one texture. Sixty failed attempts a second would be
+    /// sixty lines in the problem log.
+    #[test]
+    fn an_attempt_at_a_preview_is_spent_and_costs_the_game_its_frame() {
+        let dir = temp_dir("settings-refresh");
+        let mut app = App::blank(&dir);
+        app.preview_dirty = true;
+        refreshed(&mut app);
+        assert!(!app.preview_dirty);
+        // Nothing is showing the frame texture, so nothing has to be put back.
+        assert!(!app.frame_dirty);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = crate::session::Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        app.preview_dirty = true;
+        refreshed(&mut app);
+        assert!(!app.preview_dirty);
+        assert!(app.frame_dirty);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

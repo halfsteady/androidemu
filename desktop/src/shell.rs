@@ -62,7 +62,10 @@ pub struct App {
     /// Where the time handle is, -1 to 1.
     pub scrub_fraction: f32,
     pub rewind_depth: usize,
+    /// The audio delay the settings panel shows, and when it was last taken.
+    /// Sampled rather than read: see `sample_audio`.
     pub audio_ms: f32,
+    pub audio_sampled: Instant,
     /// Whether the framebuffer has changed since it was last handed to the
     /// GPU. A paused game shows the same 245 KB every tick; uploading it
     /// sixty times a second buys nothing.
@@ -74,6 +77,10 @@ pub struct App {
     pub thumbs: HashMap<u8, (i64, egui::TextureHandle)>,
     pub preview: Option<egui::TextureHandle>,
     pub preview_dirty: bool,
+    /// Whether there is an imported palette to choose. Answered when the
+    /// settings panel opens rather than while it is drawn: the panel is drawn
+    /// sixty times a second, and the answer is a file read and a parse.
+    pub has_palette_file: bool,
     pub actions: Vec<Action>,
     pub quit: bool,
 }
@@ -223,11 +230,13 @@ impl App {
             scrub_fraction: 0.0,
             rewind_depth: 0,
             audio_ms: 0.0,
+            audio_sampled: Instant::now(),
             frame_dirty: false,
             covers: HashMap::new(),
             thumbs: HashMap::new(),
             preview: None,
             preview_dirty: false,
+            has_palette_file: false,
             actions: Vec::new(),
             quit: false,
         }
@@ -304,6 +313,26 @@ fn start_resumes(app: &App) -> bool {
     app.panel == Panel::Pause && app.dialog.is_none()
 }
 
+/// How often the audio delay is taken. It is a number somebody glances at
+/// while a game plays, not one they do arithmetic with, and one that changes
+/// sixty times a second cannot be read at all.
+const AUDIO_SAMPLE: Duration = Duration::from_millis(500);
+
+/// Takes the audio delay, twice a second at most and only while the game is
+/// actually running.
+///
+/// Stopping the game empties the queue it is read from, and every panel stops
+/// the game — including the settings panel that shows the number. Read every
+/// frame it would say 0.0 ms there, always. So the last figure from while the
+/// game was playing is kept, which is the one that answers the question the
+/// row is asked: is sound running ahead of the picture.
+fn sample_audio(app: &mut App, now: Instant, queued_ms: f32, playing: bool) {
+    if playing && now.duration_since(app.audio_sampled) >= AUDIO_SAMPLE {
+        app.audio_ms = queued_ms;
+        app.audio_sampled = now;
+    }
+}
+
 /// Where closing a panel leaves you. The problem log is reached from the
 /// shelf, from the pause panel and from Settings, so it goes back to wherever
 /// it was opened from; everything else sits over a game, or over the shelf.
@@ -312,6 +341,20 @@ fn closed(app: &App) -> Panel {
         (Panel::Problems, _) => app.panel_before,
         (_, true) => Panel::Pause,
         (_, false) => Panel::None,
+    }
+}
+
+/// Leaves whichever panel is up, and lets go of what it was holding.
+///
+/// Every way out of the settings panel comes through here: Done, Escape, and
+/// the wizard it raised. The preview is a megabyte of texture for a panel
+/// that is no longer on screen, and the next one to open is drawn fresh —
+/// but the problem log is opened from Settings and goes back to it, so it is
+/// only let go of when Settings is not where this lands.
+fn leave_panel(app: &mut App) {
+    app.panel = closed(app);
+    if app.panel != Panel::Settings {
+        app.preview = None;
     }
 }
 
@@ -336,7 +379,7 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
     app.wizard = None;
     // The same way out as cancelling it: back to the pause panel over a game,
     // and to the shelf when there is none.
-    app.panel = closed(app);
+    leave_panel(app);
     app.message = Some(format!(
         "Buttons saved for {name}. The directional pad and stick work automatically."
     ));
@@ -464,9 +507,8 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             }
             Err(e) => app.report("The shelf couldn't be updated.", &e),
         },
-        // Asked before done: deleting a game takes its saves with it. Task 13
-        // draws the question; until then the dialog is raised and answered by
-        // Escape, and nothing is lost.
+        // Asked before done: deleting a game takes its saves with it, and
+        // there is no getting them back. The question is a panel of its own.
         Action::DeleteRequested(game) => app.dialog = Some(Dialog::ConfirmDelete(game)),
         Action::DeleteConfirmed(game) => {
             match app.library.forget(&game.id) {
@@ -507,8 +549,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.panel = Panel::None;
             app.message = None;
         }
-        Action::ClosePanel => {
-            app.panel = closed(app);
+        // Done on the settings panel is the back chevron said with a button,
+        // so it is the same exit as Escape.
+        Action::ClosePanel | Action::CloseSettings => {
+            leave_panel(app);
             // Spent: the next panel to open records its own way back.
             app.panel_before = Panel::None;
         }
@@ -644,14 +688,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         Action::OpenSettings => {
             app.panel = Panel::Settings;
             // Both halves of the preview — the settings and the frame it is
-            // drawn from — can have moved since the panel was last up.
+            // drawn from — can have moved since the panel was last up, and so
+            // can the palette file the Colours row offers.
             app.preview_dirty = true;
-        }
-        Action::CloseSettings => {
-            app.panel = closed(app);
-            // A megabyte of texture for a panel that is no longer on screen,
-            // and the next one to open is drawn fresh anyway.
-            app.preview = None;
+            app.has_palette_file = crate::settings::imported_palette(&app.data_dir).is_some();
         }
         Action::SetLook(look) => {
             app.settings.look = look;
@@ -696,7 +736,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         }
         Action::CancelWizard => {
             app.wizard = None;
-            app.panel = closed(app);
+            leave_panel(app);
         }
     }
 }
@@ -712,6 +752,7 @@ fn use_palette(app: &mut App, path: &std::path::Path) {
         Ok(_) => {
             app.settings.palette = picture::PaletteChoice::File;
             app.settings_dirty = true;
+            app.has_palette_file = true;
             app.apply_palette();
             app.message = Some("Palette loaded.".into());
         }
@@ -932,11 +973,13 @@ pub fn run(options: Options) -> Result<(), String> {
         scrub_fraction: 0.0,
         rewind_depth: 0,
         audio_ms: 0.0,
+        audio_sampled: now,
         frame_dirty: true,
         covers: HashMap::new(),
         thumbs: HashMap::new(),
         preview: None,
         preview_dirty: true,
+        has_palette_file: false,
         actions: Vec::new(),
         quit: false,
     };
@@ -979,6 +1022,7 @@ pub fn run(options: Options) -> Result<(), String> {
         // below, once the borrow of the session has been given back.
         let mut hit_end = false;
         let mut trouble = None;
+        let mut queued_ms = 0.0;
         let speed = app.time_speed();
         if let Some(session) = &mut app.session {
             session.scrub = speed;
@@ -997,9 +1041,13 @@ pub fn run(options: Options) -> Result<(), String> {
                 .take_error()
                 .map(|e| (session.game.title.clone(), e));
             app.rewind_depth = session.engine.rewind_depth();
-            app.audio_ms = session.audio_ms();
+            queued_ms = session.audio_ms();
             app.frame_dirty |= advanced.frames > 0;
         }
+        // Taken here, while the queue still has what the tick put in it, and
+        // only while the game is the thing on screen.
+        let playing = app.playing();
+        sample_audio(&mut app, Instant::now(), queued_ms, playing);
         if hit_end {
             app.notice(END_OF_TAPE);
         }
@@ -1104,6 +1152,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A texture handle to stand in for the preview. Nothing here looks at
+    /// what is in it; what matters is whether it is still being held.
+    fn fake_texture() -> egui::TextureHandle {
+        egui::Context::default().load_texture(
+            "test",
+            egui::ColorImage::from_rgba_unmultiplied([1, 1], &[0, 0, 0, 255]),
+            egui::TextureOptions::LINEAR,
+        )
     }
 
     /// The problem log is the one panel opened from three different places,
@@ -1211,6 +1269,80 @@ mod tests {
         assert_eq!(app.panel, Panel::Pause);
         // Which is the same door cancelling it uses.
         assert_eq!(closed(&app), Panel::Pause);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The delay is taken while the game runs, held while it does not, and
+    /// never more than twice a second. Every panel stops the game and empties
+    /// the queue the figure is read from — including the settings panel that
+    /// shows it — so reading it there would print 0.0 ms and nothing else.
+    #[test]
+    fn the_audio_delay_is_sampled_while_the_game_plays_and_held_while_it_is_not() {
+        let dir = temp_dir("shell-audio");
+        let mut app = App::blank(&dir);
+        let start = Instant::now();
+        sample_audio(&mut app, start, 31.0, false);
+        assert_eq!(app.audio_ms, 0.0);
+        sample_audio(&mut app, start + AUDIO_SAMPLE, 31.0, true);
+        assert_eq!(app.audio_ms, 31.0);
+        // The sixty frames in between are not sixty readings.
+        sample_audio(
+            &mut app,
+            start + AUDIO_SAMPLE + Duration::from_millis(16),
+            9.0,
+            true,
+        );
+        assert_eq!(app.audio_ms, 31.0);
+        sample_audio(&mut app, start + AUDIO_SAMPLE * 2, 44.0, true);
+        assert_eq!(app.audio_ms, 44.0);
+        // And held, not zeroed, once a panel is what is on screen.
+        sample_audio(&mut app, start + AUDIO_SAMPLE * 3, 0.0, false);
+        assert_eq!(app.audio_ms, 44.0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The palette reaches the engine only when there is one to reach, and
+    /// the frame it repainted has to be uploaded again. Marking the frame
+    /// with no game open would upload whatever the last one left behind.
+    #[test]
+    fn a_palette_reaches_the_open_game_and_asks_for_its_frame_again() {
+        let dir = temp_dir("shell-apply-palette");
+        let mut app = App::blank(&dir);
+        app.settings.palette = picture::PaletteChoice::Vivid;
+        app.apply_palette();
+        assert!(app.preview_dirty);
+        assert!(!app.frame_dirty);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        app.preview_dirty = false;
+        app.apply_palette();
+        assert!(app.preview_dirty && app.frame_dirty);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Every way out of the settings panel lets go of the preview: Done,
+    /// Escape, and the wizard it raised. A megabyte of texture for a panel
+    /// nobody is looking at. The problem log is the exception, because it is
+    /// opened from Settings and goes back to it.
+    #[test]
+    fn every_way_out_of_settings_lets_go_of_the_preview() {
+        let dir = temp_dir("shell-leave");
+        let mut app = App::blank(&dir);
+        for panel in [Panel::Settings, Panel::Mapping] {
+            app.panel = panel;
+            app.preview = Some(fake_texture());
+            leave_panel(&mut app);
+            assert_eq!(app.panel, Panel::None, "{panel:?}");
+            assert!(app.preview.is_none(), "{panel:?}");
+        }
+        // Back to Settings from the log it raised, with its preview intact.
+        app.panel = Panel::Problems;
+        app.panel_before = Panel::Settings;
+        app.preview = Some(fake_texture());
+        leave_panel(&mut app);
+        assert_eq!(app.panel, Panel::Settings);
+        assert!(app.preview.is_some());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
