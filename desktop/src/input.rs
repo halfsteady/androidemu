@@ -114,7 +114,10 @@ pub struct Pad {
     pressed: HashSet<String>,
     dpad: u8,
     stick: u8,
-    time: i32,
+    // Bumpers and triggers are read separately: a trigger settling back to
+    // rest must not cancel a bumper the other finger is still holding.
+    shoulder_time: i32,
+    trigger_time: i32,
 }
 
 pub struct Input {
@@ -158,7 +161,8 @@ impl Input {
             pad.pressed.clear();
             pad.dpad = 0;
             pad.stick = 0;
-            pad.time = 0;
+            pad.shoulder_time = 0;
+            pad.trigger_time = 0;
         }
     }
 
@@ -178,7 +182,8 @@ impl Input {
             pressed: HashSet::new(),
             dpad: 0,
             stick: 0,
-            time: 0,
+            shoulder_time: 0,
+            trigger_time: 0,
         });
         Some(port)
     }
@@ -218,7 +223,7 @@ impl Input {
             _ => 0,
         };
         if time != 0 {
-            pad.time = if pressed { time } else { 0 };
+            pad.shoulder_time = if pressed { time } else { 0 };
             return;
         }
         if pressed {
@@ -249,8 +254,8 @@ impl Input {
                     pad.stick |= 32
                 }
             }
-            Axis::TriggerRight => pad.time = if value > TRIGGER_ON { TIME_FAST } else { 0 },
-            Axis::TriggerLeft => pad.time = if value > TRIGGER_ON { -TIME_FAST } else { 0 },
+            Axis::TriggerRight => pad.trigger_time = if value > TRIGGER_ON { TIME_FAST } else { 0 },
+            Axis::TriggerLeft => pad.trigger_time = if value > TRIGGER_ON { -TIME_FAST } else { 0 },
             _ => {}
         }
     }
@@ -278,9 +283,13 @@ impl Input {
     }
 
     /// Shoulders and triggers, or `,` and `.` with Shift, held to apply.
+    ///
+    /// A pulled trigger wins over a held bumper, because the trigger is the
+    /// deliberate "faster"; releasing either leaves the other still holding.
     pub fn time_speed(&self) -> i32 {
-        if let Some(pad) = self.pads.iter().find(|p| p.time != 0) {
-            return pad.time;
+        let held = |time: fn(&Pad) -> i32| self.pads.iter().map(time).find(|&t| t != 0);
+        if let Some(speed) = held(|p| p.trigger_time).or_else(|| held(|p| p.shoulder_time)) {
+            return speed;
         }
         let shift = self.keys.contains(&Scancode::LShift) || self.keys.contains(&Scancode::RShift);
         let speed = if shift { TIME_FAST } else { TIME_SLOW };
@@ -342,7 +351,11 @@ impl Wizard {
         if self.captured.iter().any(|(_, p)| p == physical) {
             return WizardEvent::Rejected;
         }
-        let button = NesButton::ORDER[self.captured.len()];
+        // Two buttons hit together at the last step arrive as two events, so
+        // a press after the fourth is refused rather than indexed for.
+        let Some(&button) = NesButton::ORDER.get(self.captured.len()) else {
+            return WizardEvent::Rejected;
+        };
         self.captured.push((button, physical.to_string()));
         if self.captured.len() < 4 {
             return WizardEvent::Advanced;
@@ -373,10 +386,36 @@ mod tests {
 
     #[test]
     fn nes_button_bits_and_order_match_the_core() {
-        assert_eq!(NesButton::ORDER.map(|b| b.bit()), [1, 2, 4, 8]);
+        assert_eq!(
+            NesButton::ORDER.map(|b| b.bit()),
+            [Buttons::A, Buttons::B, Buttons::SELECT, Buttons::START]
+        );
         assert_eq!(
             NesButton::ORDER.map(|b| b.label()),
             ["A", "B", "Select", "Start"]
+        );
+        assert_eq!(
+            [Buttons::UP, Buttons::DOWN, Buttons::LEFT, Buttons::RIGHT],
+            [16, 32, 64, 128]
+        );
+        // The directions are not part of a profile, so the bits this module
+        // writes for them are checked against the core through real code.
+        let arrows: HashSet<Scancode> = [
+            Scancode::Up,
+            Scancode::Down,
+            Scancode::Left,
+            Scancode::Right,
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            keyboard_bits(&keyboard_default(), &arrows),
+            Buttons::UP | Buttons::DOWN | Buttons::LEFT | Buttons::RIGHT
+        );
+        let pads: HashSet<String> = HashSet::new();
+        assert_eq!(
+            pad_bits(&controller_default("Pad"), &pads, Buttons::UP),
+            Buttons::UP
         );
     }
 
@@ -474,5 +513,9 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // Two buttons at once on the last step: the extra press is refused and
+        // the finished mapping stands.
+        assert_eq!(w.press("pad1", "Pad", "x"), WizardEvent::Rejected);
+        assert_eq!(w.step(), 4);
     }
 }
