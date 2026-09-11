@@ -5,6 +5,8 @@ mod palette;
 mod picture;
 #[allow(dead_code)] // The scrubber gains its caller with the play screen in Task 9.
 mod scrub;
+#[allow(dead_code)] // Settings and controller profiles gain their callers in Task 9.
+mod settings;
 
 use nes_core::{Buttons, Nes};
 use sdl2::{
