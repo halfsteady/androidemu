@@ -80,14 +80,24 @@ Each card carries its box art, or the newest autosave thumbnail when there is
 none. The card menu chooses and clears box art, and dropping a `.png`, `.jpg`
 or `.jpeg` on the window while a game is open sets that game's art. "Put this
 away" moves a game to the archive, which "Put away (n)" opens; from there it
-can be brought back or deleted. Deleting removes the game's folder — the ROM
-copy, the battery save and all ten states. The Cards/List toggle is remembered.
+can be brought back or deleted, and Escape comes back to the shelf. Deleting
+removes the game's folder — the ROM copy, the battery save and all ten states.
+The Cards/List toggle is remembered. Covers are decoded as they are scrolled
+to rather than all at once, so a long shelf opens as quickly as a short one.
+
+Importing a game, turning a picture into box art, saving a slot with its
+thumbnail and writing a screenshot all happen on the one thread that draws the
+window. Each raises a dimming scrim with a spinner, over the shelf or over the
+game, and runs on the frame after that scrim has been painted; the game is
+paused and no button reaches it while it is up. The pointer takes the shape of
+whatever is under it — a hand over a control, an I-beam over text.
 
 In a game, the Menu button, Escape and Space all open the pause menu: Resume
 game, Save states, Screenshot, Full screen, Settings, Reset game and Back to
 your shelf. Escape backs out one level at a time. F11 is full screen; after
-five seconds with no key, no mouse, no controller button and no touch of the
-time control the chrome fades, and any of those brings it back.
+five seconds with no key, no mouse, no controller button, no stick or trigger
+past its dead zone and no touch of the time control the chrome fades, and any
+of those brings it back.
 
 ```
 nes-desktop [rom.nes] [--data-dir <dir>] [--mute] [--frames <n>] [--list-drivers] [--help]
@@ -95,9 +105,13 @@ nes-desktop [rom.nes] [--data-dir <dir>] [--mute] [--frames <n>] [--list-drivers
 
 Sound clocks the emulation, independently of the display's refresh rate.
 `--mute` plays without it, pacing on the ROM region's frame rate and a
-monotonic clock instead; use it where there is no audio device. `--frames <n>`
-needs a ROM and runs that many frames with no window and no GL context at all,
-printing where the data went — it is what CI runs under SDL's dummy drivers.
+monotonic clock instead; use it where there is no audio device. The window
+itself is paced by vsync when the driver gives it one, and otherwise sleeps out
+the rest of each frame — the region's when a game is open, a sixtieth of a
+second on the shelf. "vsync unavailable; pacing by sleep" on the terminal is
+that second case. `--frames <n>` needs a ROM and runs that many frames with no
+window and no GL context at all, printing where the data went — it is what CI
+runs under SDL's dummy drivers.
 Audio and the battery behave as they do in the window, and the run starts from
 the autosave as usual, refusing to carry on if it cannot be read; it writes no
 new one, because with nothing on screen there is nobody to decide whether
@@ -111,7 +125,7 @@ video and audio backends.
 | Arrow keys | Direction pad |
 | X / Z | A / B |
 | Enter / Right Shift | Start / Select |
-| Escape or Space | Pause menu (Escape also backs out of panels) |
+| Escape or Space | Pause menu (Escape also backs out of panels, and of the archive) |
 | F11 | Full screen |
 | F5 / F8 | Save / load slot 1 |
 | . / , (hold) | Fast-forward / rewind 2×, Shift for 6× |
@@ -169,6 +183,14 @@ cannot even be renamed, the session writes no battery at all rather than
 replacing someone's adventure with empty RAM. An autosave that will not load is
 reported the same way and the game starts from the battery instead.
 
+A `settings.json` or `controllers.json` that will not parse is never written
+over: the shell runs on the usual choices, says so, and names the file in the
+problem log, so a stray comma can be fixed by hand. Nothing saves either file
+again until a setting is changed or the mapping wizard finishes. A profile
+missing one of its four buttons loses that button and keeps the rest of the
+file. `palette.pal` is the same: `palette` 5 with the file missing or no longer
+a palette paints in the standard colours and says which file it was.
+
 The first desktop player kept `<identity>.sav` and `<identity>.state` loose in
 the data directory. Opening a game moves them once into its folder, as
 `battery.sav` and slot 1, and says so in the problem log; nothing is deleted.
@@ -176,7 +198,8 @@ Android save containers and their metadata are not imported.
 
 Screenshots are the raw 256×240 frame with no shape, trim or look, written to
 `~/Pictures/Emulia/<title> yyyy-MM-dd HH.mm.ss.png`. On Linux a
-`XDG_PICTURES_DIR` set in `~/.config/user-dirs.dirs` is honoured.
+`XDG_PICTURES_DIR` set in `~/.config/user-dirs.dirs` is honoured when it names
+an absolute directory; a relative one is ignored in favour of `~/Pictures`.
 
 Avoid running two copies of the same game against the same data directory: the
 last writer wins.
@@ -193,10 +216,8 @@ python3 scripts/check-shaders.py
 ```
 
 `cargo fmt` is checked for `nes-desktop` alone; `core/` and `native/` predate it
-and are not rustfmt-clean. Clippy is green for `-p nes-desktop -p nes-runner`;
-`nes-core` trips `collapsible_match` at `core/src/apu.rs:451` under a clippy
-newer than the one CI runs, and that code predates the desktop shell and has
-nothing to do with it.
+and are not rustfmt-clean. Clippy is green for all three crates, on the clippy
+CI runs and on stable 1.95.
 
 The smoke test creates its own NROM, runs the real executable headlessly
 through `--frames` with SDL's dummy video and audio drivers, and checks audio
@@ -225,7 +246,11 @@ controller. Working through the shell:
 - [ ] The card menu sets and clears box art, and dragging an image onto the
       window while a game is open sets it.
 - [ ] "Put this away" moves a game to the archive; "Put away (1)" shows it
-      with "Bring back" and "Delete"; clicking a card opens the game.
+      with "Bring back" and "Delete"; Escape comes back to the shelf; clicking
+      a card opens the game.
+- [ ] Importing a game and choosing box art dim the screen behind a spinner
+      rather than freezing the window, and the pointer is a hand over the
+      shelf's buttons and an arrow over its background.
 - [ ] The Cards/List toggle survives a restart.
 - [ ] Dragging the time handle left rewinds, with the handle amber under an
       amber "Rewinding N×" pill; dragging right turns the handle green under

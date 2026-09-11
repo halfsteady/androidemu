@@ -43,7 +43,12 @@ One main thread. Each loop iteration:
    sleep to the region's frame time as today.
 
 Long jobs (import, box art decode, save with thumbnail, screenshot) run inline
-with emulation paused and a busy scrim, matching Android's `work()`.
+with emulation paused and a busy scrim, matching Android's `work()`. Inline but
+not immediately: the frame is built before the actions it raised are applied, so
+a job that ran where it was asked for would run under a frame drawn without the
+scrim. Raising the scrim holds the job in `App::pending`, and the iteration
+after the one that painted that scrim runs it — a sixtieth of a second between
+asking and doing, and no frozen window with nothing on it.
 
 A separate emulation thread was rejected: SDL's `AudioQueue` is not `Send`, and
 the single loop already keeps audio ahead of the display.
@@ -66,10 +71,10 @@ must build and test without a window.
 | `shaders/*.glsl` | `smooth.frag`, `composite.frag`, `present.frag`, `quad.vert` |
 | `ui/theme.rs` | design tokens applied to `egui::Style` |
 | `ui/shelf.rs` | shelf, cards, rows, empty state, game menu |
-| `ui/play.rs` | title bar, fullscreen chrome, HUD notice, busy scrim |
+| `ui/play.rs` | title bar, fullscreen chrome, HUD notice |
 | `ui/time.rs` | time scrubber and skip-back widgets |
 | `ui/panels.rs` | pause, slots, settings, mapping, problem log, confirmations |
-| `shell.rs` | SDL window, GL context, egui bridge, main loop, app state machine |
+| `shell.rs` | SDL window, GL context, egui bridge, main loop, app state machine, the busy scrim and the message bar over whichever screen is up |
 
 ### CLI
 
@@ -115,7 +120,8 @@ root: `<identity>.sav` and `<identity>.state`. When a game is opened and
 line saying what moved. Nothing is deleted otherwise.
 
 **Screenshots** go to `~/Pictures/Emulia/<sanitised title> yyyy-MM-dd HH.mm.ss.png`.
-On Linux, honour `XDG_PICTURES_DIR` from `~/.config/user-dirs.dirs` when set.
+On Linux, honour `XDG_PICTURES_DIR` from `~/.config/user-dirs.dirs` when set and
+absolute, as `XDG_DATA_HOME` is.
 Raw 256×240 framebuffer, no shape, trim or look, as on Android.
 
 ### settings.json
@@ -134,13 +140,18 @@ missing or invalid, fall back to Standard and log it.
 ### controllers.json
 
 ```json
-{"keyboard": {"a": "X", "b": "Z", "select": "Right Shift", "start": "Return"},
- "030000005e0400008e02000000000000": {"name": "Xbox Controller", "a": "east", "b": "south", "select": "back", "start": "start"}}
+{"keyboard": {"name": "Keyboard", "a": "X", "b": "Z", "select": "Right Shift", "start": "Return"},
+ "030000005e0400008e02000000000000": {"name": "Xbox Controller", "a": "b", "b": "a", "select": "back", "start": "start"}}
 ```
 
 Keys are SDL joystick GUID strings; values are SDL scancode names for the
-keyboard and SDL game-controller button names for controllers. A saved profile
-beats the built-in defaults.
+keyboard and SDL game-controller button names for controllers. SDL2 names the
+face buttons `a`, `b`, `x` and `y` by position — `a` is the south button — so
+the defaults written here are NES A on `b` and NES B on `a`. (SDL3's
+`south`/`east` names are a different library's and do not appear on disk.) A
+missing field is read as an empty one, so a profile short of a button loses
+that button rather than the whole file. A saved profile beats the built-in
+defaults.
 
 ## Library
 
@@ -299,6 +310,23 @@ second), Version, Problem log (Open). Done closes it and frees the preview.
 
 **Problem log**: newest first, up to 40 rows, "Nothing has gone wrong yet."
 when empty.
+
+### Glyphs
+
+egui's bundled proportional font has no glyph for several of the marks the
+Android shell draws, and a missing glyph is a tofu box on the one control that
+was meant to explain itself. Each is substituted for one the font does have,
+and a test per module (`ui/widgets.rs`, `ui/shelf.rs`, `ui/time.rs`,
+`ui/panels.rs`, `ui/settings.rs`) keeps the originals from creeping back in:
+
+| Android | Desktop | Where |
+|---|---|---|
+| `→` | `›` | "Resume ›" on a shelf card |
+| `⋯` | `…` | a card's overflow menu button |
+| `←` | `‹` | the back arrow on a panel |
+| `✓` | `•` | a learned button in the mapping wizard |
+| `▮▮` | `⏸` | the time handle at rest |
+| `◀◀ ▶▶` | `« »` | the scrubber's ends |
 
 ## Theme
 
