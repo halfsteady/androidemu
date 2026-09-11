@@ -39,7 +39,7 @@ pub const END_OF_TAPE: &str = "That's as far back as this goes.";
 /// Everything a drawn frame can read and everything the shell acts on. One
 /// value, passed to the panels by `&mut`, so there is no state hiding in the
 /// widgets between frames.
-#[allow(dead_code)] // The panels that read these arrive in Tasks 11 to 14.
+#[allow(dead_code)] // The settings preview that reads the rest arrives in Task 14.
 pub struct App {
     pub data_dir: PathBuf,
     pub library: Library,
@@ -91,6 +91,17 @@ impl App {
         self.notice = Some((text.to_string(), Instant::now()));
     }
 
+    /// Which way time is running and how fast: the track while it is held,
+    /// otherwise whatever the keys and the triggers say. One answer, because
+    /// the engine and the pill above it have to agree about it.
+    pub fn time_speed(&self) -> i32 {
+        if self.scrub_fraction != 0.0 {
+            crate::scrub::speed(self.scrub_fraction)
+        } else {
+            self.input.time_speed()
+        }
+    }
+
     /// A game is running and nothing is in front of it.
     pub fn playing(&self) -> bool {
         self.session.is_some()
@@ -135,7 +146,6 @@ impl App {
         Some(texture)
     }
 
-    #[allow(dead_code)] // The slots panel in Task 13.
     pub fn slot_texture(
         &mut self,
         ctx: &egui::Context,
@@ -222,10 +232,10 @@ fn draw(ui: &mut egui::Ui, app: &mut App, _video: &mut Video) {
     } else {
         crate::ui::play::show(ui, app);
     }
-    // Task 13 draws the panels and Task 14 the settings preview, which is what
-    // `_video` is for. The message is drawn last and over everything, because
-    // it is the one thing that has to be read before anything else is worth
-    // doing.
+    crate::ui::panels::show(ui, app);
+    // Task 14 draws the settings preview, which is what `_video` is for. The
+    // message is drawn last and over everything, because it is the one thing
+    // that has to be read before anything else is worth doing.
     if let Some(text) = app.message.clone() {
         if crate::ui::widgets::message_bar(ui.ctx(), &text) {
             app.actions.push(crate::ui::Action::CloseDialog);
@@ -253,6 +263,17 @@ fn escape(app: &App) -> Action {
         (_, Panel::None, _, true, _) => Action::Pause,
         (_, Panel::None, _, false, true) => Action::ToggleFullscreen,
         _ => Action::CloseDialog,
+    }
+}
+
+/// Where closing a panel leaves you. The problem log is reached from the
+/// shelf, from the pause panel and from Settings, so it goes back to wherever
+/// it was opened from; everything else sits over a game, or over the shelf.
+fn closed(app: &App) -> Panel {
+    match (app.panel, app.session.is_some()) {
+        (Panel::Problems, _) => app.panel_before,
+        (_, true) => Panel::Pause,
+        (_, false) => Panel::None,
     }
 }
 
@@ -447,11 +468,9 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.message = None;
         }
         Action::ClosePanel => {
-            app.panel = if app.session.is_some() {
-                Panel::Pause
-            } else {
-                Panel::None
-            }
+            app.panel = closed(app);
+            // Spent: the next panel to open records its own way back.
+            app.panel_before = Panel::None;
         }
         Action::CloseDialog => {
             app.dialog = None;
@@ -522,6 +541,46 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                 }
             }
         }
+        Action::OpenSlots => app.panel = Panel::Slots,
+        // Asked before done: a slot with something in it is somebody's
+        // progress, and there is no getting it back once it is written over.
+        Action::SaveRequested(n) => app.dialog = Some(Dialog::ConfirmReplace(n)),
+        Action::ResetRequested => app.dialog = Some(Dialog::ConfirmReset),
+        Action::ResetConfirmed => {
+            app.dialog = None;
+            if let Some(session) = &mut app.session {
+                match session.reset() {
+                    Ok(()) => {
+                        app.panel = Panel::None;
+                        app.scrub_fraction = 0.0;
+                        // Nothing else will ask for the fresh frame: the tick
+                        // that would have marked it runs after this, and a
+                        // reset that is not uploaded leaves the old picture on
+                        // screen until something else happens to move.
+                        app.frame_dirty = true;
+                    }
+                    // A game that restarted but could not write its autosave
+                    // is still a game that restarted, so the panel stays up
+                    // and says so rather than pretending nothing happened.
+                    Err(e) => {
+                        app.panel = Panel::Pause;
+                        let title = session.game.title.clone();
+                        app.report(
+                            "Game reset, but its automatic save couldn't be updated.",
+                            &format!("{title}: {e}"),
+                        );
+                    }
+                }
+                // The slot pictures were of a game that no longer exists.
+                app.thumbs.clear();
+            }
+        }
+        Action::OpenProblems => {
+            // Recorded here rather than by whoever raised it: the log is the
+            // one panel that is opened from three different places.
+            app.panel_before = app.panel;
+            app.panel = Panel::Problems;
+        }
         Action::BackToShelf => {
             if let Some(mut session) = app.session.take() {
                 session.close();
@@ -531,8 +590,8 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.scrub_fraction = 0.0;
             app.input.clear();
         }
-        // Tasks 12 to 14 bring the panels that raise the rest. Saying so out
-        // loud beats a silent no-op while the shell is half built.
+        // Task 14 brings the settings panel that raises the rest. Saying so
+        // out loud beats a silent no-op while the shell is half built.
         other => eprintln!("unhandled {other:?}"),
     }
 }
@@ -797,13 +856,9 @@ pub fn run(options: Options) -> Result<(), String> {
         // below, once the borrow of the session has been given back.
         let mut hit_end = false;
         let mut trouble = None;
+        let speed = app.time_speed();
         if let Some(session) = &mut app.session {
-            let held = app.input.time_speed();
-            session.scrub = if app.scrub_fraction != 0.0 {
-                crate::scrub::speed(app.scrub_fraction)
-            } else {
-                held
-            };
+            session.scrub = speed;
             session.paused = app.panel != Panel::None
                 || app.dialog.is_some()
                 || app.busy
@@ -914,4 +969,62 @@ pub fn run(options: Options) -> Result<(), String> {
     video.destroy();
     bridge.destroy();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::tests::test_rom;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("emulia-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The problem log is the one panel opened from three different places,
+    /// and the way out of it has to lead back to the one you came in by.
+    /// Everything else over a game goes back to the pause panel, and anything
+    /// over the shelf goes back to the shelf.
+    #[test]
+    fn closing_a_panel_goes_back_to_wherever_it_was_opened_from() {
+        let dir = temp_dir("shell-close");
+        let mut app = App::blank(&dir);
+        app.panel = Panel::Problems;
+        assert_eq!(closed(&app), Panel::None);
+        // Opened from Settings, which is where Task 14 raises it from.
+        app.panel_before = Panel::Settings;
+        assert_eq!(closed(&app), Panel::Settings);
+        // Escape is the back chevron said with the keyboard, so it has to mean
+        // the same thing rather than its own thing.
+        assert_eq!(escape(&app), Action::ClosePanel);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        app.panel_before = Panel::None;
+        for panel in [Panel::Slots, Panel::Settings, Panel::Mapping] {
+            app.panel = panel;
+            assert_eq!(closed(&app), Panel::Pause, "{panel:?}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The engine and the pill over the picture ask the same question of the
+    /// same answer. Two copies of this drifted apart once already, and the
+    /// symptom was a heads-up display counting down over a frozen game.
+    #[test]
+    fn the_time_speed_is_the_track_first_and_the_keys_after() {
+        let dir = temp_dir("shell-speed");
+        let mut app = App::blank(&dir);
+        assert_eq!(app.time_speed(), 0);
+        app.scrub_fraction = -1.0;
+        assert_eq!(app.time_speed(), -crate::scrub::MAX);
+        app.scrub_fraction = 1.0;
+        assert_eq!(app.time_speed(), crate::scrub::MAX);
+        // Back in the middle, the keys have it again.
+        app.scrub_fraction = 0.0;
+        assert_eq!(app.time_speed(), app.input.time_speed());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

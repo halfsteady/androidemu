@@ -7,14 +7,14 @@
 
 // Each submodule arrives with its task.
 pub mod theme;
-// The widget set is written whole; the screens that call every part of it
-// arrive in Tasks 11 to 14, which is what the module's `allow(dead_code)` in
+// The widget set is written whole; the settings rows that call the rest of
+// it arrive in Task 14, which is what the module's `allow(dead_code)` in
 // `main.rs` is covering until then.
+pub mod panels;
 pub mod play;
 pub mod shelf;
 pub mod time;
 pub mod widgets;
-// pub mod panels;     // Task 13
 // pub mod settings;   // Task 14
 
 use crate::library::Game;

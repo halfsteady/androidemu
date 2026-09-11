@@ -9,7 +9,7 @@
 use super::theme::*;
 use super::time::{self, scrubber, skip_back, ScrubEvent};
 use super::widgets;
-use super::{Action, Panel};
+use super::Action;
 use crate::scrub;
 use crate::shell::{App, TIME_ROW, TITLE_BAR};
 use egui::{Align2, CornerRadius, Margin, Rect, RichText, Vec2};
@@ -34,7 +34,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     } else if chrome_up(app) {
         chrome(ui.ctx(), app);
     }
-    if chrome_up(app) && app.panel == Panel::None {
+    // The time row while the game is running, which is not the same as while
+    // no panel is up: a dialog stops the engine too, and a scrubber that moves
+    // a frozen picture is a control that lies.
+    if chrome_up(app) && app.playing() {
         time_row(ui, app, skips);
     }
     if let Some(text) = hud(app) {
@@ -58,12 +61,8 @@ fn hud(app: &App) -> Option<String> {
     if let Some((text, _)) = &app.notice {
         return Some(text.clone());
     }
-    let speed = if app.scrub_fraction != 0.0 {
-        scrub::speed(app.scrub_fraction)
-    } else {
-        app.input.time_speed()
-    };
-    if speed != 0 && app.panel == Panel::None {
+    let speed = app.time_speed();
+    if speed != 0 && app.playing() {
         return Some(scrub::label(speed));
     }
     None
@@ -201,6 +200,7 @@ mod tests {
     use crate::engine::tests::test_rom;
     use crate::session::Session;
     use crate::shell::{CHROME_IDLE, END_OF_TAPE};
+    use crate::ui::Panel;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -366,15 +366,22 @@ mod tests {
     fn the_pill_says_the_notice_first_and_the_speed_otherwise() {
         let dir = temp_dir("play-hud");
         let mut app = App::blank(&dir);
+        open(&mut app);
         assert_eq!(hud(&app), None);
         app.scrub_fraction = -1.0;
         assert_eq!(hud(&app).as_deref(), Some("Rewinding 8×"));
         app.scrub_fraction = 1.0;
         assert_eq!(hud(&app).as_deref(), Some("Fast-forward 8×"));
-        // Nothing about speed while a panel is in front of the game: it is
+        // Nothing about speed while anything is in front of the game: it is
         // not running, whatever the track was left at.
-        app.panel = Panel::Pause;
+        for stopped in [Panel::Pause, Panel::Slots] {
+            app.panel = stopped;
+            assert_eq!(hud(&app), None, "{stopped:?}");
+        }
+        app.panel = Panel::None;
+        app.dialog = Some(crate::ui::Dialog::ConfirmReset);
         assert_eq!(hud(&app), None);
+        app.dialog = None;
         // A notice is said wherever the track is and whatever is in front.
         app.notice(END_OF_TAPE);
         assert_eq!(hud(&app).as_deref(), Some(END_OF_TAPE));

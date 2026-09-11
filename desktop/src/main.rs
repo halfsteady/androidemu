@@ -1,20 +1,19 @@
 mod bridge;
 mod engine;
 mod files;
-#[allow(dead_code)] // The wizard and its button names are drawn in Task 13.
+#[allow(dead_code)] // The button names and the wizard are drawn in Task 14.
 mod input;
-#[allow(dead_code)] // The shelf, the slots and the problem log arrive in Tasks 11 to 13.
+#[allow(dead_code)] // `thumbnail_pixels` is still waiting for a caller.
 mod library;
 mod palette;
 #[allow(dead_code)] // Look and palette names belong to the settings panel in Task 14.
 mod picture;
 mod scrub;
-#[allow(dead_code)] // Reset is offered by the pause panel in Task 13.
 mod session;
 #[allow(dead_code)] // Imported palettes are chosen in the settings panel in Task 14.
 mod settings;
 mod shell;
-#[allow(dead_code)] // The tokens, actions and panels raised in Tasks 11 to 14.
+#[allow(dead_code)] // The tokens, the widget rows and the actions Task 14 raises.
 mod ui;
 #[allow(dead_code)] // The settings preview draws through it in Task 14.
 mod video;
