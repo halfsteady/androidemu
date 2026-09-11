@@ -77,6 +77,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             ui.add_space(16.0);
             if games.is_empty() {
                 empty(ui, app.show_archive);
+                // Nothing was drawn, so nothing is kept: an emptied shelf, or
+                // the archive with nothing in it, holds no pictures.
+                app.sweep_covers();
                 return;
             }
             let list = app.settings.shelf_list;
@@ -108,6 +111,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                         });
                     }
                 });
+            // Every cover this frame wanted has been asked for by now, and
+            // whatever is left in the cache belongs to a card that has been
+            // scrolled past or taken off the shelf.
+            app.sweep_covers();
         });
 }
 
@@ -522,11 +529,38 @@ mod tests {
             "every cover was decoded: {}",
             app.covers.len()
         );
-        // And a window with room for all of them takes all of them.
+        // And a window with room for all of them takes all of them, however
+        // many that is: what is kept is what is on screen rather than a count,
+        // because a count smaller than somebody's window would empty the cache
+        // every frame and decode the lot again sixty times a second.
         for _ in 0..2 {
             pass(&mut app, &ctx, Vec2::new(900.0, 2400.0));
         }
         assert_eq!(app.covers.len(), games);
+        let held: Vec<egui::TextureId> = app.covers.values().map(|(_, t)| t.id()).collect();
+        for _ in 0..2 {
+            pass(&mut app, &ctx, Vec2::new(900.0, 2400.0));
+        }
+        assert_eq!(
+            app.covers.values().map(|(_, t)| t.id()).collect::<Vec<_>>(),
+            held,
+            "a full window decoded its covers all over again"
+        );
+        // Shrunk back down, the ones nobody can see any more are let go of.
+        for _ in 0..2 {
+            pass(&mut app, &ctx, Vec2::new(900.0, 320.0));
+        }
+        assert!(
+            app.covers.len() < games,
+            "every cover was kept: {}",
+            app.covers.len()
+        );
+        // And a shelf with nothing on it holds no pictures at all.
+        app.show_archive = true;
+        for _ in 0..2 {
+            pass(&mut app, &ctx, Vec2::new(900.0, 320.0));
+        }
+        assert!(app.covers.is_empty(), "{} kept", app.covers.len());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

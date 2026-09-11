@@ -83,13 +83,18 @@ away" moves a game to the archive, which "Put away (n)" opens; from there it
 can be brought back or deleted, and Escape comes back to the shelf. Deleting
 removes the game's folder — the ROM copy, the battery save and all ten states.
 The Cards/List toggle is remembered. Covers are decoded as they are scrolled
-to rather than all at once, so a long shelf opens as quickly as a short one.
+to rather than all at once, so a long shelf opens as quickly as a short one,
+and the ones scrolled past are let go of again.
 
 Importing a game, turning a picture into box art, saving a slot with its
 thumbnail and writing a screenshot all happen on the one thread that draws the
 window. Each raises a dimming scrim with a spinner, over the shelf or over the
 game, and runs on the frame after that scrim has been painted; the game is
-paused and no button reaches it while it is up. The pointer takes the shape of
+paused and no button reaches it while it is up. Several at once — a handful of
+files dropped together — queue behind the scrim and run one at a time, in the
+order they were asked for, so the last game dropped is the one left open. A
+confirmation comes down with the click that answers it rather than staying up
+over the work it asked for. The pointer takes the shape of
 whatever is under it — a hand over a control, an I-beam over text.
 
 In a game, the Menu button, Escape and Space all open the pause menu: Resume

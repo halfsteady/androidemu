@@ -46,9 +46,14 @@ Long jobs (import, box art decode, save with thumbnail, screenshot) run inline
 with emulation paused and a busy scrim, matching Android's `work()`. Inline but
 not immediately: the frame is built before the actions it raised are applied, so
 a job that ran where it was asked for would run under a frame drawn without the
-scrim. Raising the scrim holds the job in `App::pending`, and the iteration
-after the one that painted that scrim runs it — a sixtieth of a second between
-asking and doing, and no frozen window with nothing on it.
+scrim. Raising the scrim queues the job in `App::pending`, and the iteration
+after the one that painted that scrim takes the front of the queue — a sixtieth
+of a second between asking and doing, and no frozen window with nothing on it.
+A queue rather than one slot because several can be raised on the same frame
+(four files dropped together, a second click on a button that is still there);
+they run one per painted scrim, in order, and the scrim stays up until the last
+of them is done. Deferring a job also closes any confirmation, because the
+question has been answered and its card is drawn above the scrim.
 
 A separate emulation thread was rejected: SDL's `AudioQueue` is not `Send`, and
 the single loop already keeps audio ahead of the display.

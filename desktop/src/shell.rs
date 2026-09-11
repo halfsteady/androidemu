@@ -21,7 +21,7 @@ use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Scancode;
 use sdl2::video::{FullscreenType, GLProfile, SwapInterval};
 use sdl2::{GameControllerSubsystem, JoystickSubsystem};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -66,10 +66,14 @@ pub struct App {
     /// The plain sentence shown until it is dismissed.
     pub message: Option<String>,
     pub busy: bool,
-    /// The long job the scrim is up for, waiting for that scrim to be painted.
-    /// See `defer`: the window stops answering while one of these runs, and a
-    /// window that stops answering with nothing on it looks broken.
-    pub pending: Option<Action>,
+    /// The long jobs the scrim is up for, in the order they were asked for,
+    /// each waiting for a scrim to be painted before it runs. See `defer`: the
+    /// window stops answering while one of these runs, and a window that stops
+    /// answering with nothing on it looks broken. A queue rather than one
+    /// slot, because a handful of files dropped at once is a handful of
+    /// imports raised on the same frame, and the second one is no quicker than
+    /// the first.
+    pub pending: VecDeque<Action>,
     pub fullscreen: bool,
     pub chrome_until: Instant,
     pub wizard: Option<Wizard>,
@@ -87,6 +91,9 @@ pub struct App {
     /// Cover art by game id, keyed on the file's mtime so replacing the
     /// picture replaces the texture.
     pub covers: HashMap<String, (i64, egui::TextureHandle)>,
+    /// Which of them this frame actually drew. `sweep_covers` keeps these and
+    /// lets the rest go at the end of the shelf's pass.
+    covers_drawn: HashSet<String>,
     /// Slot thumbnails for the open game, keyed on the save's time.
     pub thumbs: HashMap<u8, (i64, egui::TextureHandle)>,
     pub preview: Option<egui::TextureHandle>,
@@ -166,6 +173,7 @@ impl App {
         game: &Game,
     ) -> Option<egui::TextureHandle> {
         let path = self.library.cover(&game.id)?;
+        self.covers_drawn.insert(game.id.clone());
         let key = Self::mtime(&path);
         if let Some((k, t)) = self.covers.get(&game.id) {
             if *k == key {
@@ -173,15 +181,21 @@ impl App {
             }
         }
         let texture = Self::texture(ctx, &format!("cover-{}", game.id), &path)?;
-        // Emptied rather than picked over. Scrolling a long shelf fills this
-        // with pictures of cards that have gone off the top, and every one of
-        // them is a megabyte of GPU memory; the ones still on screen are back
-        // in it on the next frame, which costs that frame and nothing after.
-        if self.covers.len() >= COVERS_KEPT {
-            self.covers.clear();
-        }
         self.covers.insert(game.id.clone(), (key, texture.clone()));
         Some(texture)
+    }
+
+    /// Lets go of every cover that was not drawn this frame, and is called at
+    /// the end of the one screen that draws any: see `shelf::show`.
+    ///
+    /// Kept by what is on screen rather than by a count. A count has to be
+    /// bigger than any window anybody has, and one that is not turns into the
+    /// worst of both: a shelf with more cards visible than the limit would
+    /// empty the map every frame and decode every one of them again, sixty
+    /// times a second, which is the thing the cache is for.
+    pub fn sweep_covers(&mut self) {
+        let drawn = std::mem::take(&mut self.covers_drawn);
+        self.covers.retain(|id, _| drawn.contains(id));
     }
 
     pub fn slot_texture(
@@ -277,7 +291,7 @@ impl App {
             notice: None,
             message: None,
             busy: false,
-            pending: None,
+            pending: VecDeque::new(),
             fullscreen: false,
             chrome_until: Instant::now(),
             wizard: None,
@@ -287,6 +301,7 @@ impl App {
             audio_sampled: Instant::now(),
             frame_dirty: false,
             covers: HashMap::new(),
+            covers_drawn: HashSet::new(),
             thumbs: HashMap::new(),
             preview: None,
             preview_dirty: false,
@@ -383,10 +398,6 @@ fn space(app: &App) -> Action {
 fn start_resumes(app: &App) -> bool {
     app.panel == Panel::Pause && app.dialog.is_none()
 }
-
-/// How many cover textures are kept at once. Comfortably more than a window
-/// full of cards, and far short of a shelf's worth of decoded pictures.
-const COVERS_KEPT: usize = 64;
 
 /// A frame of a 60 Hz display, which is what the loop paces to when there is
 /// no game open to ask.
@@ -574,11 +585,17 @@ fn is_long(action: &Action) -> bool {
 /// dropped: one scrim is up either way, and losing somebody's import because
 /// they also asked for a screenshot would be worse than the freeze.
 fn defer(app: &mut App, action: Action) -> Option<Action> {
-    if !is_long(&action) || app.pending.is_some() {
+    if !is_long(&action) {
         return Some(action);
     }
     app.busy = true;
-    app.pending = Some(action);
+    // A question that has been answered comes down with the click that
+    // answered it. The confirmation's card is drawn above the scrim — it has
+    // to be, so that a question asked while something else is working can
+    // still be read — and leaving "Replace slot 1?" up while the save it asked
+    // for was waiting meant a second click saved a second time.
+    app.dialog = None;
+    app.pending.push_back(action);
     // Nothing more is needed to clear the input: `busy` pauses the session in
     // step 4 and zeroes both pads, so no button reaches the game while the
     // scrim is up. What is physically held is deliberately kept — a quick-save
@@ -586,10 +603,13 @@ fn defer(app: &mut App, action: Action) -> Option<Action> {
     None
 }
 
-/// Takes back the job the scrim went up for, and lowers the scrim.
+/// Takes back the next job the scrim went up for. The scrim stays up while
+/// there are more behind it: each one runs under a scrim of its own, on the
+/// iteration after that scrim was painted, so a window with four files dropped
+/// on it answers between every one of them.
 fn take_pending(app: &mut App) -> Option<Action> {
-    let action = app.pending.take()?;
-    app.busy = false;
+    let action = app.pending.pop_front()?;
+    app.busy = !app.pending.is_empty();
     Some(action)
 }
 
@@ -1153,7 +1173,7 @@ pub fn run(options: Options) -> Result<(), String> {
         notice: None,
         message: None,
         busy: false,
-        pending: None,
+        pending: VecDeque::new(),
         chrome_until: now + CHROME_IDLE,
         wizard: None,
         scrub_fraction: 0.0,
@@ -1162,6 +1182,7 @@ pub fn run(options: Options) -> Result<(), String> {
         audio_sampled: now,
         frame_dirty: true,
         covers: HashMap::new(),
+        covers_drawn: HashSet::new(),
         thumbs: HashMap::new(),
         preview: None,
         preview_dirty: true,
@@ -1662,26 +1683,68 @@ mod tests {
         ] {
             assert!(!is_long(&quick), "{quick:?}");
             assert_eq!(defer(&mut app, quick.clone()), Some(quick));
-            assert!(!app.busy && app.pending.is_none());
+            assert!(!app.busy && app.pending.is_empty());
         }
-        // A long one goes into the waiting room and the scrim goes up.
-        let import = Action::ImportFrom(dir.join("game.nes"));
-        assert_eq!(defer(&mut app, import.clone()), None);
+        // A long one goes into the queue and the scrim goes up.
+        let first = Action::ImportFrom(dir.join("one.nes"));
+        let second = Action::ImportFrom(dir.join("two.nes"));
+        assert_eq!(defer(&mut app, first.clone()), None);
         assert!(app.busy);
-        assert_eq!(app.pending, Some(import.clone()));
         // Which is what stops the game: no button reaches it while it is up.
         assert!(!app.playing());
-        // A second long job while one waits is run rather than lost.
+        // A second long job on the same frame — four files dropped at once, or
+        // a second click on a button that is still there — queues behind it
+        // rather than running inline with no scrim over it.
+        assert_eq!(defer(&mut app, second.clone()), None);
+        assert_eq!(defer(&mut app, Action::Screenshot), None);
         assert_eq!(
-            defer(&mut app, Action::Screenshot),
-            Some(Action::Screenshot)
+            app.pending,
+            [first.clone(), second.clone(), Action::Screenshot]
         );
-        assert_eq!(app.pending, Some(import.clone()));
-        // Taking it back lowers the scrim, and there is only one to take.
-        assert_eq!(take_pending(&mut app), Some(import));
-        assert!(!app.busy && app.pending.is_none());
+        // They come back in the order they were asked for, one per scrim, and
+        // the scrim stays up until the last of them has been taken.
+        assert_eq!(take_pending(&mut app), Some(first));
+        assert!(app.busy, "two jobs left and no scrim over them");
+        assert_eq!(take_pending(&mut app), Some(second));
+        assert!(app.busy);
+        assert_eq!(take_pending(&mut app), Some(Action::Screenshot));
+        assert!(!app.busy && app.pending.is_empty());
         assert_eq!(take_pending(&mut app), None);
         assert!(!app.busy);
+        // And an answered question comes down with the click that answered it.
+        // Its card is drawn above the scrim, so leaving it up while the save it
+        // asked for waited meant a second click saved a second time.
+        app.dialog = Some(Dialog::ConfirmReplace(1));
+        assert_eq!(defer(&mut app, Action::SaveConfirmed(1)), None);
+        assert_eq!(app.dialog, None);
+        assert_eq!(take_pending(&mut app), Some(Action::SaveConfirmed(1)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A job waits for a scrim that has actually been painted. The loop cannot
+    /// be run in a test, so this is the handshake it keeps: the frame is built
+    /// before the actions it raised are applied, so what the frame was built
+    /// with is what decides whether the job may run.
+    #[test]
+    fn a_queued_job_runs_only_after_a_frame_that_had_the_scrim() {
+        let dir = temp_dir("shell-scrim");
+        let mut app = App::blank(&dir);
+        // Iteration N builds its frame, and only then is the job asked for.
+        let mut scrim_painted = app.busy;
+        defer(&mut app, Action::Screenshot);
+        assert!(
+            !scrim_painted,
+            "the frame that was built has no scrim in it"
+        );
+        // So the top of N+1 runs nothing, and N+1 builds the scrim and swaps it.
+        scrim_painted = app.busy;
+        assert!(scrim_painted);
+        // Which makes the top of N+2 where the job runs.
+        assert_eq!(take_pending(&mut app), Some(Action::Screenshot));
+        assert!(!app.busy);
+        // And the frame after that is built without one again.
+        scrim_painted = app.busy;
+        assert!(!scrim_painted);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
