@@ -12,7 +12,7 @@ use super::widgets;
 use super::Action;
 use crate::scrub;
 use crate::shell::{App, TIME_ROW, TITLE_BAR};
-use egui::{Align2, CornerRadius, Margin, Rect, RichText, Vec2};
+use egui::{Align2, CornerRadius, Margin, RichText, Vec2};
 use std::time::Instant;
 
 /// The two steps back the time row offers, in seconds.
@@ -42,9 +42,6 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     }
     if let Some(text) = hud(app) {
         notice(ui.ctx(), app.fullscreen, &text);
-    }
-    if app.busy {
-        busy(ui.ctx());
     }
 }
 
@@ -175,25 +172,6 @@ fn notice(ctx: &egui::Context, fullscreen: bool, text: &str) {
         });
 }
 
-/// Something slow is happening. The scrim is interactable so a click meant for
-/// the game underneath stops here instead of arriving late.
-fn busy(ctx: &egui::Context) {
-    // The safe area, the same one the panels cover: the scrim has to reach the
-    // edges of what can be clicked.
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("busy"))
-        .order(egui::Order::Tooltip)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
-            ui.painter().rect_filled(rect, CornerRadius::ZERO, SCRIM);
-            ui.put(
-                Rect::from_center_size(rect.center(), Vec2::splat(40.0)),
-                egui::Spinner::new().color(LEAF),
-            );
-        });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +179,7 @@ mod tests {
     use crate::session::Session;
     use crate::shell::{CHROME_IDLE, END_OF_TAPE};
     use crate::ui::Panel;
+    use egui::Rect;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -251,7 +230,7 @@ mod tests {
 
     /// Every state the play view has that no click can reach from a test:
     /// docked and full screen, with and without a panel in front of it, at
-    /// three window widths, then the notice, the speed pill and the scrim.
+    /// three window widths, then the notice and the speed pill.
     /// Twice each, because egui settles a layout over two frames and the
     /// second is the one that has to hold up.
     #[test]
@@ -282,7 +261,6 @@ mod tests {
         pass(&mut app, &ctx, Vec2::new(1024.0, 768.0), Vec::new());
         app.notice = None;
         app.scrub_fraction = -1.0;
-        app.busy = true;
         pass(&mut app, &ctx, Vec2::new(1024.0, 768.0), Vec::new());
         assert!(app.actions.is_empty(), "{:?}", app.actions);
         std::fs::remove_dir_all(dir).unwrap();

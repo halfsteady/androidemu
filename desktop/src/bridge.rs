@@ -7,11 +7,12 @@
 //! picture, which is drawn later still. So `frame` ends the pass and
 //! tessellates, and `paint` waits until the picture is down.
 
-use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
+use egui::{CursorIcon, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
 use sdl2::event::{Event as SdlEvent, WindowEvent};
 use sdl2::keyboard::{Keycode, Mod, Scancode};
-use sdl2::mouse::{MouseButton, MouseWheelDirection};
+use sdl2::mouse::{Cursor, MouseButton, MouseWheelDirection, SystemCursor};
 use sdl2::video::Window;
+use std::collections::HashMap;
 use std::{sync::Arc, time::Instant};
 
 pub struct Bridge {
@@ -27,6 +28,43 @@ pub struct Bridge {
     /// display change between the two would smear the frame.
     scale: f32,
     start: Instant,
+    /// The system cursors that have been asked for so far. Making one is a
+    /// trip to the window server, and the pointer crosses a button sixty times
+    /// a second; they are kept for the life of the window, which is also what
+    /// keeps the one currently set from being freed under SDL.
+    cursors: HashMap<SystemCursor, Cursor>,
+    /// What the pointer is showing now, so it is only changed when it changes.
+    cursor: CursorIcon,
+}
+
+/// The SDL cursor for what egui asked for. Everything egui can ask for that
+/// SDL has a system cursor for; anything else is the arrow, which is what a
+/// pointer over something with nothing to say should be anyway.
+fn system_cursor(icon: CursorIcon) -> SystemCursor {
+    match icon {
+        CursorIcon::PointingHand | CursorIcon::Grab | CursorIcon::Grabbing => SystemCursor::Hand,
+        CursorIcon::Text | CursorIcon::VerticalText => SystemCursor::IBeam,
+        CursorIcon::ResizeHorizontal
+        | CursorIcon::ResizeColumn
+        | CursorIcon::ResizeEast
+        | CursorIcon::ResizeWest => SystemCursor::SizeWE,
+        CursorIcon::ResizeVertical
+        | CursorIcon::ResizeRow
+        | CursorIcon::ResizeNorth
+        | CursorIcon::ResizeSouth => SystemCursor::SizeNS,
+        CursorIcon::ResizeNeSw | CursorIcon::ResizeNorthEast | CursorIcon::ResizeSouthWest => {
+            SystemCursor::SizeNESW
+        }
+        CursorIcon::ResizeNwSe | CursorIcon::ResizeNorthWest | CursorIcon::ResizeSouthEast => {
+            SystemCursor::SizeNWSE
+        }
+        CursorIcon::Move | CursorIcon::AllScroll => SystemCursor::SizeAll,
+        CursorIcon::Crosshair | CursorIcon::Cell => SystemCursor::Crosshair,
+        CursorIcon::NotAllowed | CursorIcon::NoDrop => SystemCursor::No,
+        CursorIcon::Wait => SystemCursor::Wait,
+        CursorIcon::Progress => SystemCursor::WaitArrow,
+        _ => SystemCursor::Arrow,
+    }
 }
 
 /// The name a physical key is saved under in a controller profile. Physical,
@@ -73,6 +111,8 @@ impl Bridge {
             focused: true,
             scale: 1.0,
             start: Instant::now(),
+            cursors: HashMap::new(),
+            cursor: CursorIcon::Default,
         })
     }
 
@@ -197,11 +237,7 @@ impl Bridge {
         &mut self,
         window: &Window,
         build: impl FnMut(&mut egui::Ui),
-    ) -> (
-        egui::PlatformOutput,
-        Vec<egui::ClippedPrimitive>,
-        egui::TexturesDelta,
-    ) {
+    ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta) {
         let (w, h) = window.size();
         let mut input = RawInput {
             screen_rect: Some(Rect::from_min_size(
@@ -223,8 +259,35 @@ impl Bridge {
             .native_pixels_per_point = Some(Self::pixels_per_point(window));
         let output = self.ctx.run_ui(input, build);
         self.scale = output.pixels_per_point;
+        // The pointer is the only part of the platform output this shell has
+        // anything to say about. Copied text is the other half of it, and
+        // nothing here puts anything on the clipboard.
+        self.set_cursor(output.platform_output.cursor_icon);
         let primitives = self.ctx.tessellate(output.shapes, output.pixels_per_point);
-        (output.platform_output, primitives, output.textures_delta)
+        (primitives, output.textures_delta)
+    }
+
+    /// Shows what the thing under the pointer is: a hand over a button, an
+    /// I-beam over text. Only on a change — SDL sets the cursor on the window
+    /// server every time it is asked, whether or not anything is different.
+    ///
+    /// A cursor that cannot be made is left as whatever is already showing:
+    /// the wrong shape over a control is a small thing, and there is nothing
+    /// useful to say about it to the person holding the mouse.
+    fn set_cursor(&mut self, icon: CursorIcon) {
+        if icon == self.cursor {
+            return;
+        }
+        self.cursor = icon;
+        let wanted = system_cursor(icon);
+        let cursor = match self.cursors.entry(wanted) {
+            std::collections::hash_map::Entry::Occupied(held) => held.into_mut(),
+            std::collections::hash_map::Entry::Vacant(empty) => match Cursor::from_system(wanted) {
+                Ok(cursor) => empty.insert(cursor),
+                Err(_) => return,
+            },
+        };
+        cursor.set();
     }
 
     pub fn paint(
@@ -241,5 +304,47 @@ impl Bridge {
     /// Gives the painter's GL objects back while the context is still current.
     pub fn destroy(&mut self) {
         self.painter.destroy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the pointer says about the thing under it. The platform output
+    /// used to be thrown away, which left every control on every screen under
+    /// a plain arrow — the one piece of feedback a mouse gets before it
+    /// clicks. Nothing here needs a window: it is a table.
+    #[test]
+    fn the_pointer_says_what_it_is_over() {
+        assert_eq!(system_cursor(CursorIcon::Default), SystemCursor::Arrow);
+        assert_eq!(system_cursor(CursorIcon::PointingHand), SystemCursor::Hand);
+        assert_eq!(system_cursor(CursorIcon::Text), SystemCursor::IBeam);
+        assert_eq!(
+            system_cursor(CursorIcon::ResizeHorizontal),
+            SystemCursor::SizeWE
+        );
+        assert_eq!(
+            system_cursor(CursorIcon::ResizeVertical),
+            SystemCursor::SizeNS
+        );
+        assert_eq!(
+            system_cursor(CursorIcon::ResizeNeSw),
+            SystemCursor::SizeNESW
+        );
+        assert_eq!(
+            system_cursor(CursorIcon::ResizeNwSe),
+            SystemCursor::SizeNWSE
+        );
+        assert_eq!(
+            system_cursor(CursorIcon::Crosshair),
+            SystemCursor::Crosshair
+        );
+        assert_eq!(system_cursor(CursorIcon::NotAllowed), SystemCursor::No);
+        assert_eq!(system_cursor(CursorIcon::Wait), SystemCursor::Wait);
+        // And anything with no system cursor behind it is the arrow rather
+        // than nothing at all.
+        assert_eq!(system_cursor(CursorIcon::ZoomIn), SystemCursor::Arrow);
+        assert_eq!(system_cursor(CursorIcon::Help), SystemCursor::Arrow);
     }
 }

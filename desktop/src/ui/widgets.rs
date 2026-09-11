@@ -394,6 +394,31 @@ pub fn panel(
     went_back
 }
 
+/// Something slow is happening: a scrim over the whole window and a spinner
+/// in the middle of it. The scrim is interactable so a click meant for what is
+/// underneath stops here instead of arriving late, once the job is over and
+/// the thing that was clicked has moved.
+///
+/// Above the panels and below the message bar, by order rather than by when it
+/// is drawn: `Tooltip` is over `Foreground`, which is where a panel's card
+/// sits, and under `Order::TOP`, which is the sentence and the confirmations.
+pub fn busy(ctx: &egui::Context) {
+    // The safe area, the same one the panels cover: the scrim has to reach the
+    // edges of what can be clicked.
+    let screen = ctx.content_rect();
+    egui::Area::new(egui::Id::new("busy"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::click());
+            ui.painter().rect_filled(rect, CornerRadius::ZERO, SCRIM);
+            ui.put(
+                Rect::from_center_size(rect.center(), Vec2::splat(40.0)),
+                egui::Spinner::new().color(LEAF),
+            );
+        });
+}
+
 /// The plain sentence, bottom centre, until dismissed.
 ///
 /// Drawn in the top order, with the confirmations: a dialog's scrim covers

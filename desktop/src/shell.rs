@@ -56,6 +56,10 @@ pub struct App {
     /// The plain sentence shown until it is dismissed.
     pub message: Option<String>,
     pub busy: bool,
+    /// The long job the scrim is up for, waiting for that scrim to be painted.
+    /// See `defer`: the window stops answering while one of these runs, and a
+    /// window that stops answering with nothing on it looks broken.
+    pub pending: Option<Action>,
     pub fullscreen: bool,
     pub chrome_until: Instant,
     pub wizard: Option<Wizard>,
@@ -224,6 +228,7 @@ impl App {
             notice: None,
             message: None,
             busy: false,
+            pending: None,
             fullscreen: false,
             chrome_until: Instant::now(),
             wizard: None,
@@ -245,7 +250,7 @@ impl App {
 
 /// What the screens draw, into the root `Ui` of the pass, in the order they
 /// sit in: the shelf or the game, then whatever panel is over it, then the
-/// settings, then the one sentence that goes over everything.
+/// settings, then the scrim and the sentence that go over everything.
 fn draw(ui: &mut egui::Ui, app: &mut App, video: &mut Video) {
     if app.session.is_none() {
         crate::ui::shelf::show(ui, app);
@@ -256,11 +261,24 @@ fn draw(ui: &mut egui::Ui, app: &mut App, video: &mut Video) {
     // The settings panel draws its preview through the real pipeline, which
     // is what it needs the video for.
     crate::ui::settings::show(ui, app, video);
-    // The message is drawn last and over everything, because it is the one
-    // thing that has to be read before anything else is worth doing. It puts
-    // away itself and nothing else: a question behind it is still waiting.
+    over_everything(ui.ctx(), app);
+}
+
+/// What goes over whichever screen is up, in the order it sits in.
+///
+/// Both of these belong to the shell rather than to a screen. The scrim used
+/// to be drawn by the play view, which returns without drawing anything when
+/// there is no game — and importing a game and choosing box art, the two
+/// longest jobs there are, both happen on the shelf, where nothing was drawn
+/// at all. The message is last because it is the one thing that has to be read
+/// before anything else is worth doing; it puts away itself and nothing else,
+/// so a question behind it is still waiting.
+fn over_everything(ctx: &egui::Context, app: &mut App) {
+    if app.busy {
+        crate::ui::widgets::busy(ctx);
+    }
     if let Some(text) = app.message.clone() {
-        if crate::ui::widgets::message_bar(ui.ctx(), &text) {
+        if crate::ui::widgets::message_bar(ctx, &text) {
             app.actions.push(crate::ui::Action::CloseMessage);
         }
     }
@@ -449,6 +467,63 @@ fn leave_empty_archive(app: &mut App) {
     }
 }
 
+/// Whether an action is one of the long ones: a file read and a validate, a
+/// JPEG decoded and resized and written back out, a save with a thumbnail in
+/// it, a screenshot. None of them is slow enough to need a thread, and all of
+/// them are slow enough that the window would stop answering mid-frame with
+/// no sign of why.
+fn is_long(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::ImportFrom(_)
+            | Action::ChooseArtFrom(..)
+            | Action::SaveConfirmed(_)
+            | Action::Screenshot
+    )
+}
+
+/// Puts a long job off until the scrim it asks for has been painted, and
+/// hands back whatever should run now.
+///
+/// The order inside the loop is what makes this necessary: the frame is built
+/// before the actions it raised are applied, so a job that runs here runs
+/// under a frame that was drawn without the scrim in it. Raising the scrim and
+/// keeping the job until the next iteration has painted it costs a sixtieth of
+/// a second and is the difference between a window that says it is working and
+/// one that has died.
+///
+/// A second long job while one is waiting is run where it stands rather than
+/// dropped: one scrim is up either way, and losing somebody's import because
+/// they also asked for a screenshot would be worse than the freeze.
+fn defer(app: &mut App, action: Action) -> Option<Action> {
+    if !is_long(&action) || app.pending.is_some() {
+        return Some(action);
+    }
+    app.busy = true;
+    app.pending = Some(action);
+    // Nothing more is needed to clear the input: `busy` pauses the session in
+    // step 4 and zeroes both pads, so no button reaches the game while the
+    // scrim is up. What is physically held is deliberately kept — a quick-save
+    // must not leave somebody who was holding right standing still.
+    None
+}
+
+/// Takes back the job the scrim went up for, and lowers the scrim.
+fn take_pending(app: &mut App) -> Option<Action> {
+    let action = app.pending.take()?;
+    app.busy = false;
+    Some(action)
+}
+
+/// Applies an action, putting the long ones off for a frame. Everything that
+/// raises an action goes through here; `apply` itself is what runs when the
+/// waiting is over.
+fn act(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
+    if let Some(now) = defer(app, action) {
+        apply(app, now, window, sdl);
+    }
+}
+
 fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
     // Working the time controls is a sign of life even when the pointer has
     // not moved, and a drag the full-screen chrome fades out from under is a
@@ -471,7 +546,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                 .set_title("Add a game")
                 .pick_file();
             if let Some(path) = picked {
-                apply(app, Action::ImportFrom(path), window, sdl);
+                act(app, Action::ImportFrom(path), window, sdl);
             }
         }
         Action::ImportFrom(path) => match crate::import(&app.library, &path) {
@@ -484,7 +559,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                 .set_title("Choose box art")
                 .pick_file();
             if let Some(path) = picked {
-                apply(app, Action::ChooseArtFrom(game, path), window, sdl);
+                act(app, Action::ChooseArtFrom(game, path), window, sdl);
             }
         }
         // The cached texture goes with the file it was made from: a new
@@ -976,6 +1051,7 @@ pub fn run(options: Options) -> Result<(), String> {
         notice: None,
         message: None,
         busy: false,
+        pending: None,
         chrome_until: now + CHROME_IDLE,
         wizard: None,
         scrub_fraction: 0.0,
@@ -1011,7 +1087,17 @@ pub fn run(options: Options) -> Result<(), String> {
         Some(sdl.clone())
     };
     let mut upload_reported = false;
+    // Whether the frame that is about to be painted has the busy scrim in it.
+    // The job that scrim belongs to waits for it: see `defer`.
+    let mut scrim_painted = false;
     while !app.quit {
+        // 0. The long job whose scrim is now on screen. Run through `apply`
+        // rather than `act`, because this is what the waiting was for.
+        if scrim_painted {
+            if let Some(action) = take_pending(&mut app) {
+                apply(&mut app, action, &mut window, audio_sdl.as_ref());
+            }
+        }
         // 1. Events.
         for event in events.poll_iter() {
             bridge.handle(&event);
@@ -1019,12 +1105,15 @@ pub fn run(options: Options) -> Result<(), String> {
         }
         // 2. UI. The pass ends here without painting: the actions it raised
         // have to be applied before the engine runs.
-        let (_platform, primitives, mut textures) =
-            bridge.frame(&window, |ui| draw(ui, &mut app, &mut video));
+        let (primitives, mut textures) = bridge.frame(&window, |ui| draw(ui, &mut app, &mut video));
+        // Taken before the actions below can raise a new scrim: what matters
+        // is what the frame just built says, not what this iteration decides
+        // afterwards.
+        scrim_painted = app.busy;
         // 3. Actions.
         let actions = std::mem::take(&mut app.actions);
         for action in actions {
-            apply(&mut app, action, &mut window, audio_sdl.as_ref());
+            act(&mut app, action, &mut window, audio_sdl.as_ref());
         }
         // 4. Emulation. What the tick has to say is collected here and said
         // below, once the borrow of the session has been given back.
@@ -1418,6 +1507,110 @@ mod tests {
         );
         let logged = app.library.problems().remove(0);
         assert!(logged.contains("nothing.pal"), "{logged}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A long job is put off for a frame so the scrim it raises is on screen
+    /// before the window stops answering, and the same job is what comes back
+    /// once it is. The loop is what cannot be tested here; the handshake it
+    /// runs is this.
+    #[test]
+    fn a_long_job_waits_for_its_scrim_and_a_short_one_does_not() {
+        let dir = temp_dir("shell-busy");
+        let mut app = App::blank(&dir);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game.clone(), None).unwrap();
+        app.session = Some(session);
+        // Everything that reads a file, decodes a picture or writes one.
+        for long in [
+            Action::ImportFrom(dir.join("game.nes")),
+            Action::ChooseArtFrom(game.clone(), dir.join("art.png")),
+            Action::SaveConfirmed(3),
+            Action::Screenshot,
+        ] {
+            assert!(is_long(&long), "{long:?}");
+        }
+        // And nothing else: a pause that waited a frame would be a pause that
+        // let one more frame of the game through.
+        for quick in [
+            Action::Pause,
+            Action::Resume,
+            Action::Load(1),
+            Action::OpenGame(game.clone()),
+            Action::JumpBack(5),
+        ] {
+            assert!(!is_long(&quick), "{quick:?}");
+            assert_eq!(defer(&mut app, quick.clone()), Some(quick));
+            assert!(!app.busy && app.pending.is_none());
+        }
+        // A long one goes into the waiting room and the scrim goes up.
+        let import = Action::ImportFrom(dir.join("game.nes"));
+        assert_eq!(defer(&mut app, import.clone()), None);
+        assert!(app.busy);
+        assert_eq!(app.pending, Some(import.clone()));
+        // Which is what stops the game: no button reaches it while it is up.
+        assert!(!app.playing());
+        // A second long job while one waits is run rather than lost.
+        assert_eq!(
+            defer(&mut app, Action::Screenshot),
+            Some(Action::Screenshot)
+        );
+        assert_eq!(app.pending, Some(import.clone()));
+        // Taking it back lowers the scrim, and there is only one to take.
+        assert_eq!(take_pending(&mut app), Some(import));
+        assert!(!app.busy && app.pending.is_none());
+        assert_eq!(take_pending(&mut app), None);
+        assert!(!app.busy);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The scrim and the sentence go over whichever screen is up, including
+    /// the shelf — which is where importing a game and choosing box art, the
+    /// two longest jobs there are, are asked for. The play view used to draw
+    /// the scrim, and it draws nothing at all without a game.
+    #[test]
+    fn the_scrim_and_the_sentence_are_drawn_with_no_game_open() {
+        let dir = temp_dir("shell-over");
+        let ctx = egui::Context::default();
+        crate::ui::theme::apply(&ctx);
+        let mut app = App::blank(&dir);
+        app.busy = true;
+        app.message = Some("Palette loaded.".into());
+        let pass = |app: &mut App, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::Vec2::new(600.0, 400.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| over_everything(ui.ctx(), app))
+                .textures_delta
+                .clear();
+        };
+        // Twice, because egui settles a layout over two frames and the second
+        // is the one that has to hold up.
+        for _ in 0..2 {
+            pass(&mut app, Vec::new());
+        }
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        // The scrim is over the shelf and under the sentence, so the one
+        // control the sentence has is still the one a click lands on.
+        let ok = egui::pos2(340.0, 400.0 - 24.0 - 34.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: ok,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        pass(&mut app, vec![egui::Event::PointerMoved(ok), button(true)]);
+        pass(&mut app, vec![button(false)]);
+        assert_eq!(
+            std::mem::take(&mut app.actions),
+            vec![Action::CloseMessage],
+            "the OK button is under the scrim"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
