@@ -12,13 +12,19 @@ use super::widgets;
 use super::Action;
 use crate::library::{playtime, Game};
 use crate::shell::App;
-use egui::{pos2, CornerRadius, Label, Rect, RichText, Sense, Vec2};
+use egui::{pos2, CornerRadius, FontId, Rect, RichText, Sense, TextFormat, Vec2};
 
 /// The same two measurements the Android shelf scales off. A window narrower
 /// than `TIGHT` is a phone screen and gets smaller cards; one at least `ROOMY`
 /// has room for the controls beside the heading rather than under it.
 const TIGHT: f32 = 600.0;
 const ROOMY: f32 = 820.0;
+
+/// A ROM's filename is its title until somebody renames it, and filenames are
+/// long. Two lines then an ellipsis, the same as Android's `maxLines = 2`, and
+/// the box is always those two lines tall: a title allowed to run on makes one
+/// card three times the height of the card beside it and the grid goes ragged.
+const TITLE_LINES: usize = 2;
 
 /// The card's "play this" line ends in an arrow. Not "→": the bundled
 /// proportional font has no glyph for U+2192 and would draw a tofu box, the
@@ -38,10 +44,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 .inner_margin(if tight { 14.0 } else { 24.0 }),
         )
         .show(ui, |ui| {
+            // The index is read once a frame, not once a widget: the shelf and
+            // the archive are the same file.
             let games = if app.show_archive {
                 app.library.archived()
             } else {
                 app.library.games()
+            };
+            let archived = if app.show_archive {
+                games.len()
+            } else {
+                app.library.archived().len()
             };
             // Beside the heading where there is room for it, underneath where
             // there is not. A narrow window should still not push a button off
@@ -50,7 +63,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 ui.horizontal(|ui| {
                     heading(ui, app.show_archive);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        actions(ui, app, !games.is_empty(), true)
+                        actions(ui, app, archived, !games.is_empty(), true)
                     });
                 });
             } else {
@@ -58,7 +71,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 egui::ScrollArea::horizontal()
                     .id_salt("shelf-actions")
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| actions(ui, app, !games.is_empty(), false));
+                        ui.horizontal(|ui| actions(ui, app, archived, !games.is_empty(), false));
                     });
             }
             ui.add_space(16.0);
@@ -79,9 +92,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     // 220 points is a desktop's cell. In a phone-shaped window it
                     // would be one column, which makes a single game fill the whole
                     // shelf and turns it into a slideshow.
-                    let card_width = if tight { 150.0 } else { 220.0 };
+                    let room = ui.available_width().max(1.0);
+                    // Never wider than the panel: a card that sets a width the
+                    // window does not have is a card with its menu off the edge.
+                    let card_width: f32 = if tight { 150.0 } else { 220.0 };
+                    let card_width = card_width.min(room);
                     let gap = ui.spacing().item_spacing.x;
-                    let columns = ((ui.available_width() + gap) / (card_width + gap)).floor();
+                    let columns = ((room + gap) / (card_width + gap)).floor();
                     let columns = columns.max(1.0) as usize;
                     for chunk in games.chunks(columns) {
                         ui.horizontal_top(|ui| {
@@ -113,7 +130,7 @@ fn heading(ui: &mut egui::Ui, archive: bool) {
 ///
 /// A right-to-left row lays its contents out from the right edge, so it walks
 /// the same list backwards and both layouts read the same way.
-fn actions(ui: &mut egui::Ui, app: &mut App, any_games: bool, reversed: bool) {
+fn actions(ui: &mut egui::Ui, app: &mut App, archived: usize, any_games: bool, reversed: bool) {
     if app.show_archive {
         if widgets::compact(ui, "Back to the shelf", true).clicked() {
             app.actions.push(Action::ShowArchive(false));
@@ -126,7 +143,6 @@ fn actions(ui: &mut egui::Ui, app: &mut App, any_games: bool, reversed: bool) {
     ];
     // Only offered when there is something in it, so an empty shelf does not
     // advertise an empty cupboard.
-    let archived = app.library.archived().len();
     if archived > 0 {
         row.push((format!("Put away ({archived})"), Action::ShowArchive(true)));
     }
@@ -197,12 +213,42 @@ fn crop_uv(image: Vec2, box_size: Vec2) -> Rect {
     Rect::from_min_max(pos2(u, v), pos2(1.0 - u, 1.0 - v))
 }
 
+/// A game's name, wrapped to at most `TITLE_LINES` lines with an ellipsis, in a
+/// box exactly that many lines tall whatever it says.
+fn title(ui: &mut egui::Ui, text: &str, size: f32) -> egui::Response {
+    let width = ui.available_width();
+    let font = FontId::proportional(size);
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        TextFormat {
+            font_id: font.clone(),
+            color: ON_SURFACE,
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = width;
+    job.wrap.max_rows = TITLE_LINES;
+    // Broken between words, not through them: half a filename on each line
+    // reads as neither.
+    job.wrap.break_anywhere = false;
+    let galley = ui.painter().layout_job(job);
+    let lines = ui.ctx().fonts_mut(|f| f.row_height(&font)) * TITLE_LINES as f32;
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width, lines.max(galley.size().y)), Sense::click());
+    ui.painter().galley(rect.min, galley, ON_SURFACE);
+    response
+}
+
 fn cover(ui: &mut egui::Ui, app: &mut App, game: &Game, rect: Rect) {
     match app.cover_texture(ui.ctx(), game) {
+        // Rounded like the placeholder it stands in for: one shape, whether or
+        // not a game has a picture yet.
         Some(texture) => {
-            let uv = crop_uv(texture.size_vec2(), rect.size());
-            ui.painter()
-                .image(texture.id(), rect, uv, egui::Color32::WHITE);
+            let sized = egui::load::SizedTexture::new(texture.id(), texture.size_vec2());
+            egui::Image::from_texture(sized)
+                .uv(crop_uv(texture.size_vec2(), rect.size()))
+                .corner_radius(CornerRadius::same(CORNER_SMALL as u8))
+                .paint_at(ui, rect);
         }
         None => widgets::cover_placeholder(ui, rect, &game.title),
     }
@@ -286,49 +332,52 @@ fn menu(ui: &mut egui::Ui, app: &mut App, game: &Game) {
 ///
 /// A put-away game does not open on a click: the card would otherwise be a trap
 /// next to "Bring back".
-fn card(ui: &mut egui::Ui, app: &mut App, game: &Game, width: f32, tight: bool) {
+fn card(ui: &mut egui::Ui, app: &mut App, game: &Game, width: f32, tight: bool) -> Rect {
     egui::Frame::new()
         .fill(SURFACE)
         .corner_radius(CornerRadius::same(CORNER_LARGE as u8))
         .inner_margin(12.0)
         .show(ui, |ui| {
-            let inner = (width - 24.0).max(0.0);
-            ui.set_width(inner);
-            let (rect, response) =
-                ui.allocate_exact_size(Vec2::new(inner, inner * 0.75), Sense::click());
-            cover(ui, app, game, rect);
-            if response.clicked() && !app.show_archive {
-                app.actions.push(Action::OpenGame(game.clone()));
-            }
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    // The menu button's share of the row, kept back so a long
-                    // title wraps instead of pushing the menu off the card.
-                    ui.set_width((inner - 50.0).max(0.0));
-                    // A ROM's filename is the title until somebody renames it,
-                    // and filenames are long.
-                    ui.label(
-                        RichText::new(&game.title)
-                            .size(if tight { 15.0 } else { 19.0 })
-                            .strong()
-                            .color(ON_SURFACE),
-                    );
-                    if !app.show_archive {
-                        ui.label(
-                            RichText::new(format!("{}  {ONWARD}", status(app, game)))
-                                .size(if tight { 13.0 } else { 15.0 })
-                                .color(LEAF),
-                        );
-                    }
-                    if let Some(time) = playtime(game.seconds) {
-                        widgets::note(ui, &time);
-                    }
+            // A card is a column even when the shelf holding it is a row. A
+            // frame inherits the layout it was dropped into, and in the grid
+            // that is left to right, which would stand the cover beside the
+            // title rather than above it.
+            ui.vertical(|ui| {
+                let inner = (width - 24.0).max(0.0);
+                ui.set_width(inner);
+                let (rect, picture) =
+                    ui.allocate_exact_size(Vec2::new(inner, inner * 0.75), Sense::click());
+                cover(ui, app, game, rect);
+                let mut open = picture.clicked();
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        // The menu button's share of the row, kept back so a
+                        // long title wraps instead of pushing the menu off the
+                        // card.
+                        ui.set_width((inner - 50.0).max(0.0));
+                        open |= title(ui, &game.title, if tight { 15.0 } else { 19.0 }).clicked();
+                        if !app.show_archive {
+                            ui.label(
+                                RichText::new(format!("{}  {ONWARD}", status(app, game)))
+                                    .size(if tight { 13.0 } else { 15.0 })
+                                    .color(LEAF),
+                            );
+                        }
+                        if let Some(time) = playtime(game.seconds) {
+                            widgets::note(ui, &time);
+                        }
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        menu(ui, app, game)
+                    });
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    menu(ui, app, game)
-                });
+                if open && !app.show_archive {
+                    app.actions.push(Action::OpenGame(game.clone()));
+                }
             });
-        });
+        })
+        .response
+        .rect
 }
 
 /// A game as one row: a small piece of box art, the title, and where you got
@@ -348,16 +397,7 @@ fn row(ui: &mut egui::Ui, app: &mut App, game: &Game) {
                 let mut open = picture.clicked();
                 ui.vertical(|ui| {
                     ui.set_width((ui.available_width() - 50.0).max(0.0));
-                    let title = ui.add(
-                        Label::new(
-                            RichText::new(&game.title)
-                                .size(16.0)
-                                .strong()
-                                .color(ON_SURFACE),
-                        )
-                        .sense(Sense::click()),
-                    );
-                    open |= title.clicked();
+                    open |= title(ui, &game.title, 16.0).clicked();
                     let note = subtitle(app, game);
                     if !note.is_empty() {
                         widgets::note(ui, &note);
@@ -474,6 +514,55 @@ mod tests {
             }
         }
         assert!(app.actions.is_empty(), "{:?}", app.actions);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Two cards side by side are the same height whatever their games are
+    /// called. A shelf of ROMs is a shelf of filenames, and one of them is
+    /// always long enough to have made its card three times its neighbour's.
+    #[test]
+    fn a_long_title_does_not_make_a_taller_card() {
+        let dir = temp_dir("shelf-title");
+        let ctx = egui::Context::default();
+        crate::ui::theme::apply(&ctx);
+        let mut app = app(&dir);
+        let short = app.library.add("aaaa", "Game A", b"rom a").unwrap();
+        let long = "a filename nobody would choose to read twice, and yet";
+        let long = app.library.add("bbbb", long, b"rom b").unwrap();
+        assert_eq!(long.title.chars().count(), 53);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                pos2(0.0, 0.0),
+                Vec2::new(1024.0, 768.0),
+            )),
+            ..Default::default()
+        };
+        let mut heights = Vec::new();
+        ctx.run_ui(input, |ui| {
+            ui.horizontal_top(|ui| {
+                for game in [&short, &long] {
+                    heights.push(card(ui, &mut app, game, 220.0, false).height());
+                }
+            });
+        })
+        .textures_delta
+        .clear();
+        // The title has to be one that would have needed clamping, or the
+        // test would pass with no clamp at all.
+        let column = 220.0 - 24.0 - 50.0;
+        let rows = ctx.fonts_mut(|f| {
+            f.layout(
+                long.title.clone(),
+                FontId::proportional(19.0),
+                ON_SURFACE,
+                column,
+            )
+            .rows
+            .len()
+        });
+        assert!(rows > TITLE_LINES, "nothing to clamp: {rows} rows");
+        assert_eq!(heights.len(), 2);
+        assert!((heights[0] - heights[1]).abs() < 0.5, "{heights:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

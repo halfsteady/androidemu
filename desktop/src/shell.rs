@@ -284,6 +284,14 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
     }
 }
 
+/// The last game brought back or deleted takes the archive with it: a screen
+/// whose whole subject is gone is not a screen to leave somebody standing on.
+fn leave_empty_archive(app: &mut App) {
+    if app.library.archived().is_empty() {
+        app.show_archive = false;
+    }
+}
+
 fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
     match action {
         Action::OpenGame(game) => open_game(app, game, sdl),
@@ -322,23 +330,47 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             Err(e) => app.report("That picture didn't work as box art.", &e),
         },
         Action::ClearArt(game) => {
-            if let Err(e) = app.library.clear_art(&game.id) {
-                app.report("The box art couldn't be cleared.", &e);
+            match app.library.clear_art(&game.id) {
+                Ok(()) => {
+                    app.message = Some(format!("{} is back to its last saved moment.", game.title))
+                }
+                Err(e) => app.report("The box art couldn't be cleared.", &e),
             }
             app.covers.remove(&game.id);
         }
-        Action::SetArchived(game, archived) => {
-            if let Err(e) = app.library.set_archived(&game.id, archived) {
-                app.report("The shelf couldn't be updated.", &e);
+        // Said out loud, in the Android shell's words: a card that vanishes
+        // from the shelf should say where it went, and one that comes back
+        // should say that nothing was lost.
+        Action::SetArchived(game, archived) => match app.library.set_archived(&game.id, archived) {
+            Ok(()) if archived => {
+                app.message = Some(format!(
+                    "{} is put away. Tap Put away on the shelf to bring it back.",
+                    game.title
+                ))
             }
-        }
+            Ok(()) => {
+                app.message = Some(format!(
+                    "{} is back on the shelf, exactly where you left it.",
+                    game.title
+                ));
+                leave_empty_archive(app);
+            }
+            Err(e) => app.report("The shelf couldn't be updated.", &e),
+        },
         // Asked before done: deleting a game takes its saves with it. Task 13
         // draws the question; until then the dialog is raised and answered by
         // Escape, and nothing is lost.
         Action::DeleteRequested(game) => app.dialog = Some(Dialog::ConfirmDelete(game)),
         Action::DeleteConfirmed(game) => {
-            if let Err(e) = app.library.forget(&game.id) {
-                app.report("The game couldn't be deleted.", &e);
+            match app.library.forget(&game.id) {
+                Ok(()) => {
+                    app.message = Some(format!(
+                        "{} and its saves are gone from this device.",
+                        game.title
+                    ));
+                    leave_empty_archive(app);
+                }
+                Err(e) => app.report("The game couldn't be deleted.", &e),
             }
             app.covers.remove(&game.id);
             app.dialog = None;
