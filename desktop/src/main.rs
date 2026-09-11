@@ -1,6 +1,8 @@
 #[allow(dead_code)] // pictures_dir, now_millis and read_png gain callers in Task 4.
 mod files;
 mod palette;
+#[allow(dead_code)] // The geometry, looks and palettes gain their callers in Task 9.
+mod picture;
 #[allow(dead_code)] // The scrubber gains its caller with the play screen in Task 9.
 mod scrub;
 
