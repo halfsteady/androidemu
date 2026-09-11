@@ -35,6 +35,16 @@ pub const NOTICE_TIME: Duration = Duration::from_millis(2200);
 pub const TITLE_BAR: f32 = 52.0;
 pub const TIME_ROW: f32 = 84.0;
 pub const END_OF_TAPE: &str = "That's as far back as this goes.";
+/// Said when a file the shell keeps its choices in cannot be read. The file is
+/// left exactly as it is either way; only the reason is taken.
+pub const SETTINGS_UNREADABLE: &str =
+    "Your settings couldn't be read, so the usual ones are in use.";
+pub const CONTROLLERS_UNREADABLE: &str =
+    "Your controller buttons couldn't be read, so the usual ones are in use.";
+/// Said when `palette: 5` is chosen and `palette.pal` cannot be honoured. The
+/// file's name and what is wrong with it go in the problem log beside it.
+pub const PALETTE_FELL_BACK: &str =
+    "Your palette file couldn't be used, so the standard colours are back.";
 
 /// Everything a drawn frame can read and everything the shell acts on. One
 /// value, passed to the panels by `&mut`, so there is no state hiding in the
@@ -85,6 +95,11 @@ pub struct App {
     /// settings panel opens rather than while it is drawn: the panel is drawn
     /// sixty times a second, and the answer is a file read and a parse.
     pub has_palette_file: bool,
+    /// The 64 colours the chosen palette came to, resolved by `apply_palette`
+    /// and kept. From a file is a file read and a parse, and the preview and
+    /// the engine both want the answer — once each time it changes, not once a
+    /// frame and not twice.
+    pub colours: [u32; 64],
     pub actions: Vec<Action>,
     pub quit: bool,
 }
@@ -139,6 +154,12 @@ impl App {
             .map_or(0, |d| d.as_millis() as i64)
     }
 
+    /// The cover for one card, decoded and uploaded the first time it is
+    /// asked for and kept by the file's mtime after that.
+    ///
+    /// Only ask for the ones on screen: see `shelf::cover`. A shelf of two
+    /// hundred games is two hundred PNG decodes and two hundred uploads on the
+    /// frame it opens, and the screen holds a dozen.
     pub fn cover_texture(
         &mut self,
         ctx: &egui::Context,
@@ -152,6 +173,13 @@ impl App {
             }
         }
         let texture = Self::texture(ctx, &format!("cover-{}", game.id), &path)?;
+        // Emptied rather than picked over. Scrolling a long shelf fills this
+        // with pictures of cards that have gone off the top, and every one of
+        // them is a megabyte of GPU memory; the ones still on screen are back
+        // in it on the next frame, which costs that frame and nothing after.
+        if self.covers.len() >= COVERS_KEPT {
+            self.covers.clear();
+        }
         self.covers.insert(game.id.clone(), (key, texture.clone()));
         Some(texture)
     }
@@ -172,17 +200,38 @@ impl App {
         Some(texture)
     }
 
-    /// Hands the chosen colours to the open game and asks for a fresh
-    /// preview. The engine repaints the frame it is holding, so a palette
-    /// changed over a paused game reaches the screen on this frame rather
-    /// than whenever something next happens to move.
+    /// Works out what the chosen palette comes to, hands it to the open game
+    /// and asks for a fresh preview. The engine repaints the frame it is
+    /// holding, so a palette changed over a paused game reaches the screen on
+    /// this frame rather than whenever something next happens to move.
+    ///
+    /// This is also the one place the palette file is read, and the one place
+    /// a choice that cannot be honoured is said out loud: everything else —
+    /// the engine, the preview, the sample frame — uses what this resolved.
+    /// Once per change rather than once per frame, which is what keeps a
+    /// missing file from writing a line in the log sixty times a second.
     pub fn apply_palette(&mut self) {
-        let colours = self.settings.colours(&self.data_dir);
+        let (colours, why) = self.settings.colours(&self.data_dir);
+        self.colours = colours;
         if let Some(session) = &mut self.session {
             session.engine.set_palette(colours);
             self.frame_dirty = true;
         }
         self.preview_dirty = true;
+        if let Some(why) = why {
+            self.report(PALETTE_FELL_BACK, &why);
+        }
+    }
+
+    /// The table the sample frame is painted with: what the palette resolved
+    /// to, with the model's closest match standing in for Standard so the
+    /// built pattern has real colours to draw with rather than the core's
+    /// finished ones.
+    fn preview_colours(&self) -> [u32; 64] {
+        match self.settings.palette {
+            picture::PaletteChoice::Standard => picture::model::standard(),
+            _ => self.colours,
+        }
     }
 
     /// The paused frame, else the newest saved moment on the shelf, else the
@@ -206,7 +255,7 @@ impl App {
                 }
             }
         }
-        picture::sample_frame(&self.settings.preview_colours(&self.data_dir))
+        picture::sample_frame(&self.preview_colours())
     }
 
     /// Everything a screen reads and nothing else: no window, no engine, no
@@ -217,9 +266,9 @@ impl App {
         App {
             data_dir: data_dir.to_path_buf(),
             library: Library::open(data_dir).unwrap(),
-            settings: Settings::load(data_dir),
+            settings: Settings::load(data_dir).0,
             settings_dirty: false,
-            input: Input::new(Profiles::load(data_dir)),
+            input: Input::new(Profiles::load(data_dir).0),
             session: None,
             panel: Panel::None,
             panel_before: Panel::None,
@@ -242,6 +291,7 @@ impl App {
             preview: None,
             preview_dirty: false,
             has_palette_file: false,
+            colours: crate::palette::PALETTE,
             actions: Vec::new(),
             quit: false,
         }
@@ -305,6 +355,9 @@ fn escape(app: &App) -> Action {
         (_, Panel::None, _, false, true) => Action::ToggleFullscreen,
         // Nothing is in front of the shelf but, perhaps, a sentence at the
         // bottom of it, and Escape is how that is put away from the keyboard.
+        // The archive is a screen of its own behind that sentence, and backing
+        // out of it is the step Escape had no way of taking.
+        _ if app.message.is_none() && app.show_archive => Action::ShowArchive(false),
         _ => Action::CloseMessage,
     }
 }
@@ -329,6 +382,31 @@ fn space(app: &App) -> Action {
 /// does over the pause panel, and not while a question is in front of it.
 fn start_resumes(app: &App) -> bool {
     app.panel == Panel::Pause && app.dialog.is_none()
+}
+
+/// How many cover textures are kept at once. Comfortably more than a window
+/// full of cards, and far short of a shelf's worth of decoded pictures.
+const COVERS_KEPT: usize = 64;
+
+/// A frame of a 60 Hz display, which is what the loop paces to when there is
+/// no game open to ask.
+const DISPLAY_FRAME: Duration = Duration::from_micros(16_667);
+
+/// How long one frame of the open game's region lasts, or a sixtieth of a
+/// second when the shelf is what is on screen.
+fn frame_time(app: &App) -> Duration {
+    app.session
+        .as_ref()
+        .map_or(DISPLAY_FRAME, Session::frame_time)
+}
+
+/// What is left of the frame once the loop has done its work, and never
+/// nothing at all: a frame that overran still has to let the rest of the
+/// machine have a turn before the next one.
+fn pace(frame_time: Duration, elapsed: Duration) -> Duration {
+    frame_time
+        .saturating_sub(elapsed)
+        .max(Duration::from_millis(1))
 }
 
 /// How often the audio delay is taken. It is a number somebody glances at
@@ -585,7 +663,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         Action::SetArchived(game, archived) => match app.library.set_archived(&game.id, archived) {
             Ok(()) if archived => {
                 app.message = Some(format!(
-                    "{} is put away. Tap Put away on the shelf to bring it back.",
+                    "{} is put away. Open Put away on the shelf to bring it back.",
                     game.title
                 ))
             }
@@ -772,9 +850,11 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.panel = Panel::Settings;
             // Both halves of the preview — the settings and the frame it is
             // drawn from — can have moved since the panel was last up, and so
-            // can the palette file the Colours row offers.
-            app.preview_dirty = true;
+            // can the palette file the Colours row offers. Resolving it here
+            // asks for the preview as well, and says so if the file somebody
+            // chose has gone in the meantime.
             app.has_palette_file = crate::settings::imported_palette(&app.data_dir).is_some();
+            app.apply_palette();
         }
         Action::SetLook(look) => {
             app.settings.look = look;
@@ -985,7 +1065,17 @@ fn handle_event(
         }
         Event::ControllerAxisMotion {
             which, axis, value, ..
-        } => app.input.pad_axis(*which, *axis, *value),
+        } => {
+            // A stick pushed or a trigger pulled is somebody at the controls
+            // as much as a button is, and the full-screen chrome fading out
+            // from under a thumb that is holding right is chrome that went
+            // away while the game was being played. The dead zone is what
+            // keeps a resting stick's jitter from holding it up for ever.
+            if crate::input::past_dead_zone(*axis, *value) {
+                app.chrome_until = Instant::now() + CHROME_IDLE;
+            }
+            app.input.pad_axis(*which, *axis, *value)
+        }
         _ => {}
     }
 }
@@ -994,7 +1084,11 @@ pub fn run(options: Options) -> Result<(), String> {
     std::fs::create_dir_all(&options.data_dir)
         .map_err(|e| format!("{}: {e}", options.data_dir.display()))?;
     let library = Library::open(&options.data_dir)?;
-    let settings = Settings::load(&options.data_dir);
+    // Both files are read before the window exists, and both can be somebody's
+    // hand-edited JSON. Whatever they say goes in the problem log once the
+    // library is in an `App` that has one.
+    let (settings, settings_trouble) = Settings::load(&options.data_dir);
+    let (profiles, profiles_trouble) = Profiles::load(&options.data_dir);
     let sdl = sdl2::init()?;
     let video_subsystem = sdl.video()?;
     let controllers = sdl.game_controller()?;
@@ -1013,7 +1107,15 @@ pub fn run(options: Options) -> Result<(), String> {
         .opengl()
         .build()
         .map_err(|e| e.to_string())?;
-    let gl_context = window.gl_create_context()?;
+    // The one thing this shell cannot do without, and the message has to say
+    // which driver refused: "OpenGL 3.3 is needed" means nothing on its own to
+    // somebody running under a software renderer or a remote desktop.
+    let gl_context = window.gl_create_context().map_err(|e| {
+        format!(
+            "OpenGL 3.3 is needed for the picture ({e}). Driver: {}",
+            video_subsystem.current_video_driver()
+        )
+    })?;
     window.gl_make_current(&gl_context)?;
     let gl = Arc::new(unsafe {
         glow::Context::from_loader_function(|s| video_subsystem.gl_get_proc_address(s) as *const _)
@@ -1042,7 +1144,7 @@ pub fn run(options: Options) -> Result<(), String> {
         fullscreen: settings.fullscreen,
         settings,
         settings_dirty: false,
-        input: Input::new(Profiles::load(&options.data_dir)),
+        input: Input::new(profiles),
         session: None,
         panel: Panel::None,
         panel_before: Panel::None,
@@ -1064,9 +1166,24 @@ pub fn run(options: Options) -> Result<(), String> {
         preview: None,
         preview_dirty: true,
         has_palette_file: false,
+        colours: crate::palette::PALETTE,
         actions: Vec::new(),
         quit: false,
     };
+    // Said now that there is somewhere to say it. Neither file has been
+    // written over: nothing saves either of them until somebody changes a
+    // setting or finishes the mapping wizard on purpose.
+    for (label, trouble) in [
+        (SETTINGS_UNREADABLE, settings_trouble),
+        (CONTROLLERS_UNREADABLE, profiles_trouble),
+    ] {
+        if let Some(detail) = trouble {
+            app.report(label, &detail);
+        }
+    }
+    // The chosen palette, read once here rather than on every frame that wants
+    // it, and said out loud now if the file it names has gone.
+    app.apply_palette();
     if app.fullscreen {
         // A refused full screen must not leave the layout believing it got
         // one; the saved preference is left alone, so the next run tries again.
@@ -1091,6 +1208,7 @@ pub fn run(options: Options) -> Result<(), String> {
     // The job that scrim belongs to waits for it: see `defer`.
     let mut scrim_painted = false;
     while !app.quit {
+        let started = Instant::now();
         // 0. The long job whose scrim is now on screen. Run through `apply`
         // rather than `act`, because this is what the waiting was for.
         if scrim_painted {
@@ -1226,9 +1344,11 @@ pub fn run(options: Options) -> Result<(), String> {
             sdl.mouse().show_cursor(true);
         }
         // With vsync the swap paces the loop. Without it nothing does, and a
-        // spinning loop would take a whole core to show the same frame twice.
+        // loop that sleeps a millisecond runs a thousand times a second to
+        // show the same frame sixty times — a whole core for nothing. What is
+        // left of this frame is what there is to wait for.
         if !vsync {
-            std::thread::sleep(Duration::from_millis(1));
+            std::thread::sleep(pace(frame_time(&app), started.elapsed()));
         }
     }
     if let Some(mut session) = app.session.take() {
@@ -1271,7 +1391,7 @@ mod tests {
         let mut app = App::blank(&dir);
         app.panel = Panel::Problems;
         assert_eq!(closed(&app), Panel::None);
-        // Opened from Settings, which is where Task 14 raises it from.
+        // Opened from Settings, which is one of the three screens that raise it.
         app.panel_before = Panel::Settings;
         assert_eq!(closed(&app), Panel::Settings);
         // Escape is the back chevron said with the keyboard, so it has to mean
@@ -1496,7 +1616,8 @@ mod tests {
         assert_eq!(app.settings.palette, picture::PaletteChoice::File);
         assert!(app.settings_dirty && app.preview_dirty);
         assert_eq!(app.message.as_deref(), Some("Palette loaded."));
-        assert_eq!(app.settings.colours(&app.data_dir), table);
+        assert_eq!(app.settings.colours(&app.data_dir), (table, None));
+        assert_eq!(app.colours, table);
         // A file that is not there is a file that cannot be read, which is
         // the same sentence and a different reason.
         app.message = None;
@@ -1611,6 +1732,133 @@ mod tests {
             vec![Action::CloseMessage],
             "the OK button is under the scrim"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A palette file that cannot be honoured falls back to Standard, says so
+    /// and names the file in the log. Once, where the palette is resolved —
+    /// the engine, the preview and the sample frame all take what this worked
+    /// out, so a file somebody deleted cannot write a line sixty times a
+    /// second.
+    #[test]
+    fn a_palette_file_that_cannot_be_honoured_falls_back_and_says_so() {
+        let dir = temp_dir("shell-palette-gone");
+        let mut app = App::blank(&dir);
+        app.settings.palette = picture::PaletteChoice::File;
+        app.apply_palette();
+        assert_eq!(app.colours, crate::palette::PALETTE);
+        assert_eq!(app.preview_colours(), crate::palette::PALETTE);
+        assert_eq!(app.message.as_deref(), Some(PALETTE_FELL_BACK));
+        let logged = app.library.problems().remove(0);
+        assert!(logged.contains("palette.pal"), "{logged}");
+        // A file that reads is honoured, and says nothing at all.
+        let table = picture::model::build(1.1, 0.0, 1.0, 0.0, 1.0);
+        std::fs::write(dir.join("palette.pal"), picture::model::bytes(&table)).unwrap();
+        app.message = None;
+        app.apply_palette();
+        assert_eq!(app.colours, table);
+        assert_eq!(app.preview_colours(), table);
+        assert_eq!(app.message, None);
+        assert_eq!(app.library.problems().len(), 1, "said twice");
+        // Standard is the core's table for the picture and the model's
+        // closest match for the built sample frame, and neither is a read.
+        app.settings.palette = picture::PaletteChoice::Standard;
+        app.apply_palette();
+        assert_eq!(app.colours, crate::palette::PALETTE);
+        assert_eq!(app.preview_colours(), picture::model::standard());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Neither file the shell keeps its choices in is written over because it
+    /// could not be read. Nothing is dirty on the way up, so the first
+    /// housekeeping pass saves neither, and what is on disk is still there for
+    /// somebody to fix.
+    #[test]
+    fn an_unreadable_choice_file_is_left_where_it_is() {
+        let dir = temp_dir("shell-unreadable");
+        std::fs::write(dir.join("settings.json"), "not json").unwrap();
+        std::fs::write(dir.join("controllers.json"), "{oops").unwrap();
+        let mut app = App::blank(&dir);
+        assert_eq!(app.settings, Settings::default());
+        assert!(!app.settings_dirty);
+        assert!(!app.input.take_dirty());
+        // Which is what the shell says, with the file named in the log.
+        let (_, trouble) = Settings::load(&dir);
+        app.report(SETTINGS_UNREADABLE, &trouble.unwrap());
+        let (_, trouble) = Profiles::load(&dir);
+        app.report(CONTROLLERS_UNREADABLE, &trouble.unwrap());
+        assert_eq!(app.message.as_deref(), Some(CONTROLLERS_UNREADABLE));
+        let logged = app.library.problems();
+        assert!(logged[0].contains("controllers.json"), "{logged:?}");
+        assert!(logged[1].contains("settings.json"), "{logged:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json")).unwrap(),
+            "not json"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("controllers.json")).unwrap(),
+            "{oops"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Escape backs out of the archive, which is a screen of its own and had
+    /// no way out from the keyboard. Whatever is being said is read first: a
+    /// sentence and a screen are two steps, not one.
+    #[test]
+    fn escape_leaves_the_archive_once_there_is_nothing_left_to_read() {
+        let dir = temp_dir("shell-archive");
+        let mut app = App::blank(&dir);
+        app.show_archive = true;
+        assert_eq!(escape(&app), Action::ShowArchive(false));
+        app.message = Some("Game A is back on the shelf, exactly where you left it.".into());
+        assert_eq!(escape(&app), Action::CloseMessage);
+        app.message = None;
+        // And in full screen the window comes back first, the way it does
+        // from the shelf.
+        app.fullscreen = true;
+        assert_eq!(escape(&app), Action::ToggleFullscreen);
+        app.fullscreen = false;
+        // On the shelf itself there is nothing behind it to back out to.
+        app.show_archive = false;
+        assert_eq!(escape(&app), Action::CloseMessage);
+        // The last game brought back takes the archive with it either way.
+        app.show_archive = true;
+        app.library.add("aaaa", "Game A", &test_rom()).unwrap();
+        app.library.set_archived("aaaa", true).unwrap();
+        leave_empty_archive(&mut app);
+        assert!(app.show_archive, "there is still something in it");
+        app.library.set_archived("aaaa", false).unwrap();
+        leave_empty_archive(&mut app);
+        assert!(!app.show_archive);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Without vsync the loop has to pace itself, and a millisecond is not
+    /// the pace: it runs a thousand times a second to show sixty frames.
+    #[test]
+    fn an_unpaced_loop_sleeps_what_is_left_of_the_frame() {
+        let sixtieth = Duration::from_micros(16_667);
+        assert_eq!(
+            pace(sixtieth, Duration::from_millis(4)),
+            sixtieth - Duration::from_millis(4)
+        );
+        // A frame that overran still gives the rest of the machine a turn.
+        assert_eq!(
+            pace(sixtieth, Duration::from_millis(30)),
+            Duration::from_millis(1)
+        );
+        assert_eq!(pace(sixtieth, sixtieth), Duration::from_millis(1));
+        let dir = temp_dir("shell-pace");
+        let mut app = App::blank(&dir);
+        // With no game open there is no region to ask, so the display's own
+        // sixtieth of a second is what it paces to.
+        assert_eq!(frame_time(&app), sixtieth);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        let region = session.frame_time();
+        app.session = Some(session);
+        assert_eq!(frame_time(&app), region);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

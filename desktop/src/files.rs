@@ -55,6 +55,26 @@ pub fn default_data_dir() -> Result<PathBuf, String> {
     Ok(home()?.join(".local/share/emulia"))
 }
 
+/// Where `XDG_PICTURES_DIR` points, when user-dirs.dirs names one and it names
+/// somewhere absolute.
+///
+/// The file's own convention is `XDG_PICTURES_DIR="$HOME/Pictures"`, so the
+/// variable is put back before the answer is judged. Anything still relative
+/// after that is not somewhere to write to: screenshots would land in whatever
+/// directory the shell happened to be started from, which is how a folder
+/// called `Pictures` appears in somebody's home directory for no reason.
+/// `default_data_dir` holds `XDG_DATA_HOME` to the same rule.
+fn pictures_from_config(text: &str, home: &Path) -> Option<PathBuf> {
+    let line = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("XDG_PICTURES_DIR="))?;
+    let path = PathBuf::from(
+        line.trim_matches('"')
+            .replace("$HOME", &home.to_string_lossy()),
+    );
+    path.is_absolute().then_some(path)
+}
+
 /// `~/Pictures/Emulia`, honouring `XDG_PICTURES_DIR` from user-dirs.dirs on Linux.
 pub fn pictures_dir() -> Result<PathBuf, String> {
     let home = home()?;
@@ -64,13 +84,8 @@ pub fn pictures_dir() -> Result<PathBuf, String> {
             .filter(|p| p.is_absolute())
             .unwrap_or_else(|| home.join(".config"));
         if let Ok(text) = fs::read_to_string(config.join("user-dirs.dirs")) {
-            for line in text.lines() {
-                if let Some(value) = line.trim().strip_prefix("XDG_PICTURES_DIR=") {
-                    let value = value
-                        .trim_matches('"')
-                        .replace("$HOME", &home.to_string_lossy());
-                    return Ok(PathBuf::from(value).join("Emulia"));
-                }
+            if let Some(pictures) = pictures_from_config(&text, &home) {
+                return Ok(pictures.join("Emulia"));
             }
         }
     }
@@ -143,6 +158,37 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"new");
         assert_eq!(fs::read(&temp).unwrap(), b"existing temporary file");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The one line of user-dirs.dirs this reads, and the one thing it has to
+    /// refuse: a relative path. `$HOME` is put back first, because that is how
+    /// every one of these files is written.
+    #[test]
+    fn a_pictures_directory_has_to_be_an_absolute_one() {
+        let home = Path::new("/home/someone");
+        assert_eq!(
+            pictures_from_config("XDG_PICTURES_DIR=\"$HOME/Pictures\"\n", home),
+            Some(PathBuf::from("/home/someone/Pictures"))
+        );
+        assert_eq!(
+            pictures_from_config(
+                "XDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_PICTURES_DIR=/srv/pics\n",
+                home
+            ),
+            Some(PathBuf::from("/srv/pics"))
+        );
+        // Relative, and so is an empty one: neither is somewhere to put
+        // somebody's screenshots.
+        assert_eq!(
+            pictures_from_config("XDG_PICTURES_DIR=\"pics\"\n", home),
+            None
+        );
+        assert_eq!(pictures_from_config("XDG_PICTURES_DIR=\"\"\n", home), None);
+        assert_eq!(
+            pictures_from_config("XDG_DESKTOP_DIR=\"/tmp\"\n", home),
+            None
+        );
+        assert_eq!(pictures_from_config("", home), None);
     }
 
     #[test]

@@ -269,6 +269,12 @@ impl Session {
         result
     }
 
+    /// How long one frame of this ROM's region lasts. What the shell paces on
+    /// when the driver gave it no vsync to pace on.
+    pub fn frame_time(&self) -> Duration {
+        self.frame_time
+    }
+
     /// How long until the next frame is due when there is no audio device to
     /// wait on; the headless loop sleeps this.
     pub fn until_due(&self) -> Duration {

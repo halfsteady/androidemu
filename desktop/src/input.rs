@@ -46,6 +46,17 @@ impl NesButton {
     }
 }
 
+/// Whether an axis has actually been moved: past the stick's dead zone either
+/// way, or past the point a trigger counts as pulled. A resting stick reports
+/// small numbers for ever, and taking those for a sign of life would hold the
+/// full-screen chrome up whether or not anybody was there.
+pub fn past_dead_zone(axis: Axis, value: i16) -> bool {
+    match axis {
+        Axis::TriggerLeft | Axis::TriggerRight => value > TRIGGER_ON,
+        _ => value.saturating_abs() > STICK_DEAD_ZONE,
+    }
+}
+
 pub fn keyboard_default() -> Profile {
     Profile {
         name: "Keyboard".into(),
@@ -383,6 +394,28 @@ impl Wizard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stick pushed or a trigger pulled is somebody at the controls, and a
+    /// stick lying still is not. The full-screen chrome fades on this: read
+    /// the resting jitter as a sign of life and it never fades at all; ignore
+    /// a held direction and it fades under the thumb holding it.
+    #[test]
+    fn a_stick_at_rest_is_not_somebody_at_the_controls() {
+        for axis in [Axis::LeftX, Axis::LeftY, Axis::RightX, Axis::RightY] {
+            assert!(!past_dead_zone(axis, 0), "{axis:?}");
+            assert!(!past_dead_zone(axis, STICK_DEAD_ZONE), "{axis:?}");
+            assert!(!past_dead_zone(axis, -STICK_DEAD_ZONE), "{axis:?}");
+            assert!(past_dead_zone(axis, STICK_DEAD_ZONE + 1), "{axis:?}");
+            assert!(past_dead_zone(axis, i16::MIN), "{axis:?}");
+            assert!(past_dead_zone(axis, i16::MAX), "{axis:?}");
+        }
+        // A trigger only goes one way, and it counts from further down.
+        for axis in [Axis::TriggerLeft, Axis::TriggerRight] {
+            assert!(!past_dead_zone(axis, TRIGGER_ON), "{axis:?}");
+            assert!(past_dead_zone(axis, TRIGGER_ON + 1), "{axis:?}");
+            assert!(!past_dead_zone(axis, 0), "{axis:?}");
+        }
+    }
 
     #[test]
     fn nes_button_bits_and_order_match_the_core() {

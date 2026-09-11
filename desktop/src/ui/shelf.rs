@@ -240,6 +240,13 @@ fn title(ui: &mut egui::Ui, text: &str, size: f32) -> egui::Response {
 }
 
 fn cover(ui: &mut egui::Ui, app: &mut App, game: &Game, rect: Rect) {
+    // Only what is on screen. The card's rectangle is allocated before this is
+    // called, so a card scrolled off the end of a long shelf is a rectangle
+    // outside the clip and a picture nobody is going to see — and asking for
+    // it would decode a PNG and upload a texture for it all the same.
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
     match app.cover_texture(ui.ctx(), game) {
         // Rounded like the placeholder it stands in for: one shape, whether or
         // not a game has a picture yet.
@@ -480,6 +487,46 @@ mod tests {
             }
         }
         assert!(app.actions.is_empty(), "{:?}", app.actions);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A shelf holds more games than a window holds cards, and every cover is
+    /// a PNG to decode and a texture to upload. The ones below the fold wait
+    /// until they are scrolled to; the first frame of a long shelf used to be
+    /// every cover it had, all at once.
+    #[test]
+    fn a_card_below_the_fold_does_not_decode_its_cover() {
+        let dir = temp_dir("shelf-covers");
+        let ctx = egui::Context::default();
+        crate::ui::theme::apply(&ctx);
+        let mut app = App::blank(&dir);
+        let pixels = vec![0x7f; 256 * 240 * 4];
+        let games = 16;
+        for i in 0..games {
+            let id = format!("{i:04}");
+            app.library
+                .add(&id, &format!("Game {i}"), format!("rom {i}").as_bytes())
+                .unwrap();
+            let thumbnail = app.library.thumbnail_path(&id, crate::library::Slot::Auto);
+            crate::files::write_png(&thumbnail, 256, 240, &pixels).unwrap();
+        }
+        // A window three rows tall. Twice, because egui settles a layout over
+        // two frames and the second is the one that has to hold up.
+        app.settings.shelf_list = true;
+        for _ in 0..2 {
+            pass(&mut app, &ctx, Vec2::new(900.0, 320.0));
+        }
+        assert!(!app.covers.is_empty(), "nothing was drawn at all");
+        assert!(
+            app.covers.len() < games,
+            "every cover was decoded: {}",
+            app.covers.len()
+        );
+        // And a window with room for all of them takes all of them.
+        for _ in 0..2 {
+            pass(&mut app, &ctx, Vec2::new(900.0, 2400.0));
+        }
+        assert_eq!(app.covers.len(), games);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
