@@ -194,7 +194,14 @@ fn draw(ui: &mut egui::Ui, app: &mut App, _video: &mut Video) {
         });
     }
     // Task 12 draws the play screen, Task 13 the panels, and Task 14 the
-    // settings preview, which is what `_video` is for.
+    // settings preview, which is what `_video` is for. The message is drawn
+    // last and over everything, because it is the one thing that has to be
+    // read before anything else is worth doing.
+    if let Some(text) = app.message.clone() {
+        if crate::ui::widgets::message_bar(ui.ctx(), &text) {
+            app.actions.push(crate::ui::Action::CloseDialog);
+        }
+    }
 }
 
 /// Escape means "back one step", and what that step is depends on what is in
@@ -593,6 +600,7 @@ pub fn run(options: Options) -> Result<(), String> {
         )
     })?;
     let mut bridge = Bridge::new(gl)?;
+    crate::ui::theme::apply(&bridge.ctx);
     let mut events = sdl.event_pump()?;
     let now = Instant::now();
     let mut app = App {

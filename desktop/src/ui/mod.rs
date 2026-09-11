@@ -6,8 +6,11 @@
 //! a pure function of `App` and every side effect happens in one place.
 
 // Each submodule arrives with its task.
-// pub mod theme;      // Task 10
-// pub mod widgets;    // Task 10
+pub mod theme;
+// The widget set is written whole; the screens that call every part of it
+// arrive in Tasks 11 to 14, which is what the module's `allow(dead_code)` in
+// `main.rs` is covering until then.
+pub mod widgets;
 // pub mod shelf;      // Task 11
 // pub mod time;       // Task 12
 // pub mod play;       // Task 12

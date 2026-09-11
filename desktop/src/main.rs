@@ -15,7 +15,7 @@ mod session;
 #[allow(dead_code)] // Imported palettes are chosen in the settings panel in Task 14.
 mod settings;
 mod shell;
-#[allow(dead_code)] // The actions and panels raised in Tasks 10 to 14.
+#[allow(dead_code)] // The tokens, actions and panels raised in Tasks 11 to 14.
 mod ui;
 #[allow(dead_code)] // The settings preview draws through it in Task 14.
 mod video;
