@@ -253,6 +253,12 @@ impl Video {
         }
     }
 
+    /// The shared context, so the shell can set the window viewport and clear
+    /// it without keeping a second handle of its own.
+    pub fn gl(&self) -> &glow::Context {
+        &self.gl
+    }
+
     /// Uploads one 256×240 RGBA frame. The framebuffer is always uploaded
     /// whole; trimming moves the window the quad samples, which keeps this one
     /// unconditional call. A frame of any other length is refused rather than

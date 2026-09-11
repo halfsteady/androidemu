@@ -1,22 +1,23 @@
-#[allow(dead_code)] // Rewind, states and palettes gain their callers in Task 9.
+mod bridge;
 mod engine;
-#[allow(dead_code)] // pictures_dir and read_png wait for screenshots and art in Task 9.
 mod files;
-#[allow(dead_code)] // Pads, profiles and the wizard gain their callers in Task 9.
+#[allow(dead_code)] // The wizard and its button names are drawn in Task 13.
 mod input;
-#[allow(dead_code)] // Playtime and thumbnails are for the shelf screen in Task 9.
+#[allow(dead_code)] // The shelf, the slots and the problem log arrive in Tasks 11 to 13.
 mod library;
 mod palette;
-#[allow(dead_code)] // The geometry, looks and palettes gain their callers in Task 9.
+#[allow(dead_code)] // Look and palette names belong to the settings panel in Task 14.
 mod picture;
-#[allow(dead_code)] // The scrubber gains its caller with the play screen in Task 9.
+#[allow(dead_code)] // The scrubber's label is drawn with the time row in Task 12.
 mod scrub;
-#[allow(dead_code)] // Slots, screenshots and playtime gain their callers in Task 9.
+#[allow(dead_code)] // Reset is offered by the pause panel in Task 13.
 mod session;
-#[allow(dead_code)] // Settings and controller profiles gain their callers in Task 9.
+#[allow(dead_code)] // Imported palettes are chosen in the settings panel in Task 14.
 mod settings;
 mod shell;
-#[allow(dead_code)] // The picture pipeline gains its caller with the window in Task 9.
+#[allow(dead_code)] // The actions and panels raised in Tasks 10 to 14.
+mod ui;
+#[allow(dead_code)] // The settings preview draws through it in Task 14.
 mod video;
 
 use library::{Game, Library};
