@@ -2,10 +2,13 @@
 """Compile-check the GLSL in ScreenRenderer.kt and desktop/src/shaders without a device.
 
 A shader that fails to compile is a black screen, and the only place that shows
-up is on hardware — the Kotlin compiles either way, because the shader is a
-string. This pulls every shader source out of the Kotlin literals and runs them
-through glslangValidator, which does enforce the ES 3.00 rules that matter here
-(reserved words like `sample`, undeclared identifiers, type mismatches).
+up is on hardware — nothing else notices, because to the Kotlin a shader is a
+string and to the Rust it is an included file. Two sources feed this: the GLSL
+literals in ScreenRenderer.kt, which Android compiles as ES 3.00, and the ported
+copies in desktop/src/shaders, which the desktop player compiles as GLSL 330
+core. Both go through glslangValidator, which enforces the rules of whichever
+dialect the #version line asks for (reserved words like `sample`, undeclared
+identifiers, type mismatches), so the two stay in step.
 
 Usage:
     python3 scripts/check-shaders.py [--validator PATH]

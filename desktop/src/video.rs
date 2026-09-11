@@ -27,8 +27,21 @@ const SMOOTH_FRAG: &str = include_str!("shaders/smooth.frag");
 const COMPOSITE_FRAG: &str = include_str!("shaders/composite.frag");
 const PRESENT_FRAG: &str = include_str!("shaders/present.frag");
 
+/// A linked program and the uniform locations it uses. Looked up once at link
+/// time: `draw` is the per-frame path and a string lookup per uniform per frame
+/// is pure waste. Between them the three programs declare eight uniforms and
+/// none declares all of them, so a program gets `None` for the ones it does not
+/// have — which is a name its own pass never asks for.
 struct Program {
     id: glow::Program,
+    screen: Option<glow::UniformLocation>,
+    kind: Option<glow::UniformLocation>,
+    cols: Option<glow::UniformLocation>,
+    rows: Option<glow::UniformLocation>,
+    window: Option<glow::UniformLocation>,
+    src: Option<glow::UniformLocation>,
+    src_size: Option<glow::UniformLocation>,
+    frame_phase: Option<glow::UniformLocation>,
 }
 
 pub struct Video {
@@ -54,6 +67,7 @@ pub struct Video {
     preview: Option<(glow::Framebuffer, glow::Texture, i32, i32)>,
     /// Frames drawn, for the phase that makes the dots crawl rather than sit.
     frames: u32,
+    destroyed: bool,
 }
 
 // SAFETY, for every helper below: the caller must have the GL context current
@@ -82,7 +96,17 @@ unsafe fn link(gl: &glow::Context, fragment: &str) -> Result<Program, String> {
     }
     gl.delete_shader(v);
     gl.delete_shader(f);
-    Ok(Program { id })
+    Ok(Program {
+        id,
+        screen: gl.get_uniform_location(id, "screen"),
+        kind: gl.get_uniform_location(id, "kind"),
+        cols: gl.get_uniform_location(id, "cols"),
+        rows: gl.get_uniform_location(id, "rows"),
+        window: gl.get_uniform_location(id, "window"),
+        src: gl.get_uniform_location(id, "src"),
+        src_size: gl.get_uniform_location(id, "srcSize"),
+        frame_phase: gl.get_uniform_location(id, "framePhase"),
+    })
 }
 
 /// An empty RGBA texture. Every step of the smoothing chain but the last is
@@ -164,6 +188,20 @@ fn vertex_bytes(vertices: &[f32; 16]) -> Vec<u8> {
     vertices.iter().flat_map(|f| f.to_ne_bytes()).collect()
 }
 
+/// The upload rectangle is a fixed 256×240, so a slice shorter than that has
+/// the driver read past the end of it. GL is handed a pointer and never learns
+/// how much of it is ours, which makes this the last place that can tell.
+fn frame_len_ok(len: usize) -> Result<(), String> {
+    let want = WIDTH * HEIGHT * 4;
+    if len == want {
+        Ok(())
+    } else {
+        Err(format!(
+            "frame is {len} bytes, not the {want} a {WIDTH}×{HEIGHT} RGBA picture needs"
+        ))
+    }
+}
+
 impl Video {
     pub fn new(gl: Arc<glow::Context>) -> Result<Video, String> {
         unsafe {
@@ -210,14 +248,17 @@ impl Video {
                 ntsc_buffer,
                 preview: None,
                 frames: 0,
+                destroyed: false,
             })
         }
     }
 
     /// Uploads one 256×240 RGBA frame. The framebuffer is always uploaded
     /// whole; trimming moves the window the quad samples, which keeps this one
-    /// unconditional call.
-    pub fn upload(&mut self, rgba: &[u8]) {
+    /// unconditional call. A frame of any other length is refused rather than
+    /// handed to the driver.
+    pub fn upload(&mut self, rgba: &[u8]) -> Result<(), String> {
+        frame_len_ok(rgba.len())?;
         unsafe {
             self.gl.active_texture(glow::TEXTURE0);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(self.frame));
@@ -234,6 +275,7 @@ impl Video {
                 glow::PixelUnpackData::Slice(Some(rgba)),
             );
         }
+        Ok(())
     }
 
     /// Texture rows run top-down while the quad runs bottom-up, so the top of
@@ -280,7 +322,7 @@ impl Video {
     ) -> glow::Texture {
         let gl = &self.gl;
         gl.use_program(Some(self.smooth.id));
-        gl.uniform_1_i32(gl.get_uniform_location(self.smooth.id, "src").as_ref(), 0);
+        gl.uniform_1_i32(self.smooth.src.as_ref(), 0);
         let mut source = self.frame;
         for step in 0..SMOOTH_STEPS {
             let scale = 1 << step;
@@ -289,7 +331,7 @@ impl Video {
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(source));
             gl.uniform_2_i32(
-                gl.get_uniform_location(self.smooth.id, "srcSize").as_ref(),
+                self.smooth.src_size.as_ref(),
                 WIDTH as i32 * scale,
                 HEIGHT as i32 * scale,
             );
@@ -319,13 +361,9 @@ impl Video {
         gl.use_program(Some(self.composite.id));
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.frame));
-        gl.uniform_1_i32(
-            gl.get_uniform_location(self.composite.id, "src").as_ref(),
-            0,
-        );
+        gl.uniform_1_i32(self.composite.src.as_ref(), 0);
         gl.uniform_2_i32(
-            gl.get_uniform_location(self.composite.id, "srcSize")
-                .as_ref(),
+            self.composite.src_size.as_ref(),
             WIDTH as i32,
             HEIGHT as i32,
         );
@@ -333,8 +371,7 @@ impl Video {
         // repeats every third frame. Kept as a whole number of thirds rather
         // than a growing float, which would lose its low bits inside an hour.
         gl.uniform_1_f32(
-            gl.get_uniform_location(self.composite.id, "framePhase")
-                .as_ref(),
+            self.composite.frame_phase.as_ref(),
             (self.frames % 3) as f32 / 3.0,
         );
         self.quad(false);
@@ -372,30 +409,14 @@ impl Video {
         gl.use_program(Some(self.present.id));
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(present));
-        gl.uniform_1_i32(
-            gl.get_uniform_location(self.present.id, "screen").as_ref(),
-            0,
-        );
-        gl.uniform_1_i32(
-            gl.get_uniform_location(self.present.id, "kind").as_ref(),
-            look.id(),
-        );
-        gl.uniform_1_f32(
-            gl.get_uniform_location(self.present.id, "cols").as_ref(),
-            WIDTH as f32,
-        );
-        gl.uniform_1_f32(
-            gl.get_uniform_location(self.present.id, "rows").as_ref(),
-            visible_height(trim) as f32,
-        );
+        gl.uniform_1_i32(self.present.screen.as_ref(), 0);
+        gl.uniform_1_i32(self.present.kind.as_ref(), look.id());
+        gl.uniform_1_f32(self.present.cols.as_ref(), WIDTH as f32);
+        gl.uniform_1_f32(self.present.rows.as_ref(), visible_height(trim) as f32);
         // Where the visible rows sit inside the whole framebuffer, so effects
         // that work in picture space stay put when the edges are trimmed.
         let edge = trim_fraction(trim);
-        gl.uniform_2_f32(
-            gl.get_uniform_location(self.present.id, "window").as_ref(),
-            edge,
-            1.0 - 2.0 * edge,
-        );
+        gl.uniform_2_f32(self.present.window.as_ref(), edge, 1.0 - 2.0 * edge);
         self.quad(trim);
     }
 
@@ -436,7 +457,7 @@ impl Video {
                 self.preview = Some((f, t, width, height));
             }
             let (f, _, _, _) = self.preview.unwrap();
-            self.upload(rgba);
+            self.upload(rgba)?;
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(f));
             self.gl.disable(glow::SCISSOR_TEST);
             self.gl.disable(glow::BLEND);
@@ -478,7 +499,14 @@ impl Video {
         }
     }
 
+    /// Gives every GL object back. Idempotent, because `Drop` calls it too:
+    /// the shell destroys the pipeline explicitly while the context is still
+    /// current, and the drop that follows then has nothing left to issue.
     pub fn destroy(&mut self) {
+        if self.destroyed {
+            return;
+        }
+        self.destroyed = true;
         unsafe {
             self.gl.delete_program(self.present.id);
             self.gl.delete_program(self.smooth.id);
@@ -502,6 +530,16 @@ impl Video {
     }
 }
 
+/// The backstop for a `Video` dropped without `destroy` — an error path on the
+/// way up, say. The shell calls `destroy` itself before the GL context goes
+/// away, and because `destroy` is a no-op the second time this issues no GL
+/// calls into a context that has already gone.
+impl Drop for Video {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -522,5 +560,22 @@ mod tests {
                 || !super::PRESENT_FRAG.contains("kind == 9"),
             "Smooth and Composite take no branch"
         );
+    }
+
+    #[test]
+    fn only_a_whole_frame_is_uploaded() {
+        use crate::picture::{HEIGHT, WIDTH};
+        assert!(super::frame_len_ok(WIDTH * HEIGHT * 4).is_ok());
+        for short in [0, WIDTH * HEIGHT * 3] {
+            let e = super::frame_len_ok(short).unwrap_err();
+            assert!(
+                e.starts_with(&format!("frame is {short} bytes")),
+                "{e} should name what it got"
+            );
+            assert!(
+                e.contains(&format!("not the {} ", WIDTH * HEIGHT * 4)),
+                "{e} should name what it wanted"
+            );
+        }
     }
 }
