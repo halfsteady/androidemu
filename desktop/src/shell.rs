@@ -176,6 +176,41 @@ impl App {
         }
         picture::sample_frame(&self.settings.preview_colours(&self.data_dir))
     }
+
+    /// Everything a screen reads and nothing else: no window, no engine, no
+    /// audio. Every `show` is a pure function of this and the `Ui` it is
+    /// handed, which is what lets the screens be drawn in a test at all.
+    #[cfg(test)]
+    pub fn blank(data_dir: &std::path::Path) -> App {
+        App {
+            data_dir: data_dir.to_path_buf(),
+            library: Library::open(data_dir).unwrap(),
+            settings: Settings::load(data_dir),
+            settings_dirty: false,
+            input: Input::new(Profiles::load(data_dir)),
+            session: None,
+            panel: Panel::None,
+            panel_before: Panel::None,
+            dialog: None,
+            show_archive: false,
+            notice: None,
+            message: None,
+            busy: false,
+            fullscreen: false,
+            chrome_until: Instant::now(),
+            wizard: None,
+            scrub_fraction: 0.0,
+            rewind_depth: 0,
+            audio_ms: 0.0,
+            frame_dirty: false,
+            covers: HashMap::new(),
+            thumbs: HashMap::new(),
+            preview: None,
+            preview_dirty: false,
+            actions: Vec::new(),
+            quit: false,
+        }
+    }
 }
 
 /// What the panels draw, into the root `Ui` of the pass. Each screen arrives
@@ -184,11 +219,13 @@ impl App {
 fn draw(ui: &mut egui::Ui, app: &mut App, _video: &mut Video) {
     if app.session.is_none() {
         crate::ui::shelf::show(ui, app);
+    } else {
+        crate::ui::play::show(ui, app);
     }
-    // Task 12 draws the play screen, Task 13 the panels, and Task 14 the
-    // settings preview, which is what `_video` is for. The message is drawn
-    // last and over everything, because it is the one thing that has to be
-    // read before anything else is worth doing.
+    // Task 13 draws the panels and Task 14 the settings preview, which is what
+    // `_video` is for. The message is drawn last and over everything, because
+    // it is the one thing that has to be read before anything else is worth
+    // doing.
     if let Some(text) = app.message.clone() {
         if crate::ui::widgets::message_bar(ui.ctx(), &text) {
             app.actions.push(crate::ui::Action::CloseDialog);
@@ -293,6 +330,15 @@ fn leave_empty_archive(app: &mut App) {
 }
 
 fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
+    // Working the time controls is a sign of life even when the pointer has
+    // not moved, and a drag the full-screen chrome fades out from under is a
+    // drag that ends by accident.
+    if matches!(
+        action,
+        Action::Scrub(_) | Action::ScrubReleased | Action::JumpBack(_)
+    ) {
+        app.chrome_until = Instant::now() + CHROME_IDLE;
+    }
     match action {
         Action::OpenGame(game) => open_game(app, game, sdl),
         // The file dialogs are modal and block this thread, which is the one

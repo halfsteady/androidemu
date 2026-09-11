@@ -10,10 +10,10 @@ pub mod theme;
 // The widget set is written whole; the screens that call every part of it
 // arrive in Tasks 11 to 14, which is what the module's `allow(dead_code)` in
 // `main.rs` is covering until then.
+pub mod play;
 pub mod shelf;
+pub mod time;
 pub mod widgets;
-// pub mod time;       // Task 12
-// pub mod play;       // Task 12
 // pub mod panels;     // Task 13
 // pub mod settings;   // Task 14
 

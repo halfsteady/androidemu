@@ -153,6 +153,23 @@ pub fn compact(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     )
 }
 
+/// A round key, as wide as it is told rather than as wide as its label: the
+/// time row is a row of equal targets and one of them says more than another.
+/// A key nothing can be done with yet is drawn dim rather than removed.
+pub fn key(ui: &mut Ui, label: &str, size: Vec2, enabled: bool) -> Response {
+    label_button(
+        ui,
+        label,
+        size,
+        RAISED,
+        ON_RAISED,
+        Stroke::NONE,
+        15.0,
+        size.y / 2.0,
+        enabled,
+    )
+}
+
 pub fn tile(ui: &mut Ui, label: &str, width: f32) -> Response {
     label_button(
         ui,

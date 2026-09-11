@@ -8,7 +8,6 @@ mod library;
 mod palette;
 #[allow(dead_code)] // Look and palette names belong to the settings panel in Task 14.
 mod picture;
-#[allow(dead_code)] // The scrubber's label is drawn with the time row in Task 12.
 mod scrub;
 #[allow(dead_code)] // Reset is offered by the pause panel in Task 13.
 mod session;

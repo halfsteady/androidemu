@@ -416,47 +416,13 @@ fn row(ui: &mut egui::Ui, app: &mut App, game: &Game) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::Library;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("emulia-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    /// Everything the shelf reads, and nothing else: no window, no engine, no
-    /// audio. `show` is a pure function of this and the `Ui` it is handed.
-    fn app(dir: &Path) -> App {
-        App {
-            data_dir: dir.to_path_buf(),
-            library: Library::open(dir).unwrap(),
-            settings: crate::settings::Settings::load(dir),
-            settings_dirty: false,
-            input: crate::input::Input::new(crate::settings::Profiles::load(dir)),
-            session: None,
-            panel: crate::ui::Panel::None,
-            panel_before: crate::ui::Panel::None,
-            dialog: None,
-            show_archive: false,
-            notice: None,
-            message: None,
-            busy: false,
-            fullscreen: false,
-            chrome_until: std::time::Instant::now(),
-            wizard: None,
-            scrub_fraction: 0.0,
-            rewind_depth: 0,
-            audio_ms: 0.0,
-            frame_dirty: false,
-            covers: std::collections::HashMap::new(),
-            thumbs: std::collections::HashMap::new(),
-            preview: None,
-            preview_dirty: false,
-            actions: Vec::new(),
-            quit: false,
-        }
     }
 
     /// One frame of the shelf at a given window size. The texture delta has to
@@ -478,7 +444,7 @@ mod tests {
         let dir = temp_dir("shelf-draw");
         let ctx = egui::Context::default();
         crate::ui::theme::apply(&ctx);
-        let mut app = app(&dir);
+        let mut app = App::blank(&dir);
         // An empty shelf, then an empty archive.
         for archive in [false, true] {
             app.show_archive = archive;
@@ -525,7 +491,7 @@ mod tests {
         let dir = temp_dir("shelf-title");
         let ctx = egui::Context::default();
         crate::ui::theme::apply(&ctx);
-        let mut app = app(&dir);
+        let mut app = App::blank(&dir);
         let short = app.library.add("aaaa", "Game A", b"rom a").unwrap();
         let long = "a filename nobody would choose to read twice, and yet";
         let long = app.library.add("bbbb", long, b"rom b").unwrap();
