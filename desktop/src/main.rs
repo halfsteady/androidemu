@@ -1,3 +1,5 @@
+#[allow(dead_code)] // The machine and its rewind chain gain their callers in Task 9.
+mod engine;
 #[allow(dead_code)] // pictures_dir alone is still waiting; screenshots arrive in Task 9.
 mod files;
 #[allow(dead_code)] // The shelf, its folders and the problem log gain callers in Task 9.
@@ -7,6 +9,8 @@ mod palette;
 mod picture;
 #[allow(dead_code)] // The scrubber gains its caller with the play screen in Task 9.
 mod scrub;
+#[allow(dead_code)] // One open game and everything it saves gain callers in Task 9.
+mod session;
 #[allow(dead_code)] // Settings and controller profiles gain their callers in Task 9.
 mod settings;
 
