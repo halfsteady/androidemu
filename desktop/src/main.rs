@@ -1,5 +1,7 @@
-#[allow(dead_code)] // pictures_dir, now_millis and read_png gain callers in Task 4.
+#[allow(dead_code)] // pictures_dir alone is still waiting; screenshots arrive in Task 9.
 mod files;
+#[allow(dead_code)] // The shelf, its folders and the problem log gain callers in Task 9.
+mod library;
 mod palette;
 #[allow(dead_code)] // The geometry, looks and palettes gain their callers in Task 9.
 mod picture;
