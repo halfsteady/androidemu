@@ -447,11 +447,9 @@ impl Apu {
                     self.noise_length = LENGTH[(val >> 3) as usize];
                 }
             }
-            0x4010 => {
-                if val & 0x80 == 0 {
-                    self.dmc_irq = false;
-                }
-            }
+            // Clearing the IRQ enable clears the flag with it; leaving it set
+            // is not a write this has anything to do with.
+            0x4010 if val & 0x80 == 0 => self.dmc_irq = false,
             0x4011 => self.dmc_output = val & 0x7f,
             0x4015 => {
                 for i in 0..2 {
