@@ -1,21 +1,19 @@
 mod bridge;
 mod engine;
 mod files;
-#[allow(dead_code)] // The button names and the wizard are drawn in Task 14.
 mod input;
 #[allow(dead_code)] // `thumbnail_pixels` is still waiting for a caller.
 mod library;
 mod palette;
-#[allow(dead_code)] // Look and palette names belong to the settings panel in Task 14.
+#[allow(dead_code)] // `model::bytes` writes a .pal file, which only tests need.
 mod picture;
 mod scrub;
 mod session;
-#[allow(dead_code)] // Imported palettes are chosen in the settings panel in Task 14.
 mod settings;
 mod shell;
-#[allow(dead_code)] // The tokens, the widget rows and the actions Task 14 raises.
+#[allow(dead_code)] // `Dialog::Message` has no caller, and ON_ERROR completes a
+// pair of tokens whose other half is used.
 mod ui;
-#[allow(dead_code)] // The settings preview draws through it in Task 14.
 mod video;
 
 use library::{Game, Library};

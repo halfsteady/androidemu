@@ -39,7 +39,6 @@ pub const END_OF_TAPE: &str = "That's as far back as this goes.";
 /// Everything a drawn frame can read and everything the shell acts on. One
 /// value, passed to the panels by `&mut`, so there is no state hiding in the
 /// widgets between frames.
-#[allow(dead_code)] // The settings preview that reads the rest arrives in Task 14.
 pub struct App {
     pub data_dir: PathBuf,
     pub library: Library,
@@ -162,11 +161,23 @@ impl App {
         Some(texture)
     }
 
+    /// Hands the chosen colours to the open game and asks for a fresh
+    /// preview. The engine repaints the frame it is holding, so a palette
+    /// changed over a paused game reaches the screen on this frame rather
+    /// than whenever something next happens to move.
+    pub fn apply_palette(&mut self) {
+        let colours = self.settings.colours(&self.data_dir);
+        if let Some(session) = &mut self.session {
+            session.engine.set_palette(colours);
+            self.frame_dirty = true;
+        }
+        self.preview_dirty = true;
+    }
+
     /// The paused frame, else the newest saved moment on the shelf, else the
     /// built pattern; always the pattern when a palette other than Standard is
     /// chosen, because a saved PNG holds finished colour and cannot be
     /// restained.
-    #[allow(dead_code)] // The settings preview in Task 14.
     pub fn sample_source(&self) -> Vec<u8> {
         let standard = self.settings.palette == picture::PaletteChoice::Standard;
         if let Some(session) = &self.session {
@@ -223,22 +234,25 @@ impl App {
     }
 }
 
-/// What the panels draw, into the root `Ui` of the pass. Each screen arrives
-/// with its own task; until then a running game is the picture with nothing on
-/// top of it.
-fn draw(ui: &mut egui::Ui, app: &mut App, _video: &mut Video) {
+/// What the screens draw, into the root `Ui` of the pass, in the order they
+/// sit in: the shelf or the game, then whatever panel is over it, then the
+/// settings, then the one sentence that goes over everything.
+fn draw(ui: &mut egui::Ui, app: &mut App, video: &mut Video) {
     if app.session.is_none() {
         crate::ui::shelf::show(ui, app);
     } else {
         crate::ui::play::show(ui, app);
     }
     crate::ui::panels::show(ui, app);
-    // Task 14 draws the settings preview, which is what `_video` is for. The
-    // message is drawn last and over everything, because it is the one thing
-    // that has to be read before anything else is worth doing.
+    // The settings panel draws its preview through the real pipeline, which
+    // is what it needs the video for.
+    crate::ui::settings::show(ui, app, video);
+    // The message is drawn last and over everything, because it is the one
+    // thing that has to be read before anything else is worth doing. It puts
+    // away itself and nothing else: a question behind it is still waiting.
     if let Some(text) = app.message.clone() {
         if crate::ui::widgets::message_bar(ui.ctx(), &text) {
-            app.actions.push(crate::ui::Action::CloseDialog);
+            app.actions.push(crate::ui::Action::CloseMessage);
         }
     }
 }
@@ -262,7 +276,9 @@ fn escape(app: &App) -> Action {
         (_, Panel::Pause, ..) => Action::Resume,
         (_, Panel::None, _, true, _) => Action::Pause,
         (_, Panel::None, _, false, true) => Action::ToggleFullscreen,
-        _ => Action::CloseDialog,
+        // Nothing is in front of the shelf but, perhaps, a sentence at the
+        // bottom of it, and Escape is how that is put away from the keyboard.
+        _ => Action::CloseMessage,
     }
 }
 
@@ -278,7 +294,7 @@ fn space(app: &App) -> Action {
     } else if app.session.is_some() {
         Action::Pause
     } else {
-        Action::CloseDialog
+        Action::CloseMessage
     }
 }
 
@@ -318,7 +334,9 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
     let name = profile.name.clone();
     app.input.set_profile(key, profile);
     app.wizard = None;
-    app.panel = Panel::None;
+    // The same way out as cancelling it: back to the pause panel over a game,
+    // and to the shelf when there is none.
+    app.panel = closed(app);
     app.message = Some(format!(
         "Buttons saved for {name}. The directional pad and stick work automatically."
     ));
@@ -345,11 +363,11 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
         None => None,
     };
     match Session::open(&app.library, game, audio) {
-        Ok((mut session, warnings)) => {
-            session
-                .engine
-                .set_palette(app.settings.colours(&app.data_dir));
+        Ok((session, warnings)) => {
             app.session = Some(session);
+            // A game opens in the colours that were chosen for it, and the
+            // preview is stale the moment the sample frame changes.
+            app.apply_palette();
             app.frame_dirty = true;
             app.panel = if warnings.is_empty() {
                 Panel::None
@@ -494,10 +512,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             // Spent: the next panel to open records its own way back.
             app.panel_before = Panel::None;
         }
-        Action::CloseDialog => {
-            app.dialog = None;
-            app.message = None;
-        }
+        // One each: both can be up at once, and a sentence put away while a
+        // question is waiting must not answer the question.
+        Action::CloseDialog => app.dialog = None,
+        Action::CloseMessage => app.message = None,
         Action::ToggleFullscreen => {
             // Remembered only once the window has actually gone there: a
             // refused change that is saved anyway comes back wrong next time.
@@ -623,9 +641,86 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.scrub_fraction = 0.0;
             app.input.clear();
         }
-        // Task 14 brings the settings panel that raises the rest. Saying so
-        // out loud beats a silent no-op while the shell is half built.
-        other => eprintln!("unhandled {other:?}"),
+        Action::OpenSettings => {
+            app.panel = Panel::Settings;
+            // Both halves of the preview — the settings and the frame it is
+            // drawn from — can have moved since the panel was last up.
+            app.preview_dirty = true;
+        }
+        Action::CloseSettings => {
+            app.panel = closed(app);
+            // A megabyte of texture for a panel that is no longer on screen,
+            // and the next one to open is drawn fresh anyway.
+            app.preview = None;
+        }
+        Action::SetLook(look) => {
+            app.settings.look = look;
+            app.settings_dirty = true;
+            app.preview_dirty = true;
+        }
+        Action::SetAspect(aspect) => {
+            app.settings.aspect = aspect;
+            app.settings_dirty = true;
+            app.preview_dirty = true;
+        }
+        Action::SetTrim(trim) => {
+            app.settings.trim_edges = trim;
+            app.settings_dirty = true;
+            app.preview_dirty = true;
+        }
+        // The palette is the one picture choice the engine has to be told
+        // about: the rest happen in the shader, and this one is baked into
+        // the frame the console draws.
+        Action::SetPalette(palette) => {
+            app.settings.palette = palette;
+            app.settings_dirty = true;
+            app.apply_palette();
+        }
+        // Modal, like the other file dialogs: the loop stops while it is up
+        // and picks up again with the answer.
+        Action::ImportPalette => {
+            let picked = rfd::FileDialog::new()
+                .add_filter("Palette", &["pal"])
+                .set_title("Choose a palette")
+                .pick_file();
+            if let Some(path) = picked {
+                use_palette(app, &path);
+            }
+        }
+        Action::StartWizard => {
+            app.wizard = Some(Wizard::new());
+            app.panel = Panel::Mapping;
+            // Whatever is held down belongs to the game behind the panel, not
+            // to the four presses about to be read.
+            app.input.clear();
+        }
+        Action::CancelWizard => {
+            app.wizard = None;
+            app.panel = closed(app);
+        }
+    }
+}
+
+/// What happens to a palette file once one has been chosen. Kept apart from
+/// the dialog that found it: a file picker cannot be opened in a test, and
+/// this is the half that can go wrong.
+fn use_palette(app: &mut App, path: &std::path::Path) {
+    let stored = std::fs::read(path)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| crate::settings::store_palette(&app.data_dir, &bytes));
+    match stored {
+        Ok(_) => {
+            app.settings.palette = picture::PaletteChoice::File;
+            app.settings_dirty = true;
+            app.apply_palette();
+            app.message = Some("Palette loaded.".into());
+        }
+        // The file's name goes in the log beside the reason: the sentence on
+        // its own is the one that is already on screen.
+        Err(e) => app.report(
+            "That palette file didn't work.",
+            &format!("{}: {e}", path.display()),
+        ),
     }
 }
 
@@ -1047,7 +1142,7 @@ mod tests {
         let dir = temp_dir("shell-space");
         let mut app = App::blank(&dir);
         // On the shelf, Space dismisses whatever is being said.
-        assert_eq!(space(&app), Action::CloseDialog);
+        assert_eq!(space(&app), Action::CloseMessage);
         let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
         let (session, _) = Session::open(&app.library, game, None).unwrap();
         app.session = Some(session);
@@ -1062,6 +1157,100 @@ mod tests {
             assert_eq!(space(&app), Action::CloseDialog, "{panel:?}");
             assert!(!start_resumes(&app), "{panel:?}");
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A sentence at the bottom of the screen and a question in the middle of
+    /// it are two different things. Putting the sentence away used to answer
+    /// the question as well, which cancelled a save nobody had answered yet.
+    #[test]
+    fn a_sentence_is_put_away_without_answering_the_question_behind_it() {
+        let dir = temp_dir("shell-message");
+        let mut app = App::blank(&dir);
+        app.message = Some("Palette loaded.".into());
+        assert_eq!(escape(&app), Action::CloseMessage);
+        assert_eq!(space(&app), Action::CloseMessage);
+        // With a question up, both of them answer that instead, and the
+        // sentence is left on screen to be read.
+        app.dialog = Some(Dialog::ConfirmReset);
+        assert_eq!(escape(&app), Action::CloseDialog);
+        assert_eq!(space(&app), Action::CloseDialog);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The wizard leaves you where it found you, whether it finished or was
+    /// given up on: the pause panel over a game, and the shelf when there is
+    /// no game. It used to drop you into the game itself, which from the
+    /// shelf was a screen with nothing on it.
+    #[test]
+    fn the_wizard_hands_back_to_whatever_raised_it() {
+        let dir = temp_dir("shell-wizard");
+        let mut app = App::blank(&dir);
+        let profile = crate::settings::Profile {
+            name: "Keyboard".into(),
+            a: "X".into(),
+            b: "Z".into(),
+            select: "Right Shift".into(),
+            start: "Return".into(),
+        };
+        app.panel = Panel::Mapping;
+        app.wizard = Some(Wizard::new());
+        finish_wizard(&mut app, Profiles::KEYBOARD.to_string(), profile.clone());
+        assert!(app.wizard.is_none());
+        assert_eq!(app.panel, Panel::None);
+        assert_eq!(
+            app.message.as_deref(),
+            Some("Buttons saved for Keyboard. The directional pad and stick work automatically.")
+        );
+        assert_eq!(app.input.profiles().get(Profiles::KEYBOARD), Some(&profile));
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        app.panel = Panel::Mapping;
+        finish_wizard(&mut app, Profiles::KEYBOARD.to_string(), profile);
+        assert_eq!(app.panel, Panel::Pause);
+        // Which is the same door cancelling it uses.
+        assert_eq!(closed(&app), Panel::Pause);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A palette file is kept and chosen when it reads, and says so with the
+    /// file's name in the log when it does not. The picker that finds the
+    /// file cannot be opened in a test; this is everything after it.
+    #[test]
+    fn a_palette_file_is_kept_when_it_reads_and_says_why_when_it_does_not() {
+        let dir = temp_dir("shell-palette");
+        let mut app = App::blank(&dir);
+        let short = dir.join("short.pal");
+        std::fs::write(&short, [0u8; 100]).unwrap();
+        use_palette(&mut app, &short);
+        assert_eq!(app.settings.palette, picture::PaletteChoice::Standard);
+        assert!(!app.settings_dirty);
+        assert_eq!(
+            app.message.as_deref(),
+            Some("That palette file didn't work.")
+        );
+        let logged = app.library.problems().remove(0);
+        assert!(logged.contains("short.pal"), "{logged}");
+        // A whole table is kept, chosen, and used from here on.
+        let table = picture::model::build(1.1, 0.0, 1.0, 0.0, 1.0);
+        let good = dir.join("good.pal");
+        std::fs::write(&good, picture::model::bytes(&table)).unwrap();
+        use_palette(&mut app, &good);
+        assert_eq!(app.settings.palette, picture::PaletteChoice::File);
+        assert!(app.settings_dirty && app.preview_dirty);
+        assert_eq!(app.message.as_deref(), Some("Palette loaded."));
+        assert_eq!(app.settings.colours(&app.data_dir), table);
+        // A file that is not there is a file that cannot be read, which is
+        // the same sentence and a different reason.
+        app.message = None;
+        use_palette(&mut app, &dir.join("nothing.pal"));
+        assert_eq!(
+            app.message.as_deref(),
+            Some("That palette file didn't work.")
+        );
+        let logged = app.library.problems().remove(0);
+        assert!(logged.contains("nothing.pal"), "{logged}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

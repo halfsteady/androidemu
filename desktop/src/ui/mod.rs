@@ -5,17 +5,13 @@
 //! `Action` and the shell applies it once the frame is over, so drawing stays
 //! a pure function of `App` and every side effect happens in one place.
 
-// Each submodule arrives with its task.
-pub mod theme;
-// The widget set is written whole; the settings rows that call the rest of
-// it arrive in Task 14, which is what the module's `allow(dead_code)` in
-// `main.rs` is covering until then.
 pub mod panels;
 pub mod play;
+pub mod settings;
 pub mod shelf;
+pub mod theme;
 pub mod time;
 pub mod widgets;
-// pub mod settings;   // Task 14
 
 use crate::library::Game;
 use crate::picture::{Aspect, Look, PaletteChoice};
@@ -80,4 +76,8 @@ pub enum Action {
     ScrubReleased,
     JumpBack(u32),
     CloseDialog,
+    /// Puts away the plain sentence at the bottom and nothing else. Separate
+    /// from `CloseDialog` because both can be up at once: a message dismissed
+    /// while a question is waiting must not answer the question.
+    CloseMessage,
 }

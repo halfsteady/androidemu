@@ -44,7 +44,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         Panel::Pause => pause(ui.ctx(), app),
         Panel::Slots => slots(ui.ctx(), app),
         Panel::Problems => problems(ui.ctx(), app),
-        // Settings and the button wizard belong to Task 14.
+        // Settings and the button wizard are their own file: they are the two
+        // panels that need more than `App` to draw.
         _ => {}
     }
     // Over whichever panel raised it: a question has to be answered before the
