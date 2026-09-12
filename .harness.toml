@@ -14,6 +14,20 @@
   phase = "completed"
   branch = "feat/visuals"
 
+[[task]]
+  name = "site"
+  dir = ".harness/worktrees/site"
+  phase = "completed"
+  branch = "site"
+  agent = "claude"
+
+[[task]]
+  name = "review-accuracy"
+  dir = ".harness/worktrees/review-accuracy"
+  phase = "completed"
+  branch = "feat/core-accuracy"
+  agent = "codex"
+
 [[terminal]]
   name = "main"
   tmux = "androidemu"
@@ -24,4 +38,22 @@
   name = "visuals"
   task = "visuals"
   tmux = "androidemu-visuals"
+  agent = "claude"
+
+[[terminal]]
+  name = "site"
+  task = "site"
+  tmux = "androidemu-site"
+  agent = "claude"
+
+[[terminal]]
+  name = "review-accuracy"
+  task = "review-accuracy"
+  tmux = "androidemu-review-accuracy"
+  agent = "codex"
+
+[[terminal]]
+  name = "fabkefixer"
+  task = "review-accuracy"
+  tmux = "androidemu-fabkefixer"
   agent = "claude"
