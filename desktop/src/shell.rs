@@ -472,6 +472,16 @@ fn reserved(scancode: Scancode) -> bool {
     )
 }
 
+/// Puts away a refusal and nothing else. Any press that is not a reserved key
+/// answers one, whether the wizard took it or turned it down for coming from
+/// the wrong device — but the message bar is shared, and a sentence somebody
+/// else put there is somebody else's to take back.
+fn spend_refusal(app: &mut App) {
+    if app.message.as_deref() == Some(RESERVED_KEY) {
+        app.message = None;
+    }
+}
+
 /// One key while the wizard has the keyboard, where every key is a button it
 /// is trying to learn.
 ///
@@ -481,9 +491,11 @@ fn reserved(scancode: Scancode) -> bool {
 /// that does nothing and no way to tell why. Escape is the way out of the
 /// wizard rather than a refusal, as it is the way out of anything.
 ///
-/// A refusal is answered by the next key that is not one: leaving it up while
-/// the panel has moved on to the next button is a sentence about a key nobody
-/// pressed any more, waiting to be clicked away.
+/// A refusal is answered by the next press that is not one: leaving it up
+/// while the panel has moved on to the next button is a sentence about a key
+/// nobody pressed any more, waiting to be clicked away. Only a refusal —
+/// anything else on the message bar, a controller that was unplugged mid-way
+/// through, is somebody else's to put away.
 fn wizard_key(app: &mut App, scancode: Scancode) {
     if scancode == Scancode::Escape {
         let action = escape(app);
@@ -494,10 +506,10 @@ fn wizard_key(app: &mut App, scancode: Scancode) {
         app.message = Some(RESERVED_KEY.to_string());
         return;
     }
+    // Before the press, not after: the last one finishes the wizard, and what
+    // it has to say is said by `finish_wizard`.
+    spend_refusal(app);
     if let Some(wizard) = app.wizard.as_mut() {
-        // Before the press, not after: the last one finishes the wizard, and
-        // what it has to say is said by `finish_wizard`.
-        app.message = None;
         let pressed = wizard.press(Profiles::KEYBOARD, "Keyboard", &key_name(scancode));
         if let WizardEvent::Done(key, profile) = pressed {
             finish_wizard(app, key, *profile);
@@ -1166,6 +1178,9 @@ fn handle_event(
             app.chrome_until = Instant::now() + CHROME_IDLE;
             let physical = button.string();
             if app.wizard.is_some() {
+                // A key the keyboard was told off for is answered by the next
+                // press on whichever device the wizard belongs to.
+                spend_refusal(app);
                 let device = app
                     .input
                     .pad(*which)
@@ -2145,6 +2160,15 @@ mod tests {
         wizard_key(&mut app, Scancode::X);
         assert_eq!(app.wizard.as_ref().unwrap().step(), 1);
         assert_eq!(app.message, None);
+        // Only the refusal, though. A sentence somebody else put on the bar —
+        // the controller that was unplugged halfway through this mapping —
+        // is still there to be read and is somebody else's to put away.
+        let unplugged = "Controller disconnected. Your game is paused.";
+        app.message = Some(unplugged.to_string());
+        wizard_key(&mut app, Scancode::Z);
+        assert_eq!(app.wizard.as_ref().unwrap().step(), 2);
+        assert_eq!(app.message.as_deref(), Some(unplugged));
+        app.message = None;
         // And Escape is still the way out, rather than a key to be told off
         // for pressing.
         wizard_key(&mut app, Scancode::Escape);
