@@ -2,6 +2,7 @@
 //! the second controller is port 2, and a saved profile beats the built-in
 //! layout, which is the whole point of the mapping wizard.
 
+use crate::bridge::key_name;
 use crate::settings::{Profile, Profiles};
 use nes_core::Buttons;
 use sdl2::controller::{Axis, Button, GameController};
@@ -19,10 +20,27 @@ pub enum NesButton {
     B,
     Select,
     Start,
+    Up,
+    Down,
+    Left,
+    Right,
 }
 
 impl NesButton {
-    pub const ORDER: [NesButton; 4] = [
+    /// Every button the shell can be asked to learn, buttons first and then
+    /// directions, because the first four are all a controller is asked for:
+    /// `FACE` is that prefix, and the wizard hands out one or the other.
+    pub const ORDER: [NesButton; 8] = [
+        NesButton::A,
+        NesButton::B,
+        NesButton::Select,
+        NesButton::Start,
+        NesButton::Up,
+        NesButton::Down,
+        NesButton::Left,
+        NesButton::Right,
+    ];
+    pub const FACE: [NesButton; 4] = [
         NesButton::A,
         NesButton::B,
         NesButton::Select,
@@ -34,6 +52,10 @@ impl NesButton {
             NesButton::B => 2,
             NesButton::Select => 4,
             NesButton::Start => 8,
+            NesButton::Up => 16,
+            NesButton::Down => 32,
+            NesButton::Left => 64,
+            NesButton::Right => 128,
         }
     }
     pub fn label(self) -> &'static str {
@@ -42,9 +64,36 @@ impl NesButton {
             NesButton::B => "B",
             NesButton::Select => "Select",
             NesButton::Start => "Start",
+            NesButton::Up => "Up",
+            NesButton::Down => "Down",
+            NesButton::Left => "Left",
+            NesButton::Right => "Right",
+        }
+    }
+    /// The name a profile has saved for this button, empty when it has none.
+    fn saved(self, profile: &Profile) -> &str {
+        match self {
+            NesButton::A => &profile.a,
+            NesButton::B => &profile.b,
+            NesButton::Select => &profile.select,
+            NesButton::Start => &profile.start,
+            NesButton::Up => &profile.up,
+            NesButton::Down => &profile.down,
+            NesButton::Left => &profile.left,
+            NesButton::Right => &profile.right,
         }
     }
 }
+
+/// The arrow key each direction falls back to when a profile does not name
+/// one. A profile written before the directions could be remapped has all
+/// four empty, and this is what keeps it steering by the arrows.
+const ARROWS: [(NesButton, Scancode); 4] = [
+    (NesButton::Up, Scancode::Up),
+    (NesButton::Down, Scancode::Down),
+    (NesButton::Left, Scancode::Left),
+    (NesButton::Right, Scancode::Right),
+];
 
 /// Whether an axis has actually been moved: past the stick's dead zone either
 /// way, or past the point a trigger counts as pulled. A resting stick reports
@@ -64,6 +113,12 @@ pub fn keyboard_default() -> Profile {
         b: "Z".into(),
         select: "Right Shift".into(),
         start: "Return".into(),
+        // Spelled through the same function the wizard saves a captured key
+        // with, so a default and a mapping somebody made mean the same thing.
+        up: key_name(Scancode::Up),
+        down: key_name(Scancode::Down),
+        left: key_name(Scancode::Left),
+        right: key_name(Scancode::Right),
     }
 }
 
@@ -77,18 +132,16 @@ pub fn controller_default(name: &str) -> Profile {
         b: "a".into(),
         select: "back".into(),
         start: "start".into(),
+        // A pad steers from its d-pad and its left stick, which are read
+        // straight off the hardware; there is nothing here to name.
+        ..Profile::default()
     }
 }
 
 fn physical_bits(profile: &Profile, held: impl Fn(&str) -> bool) -> u8 {
     let mut bits = 0;
-    for (button, name) in [
-        (NesButton::A, &profile.a),
-        (NesButton::B, &profile.b),
-        (NesButton::Select, &profile.select),
-        (NesButton::Start, &profile.start),
-    ] {
-        if held(name) {
+    for button in NesButton::FACE {
+        if held(button.saved(profile)) {
             bits |= button.bit();
         }
     }
@@ -96,17 +149,20 @@ fn physical_bits(profile: &Profile, held: impl Fn(&str) -> bool) -> u8 {
 }
 
 pub fn keyboard_bits(profile: &Profile, keys: &HashSet<Scancode>) -> u8 {
-    let mut bits = physical_bits(profile, |name| {
-        Scancode::from_name(name).is_some_and(|s| keys.contains(&s))
-    });
-    for (key, bit) in [
-        (Scancode::Up, 16),
-        (Scancode::Down, 32),
-        (Scancode::Left, 64),
-        (Scancode::Right, 128),
-    ] {
-        if keys.contains(&key) {
-            bits |= bit;
+    let held = |name: &str| Scancode::from_name(name).is_some_and(|s| keys.contains(&s));
+    let mut bits = physical_bits(profile, held);
+    for (button, arrow) in ARROWS {
+        let name = button.saved(profile);
+        // An unnamed direction is the arrow key's, and a named one is only
+        // the key it names: the arrow does not stay on as a second way in,
+        // or WASD would leave the arrows steering as well.
+        let down = if name.is_empty() {
+            keys.contains(&arrow)
+        } else {
+            held(name)
+        };
+        if down {
+            bits |= button.bit();
         }
     }
     bits
@@ -328,15 +384,19 @@ impl Input {
     }
 }
 
+/// The finished profile is boxed: nine strings is a large thing to carry in
+/// an enum whose other two arms are empty, and every press but the last
+/// returns one of those.
 #[derive(Debug, PartialEq, Eq)]
 pub enum WizardEvent {
     Advanced,
     Rejected,
-    Done(String, Profile),
+    Done(String, Box<Profile>),
 }
 
-/// Four steps: A, B, Select, Start, all from the device that pressed first,
-/// each a button not already used.
+/// A, B, Select and Start from the device that pressed first, each a button
+/// not already used — and, when that device is the keyboard, the four
+/// directions after them, because a keyboard has no d-pad to fall back on.
 #[derive(Default)]
 pub struct Wizard {
     device: Option<(String, String)>,
@@ -353,6 +413,22 @@ impl Wizard {
     pub fn device_name(&self) -> Option<&str> {
         self.device.as_ref().map(|d| d.1.as_str())
     }
+    /// What this wizard will ask for, in order. Until something presses there
+    /// is no device, and the four buttons every mapping starts with are all
+    /// that can be said for certain; the keyboard adds its directions to them
+    /// on its first key.
+    pub fn steps(&self) -> &'static [NesButton] {
+        match &self.device {
+            Some((key, _)) if key == Profiles::KEYBOARD => &NesButton::ORDER,
+            _ => &NesButton::FACE,
+        }
+    }
+    /// How many steps there are, once the device that pressed first has said
+    /// so. `None` before then: a total nobody can know yet is one the panel
+    /// would have to take back.
+    pub fn total(&self) -> Option<usize> {
+        self.device.as_ref().map(|_| self.steps().len())
+    }
     pub fn press(&mut self, device_key: &str, device_name: &str, physical: &str) -> WizardEvent {
         match &self.device {
             Some((key, _)) if key != device_key => return WizardEvent::Rejected,
@@ -362,15 +438,19 @@ impl Wizard {
         if self.captured.iter().any(|(_, p)| p == physical) {
             return WizardEvent::Rejected;
         }
+        let steps = self.steps();
         // Two buttons hit together at the last step arrive as two events, so
-        // a press after the fourth is refused rather than indexed for.
-        let Some(&button) = NesButton::ORDER.get(self.captured.len()) else {
+        // a press past the end is refused rather than indexed for.
+        let Some(&button) = steps.get(self.captured.len()) else {
             return WizardEvent::Rejected;
         };
         self.captured.push((button, physical.to_string()));
-        if self.captured.len() < 4 {
+        if self.captured.len() < steps.len() {
             return WizardEvent::Advanced;
         }
+        // A button the wizard never asked about is left empty, which for a
+        // controller is all four directions: its d-pad and stick steer on
+        // their own, and an empty direction is the arrow key's for a keyboard.
         let find = |b: NesButton| {
             self.captured
                 .iter()
@@ -380,13 +460,17 @@ impl Wizard {
         };
         WizardEvent::Done(
             device_key.to_string(),
-            Profile {
+            Box::new(Profile {
                 name: device_name.to_string(),
                 a: find(NesButton::A),
                 b: find(NesButton::B),
                 select: find(NesButton::Select),
                 start: find(NesButton::Start),
-            },
+                up: find(NesButton::Up),
+                down: find(NesButton::Down),
+                left: find(NesButton::Left),
+                right: find(NesButton::Right),
+            }),
         )
     }
 }
@@ -421,18 +505,21 @@ mod tests {
     fn nes_button_bits_and_order_match_the_core() {
         assert_eq!(
             NesButton::ORDER.map(|b| b.bit()),
-            [Buttons::A, Buttons::B, Buttons::SELECT, Buttons::START]
+            [
+                Buttons::A,
+                Buttons::B,
+                Buttons::SELECT,
+                Buttons::START,
+                Buttons::UP,
+                Buttons::DOWN,
+                Buttons::LEFT,
+                Buttons::RIGHT
+            ]
         );
         assert_eq!(
             NesButton::ORDER.map(|b| b.label()),
-            ["A", "B", "Select", "Start"]
+            ["A", "B", "Select", "Start", "Up", "Down", "Left", "Right"]
         );
-        assert_eq!(
-            [Buttons::UP, Buttons::DOWN, Buttons::LEFT, Buttons::RIGHT],
-            [16, 32, 64, 128]
-        );
-        // The directions are not part of a profile, so the bits this module
-        // writes for them are checked against the core through real code.
         let arrows: HashSet<Scancode> = [
             Scancode::Up,
             Scancode::Down,
@@ -445,11 +532,67 @@ mod tests {
             keyboard_bits(&keyboard_default(), &arrows),
             Buttons::UP | Buttons::DOWN | Buttons::LEFT | Buttons::RIGHT
         );
+        // A pad steers from its own hardware, whatever its profile says.
         let pads: HashSet<String> = HashSet::new();
         assert_eq!(
             pad_bits(&controller_default("Pad"), &pads, Buttons::UP),
             Buttons::UP
         );
+    }
+
+    /// The keyboard's directions are a profile's to name. A profile that
+    /// names them steers by them; one that leaves them empty — which is every
+    /// profile written before the wizard asked for them — steers by the
+    /// arrows, so nobody's saved mapping changes under them.
+    #[test]
+    fn keyboard_directions_come_from_the_profile_and_fall_back_to_the_arrows() {
+        let wasd = Profile {
+            name: "Keyboard".into(),
+            a: "X".into(),
+            b: "Z".into(),
+            select: "Right Shift".into(),
+            start: "Return".into(),
+            up: "W".into(),
+            down: "S".into(),
+            left: "A".into(),
+            right: "D".into(),
+        };
+        let held = |keys: &[Scancode]| keys.iter().copied().collect::<HashSet<Scancode>>();
+        assert_eq!(
+            keyboard_bits(&wasd, &held(&[Scancode::W, Scancode::D])),
+            Buttons::UP | Buttons::RIGHT
+        );
+        // The arrows are somebody else's keys now, not a second way in.
+        assert_eq!(keyboard_bits(&wasd, &held(&[Scancode::Up])), 0);
+        // A is NES left on this profile and X is NES A, both at once.
+        assert_eq!(
+            keyboard_bits(&wasd, &held(&[Scancode::A, Scancode::X])),
+            Buttons::LEFT | Buttons::A
+        );
+
+        // The four-field shape an older shell wrote: empty is the arrow.
+        let old = Profile {
+            up: String::new(),
+            down: String::new(),
+            left: String::new(),
+            right: String::new(),
+            ..wasd.clone()
+        };
+        assert_eq!(
+            keyboard_bits(&old, &held(&[Scancode::Left, Scancode::Down])),
+            Buttons::LEFT | Buttons::DOWN
+        );
+        assert_eq!(keyboard_bits(&old, &held(&[Scancode::W])), 0);
+        // And one direction named on its own leaves the other three arrows.
+        let half = Profile {
+            up: "W".into(),
+            ..old.clone()
+        };
+        assert_eq!(
+            keyboard_bits(&half, &held(&[Scancode::W, Scancode::Right])),
+            Buttons::UP | Buttons::RIGHT
+        );
+        assert_eq!(keyboard_bits(&half, &held(&[Scancode::Up])), 0);
     }
 
     #[test]
@@ -464,6 +607,20 @@ mod tests {
             ),
             ("X", "Z", "Right Shift", "Return")
         );
+        // Spelled the way the wizard spells a captured key, so a default and
+        // a mapping made by hand mean the same thing to `Scancode::from_name`.
+        assert_eq!(
+            (
+                p.up.as_str(),
+                p.down.as_str(),
+                p.left.as_str(),
+                p.right.as_str()
+            ),
+            ("Up", "Down", "Left", "Right")
+        );
+        for name in [&p.up, &p.down, &p.left, &p.right] {
+            assert!(Scancode::from_name(name).is_some(), "{name}");
+        }
         let mut keys = HashSet::new();
         keys.insert(Scancode::X);
         keys.insert(Scancode::Return);
@@ -490,6 +647,7 @@ mod tests {
                 b: "J".into(),
                 select: "Tab".into(),
                 start: "Space".into(),
+                ..Profile::default()
             },
         );
         let mut input = Input::new(profiles);
@@ -520,11 +678,14 @@ mod tests {
     }
 
     #[test]
-    fn the_wizard_takes_four_distinct_buttons_from_one_device() {
+    fn the_wizard_takes_four_distinct_buttons_from_one_pad() {
         let mut w = Wizard::new();
         assert_eq!(w.step(), 0);
+        // Nothing has pressed yet, so there is no total to promise.
+        assert_eq!(w.total(), None);
         assert_eq!(w.press("pad1", "Pad", "b"), WizardEvent::Advanced);
         assert_eq!(w.device_name(), Some("Pad"));
+        assert_eq!(w.total(), Some(4));
         assert_eq!(w.press("pad2", "Other", "a"), WizardEvent::Rejected);
         assert_eq!(w.press("pad1", "Pad", "b"), WizardEvent::Rejected);
         assert_eq!(w.press("pad1", "Pad", "a"), WizardEvent::Advanced);
@@ -533,6 +694,7 @@ mod tests {
         match w.press("pad1", "Pad", "start") {
             WizardEvent::Done(key, profile) => {
                 assert_eq!(key, "pad1");
+                let profile = *profile;
                 assert_eq!(
                     profile,
                     Profile {
@@ -540,8 +702,15 @@ mod tests {
                         a: "b".into(),
                         b: "a".into(),
                         select: "back".into(),
-                        start: "start".into()
+                        start: "start".into(),
+                        ..Profile::default()
                     }
+                );
+                // A pad steers from its d-pad and stick, which the wizard
+                // never asked about: its directions stay unnamed.
+                assert_eq!(
+                    (profile.up, profile.down, profile.left, profile.right),
+                    (String::new(), String::new(), String::new(), String::new())
                 );
             }
             other => panic!("{other:?}"),
@@ -550,5 +719,75 @@ mod tests {
         // the finished mapping stands.
         assert_eq!(w.press("pad1", "Pad", "x"), WizardEvent::Rejected);
         assert_eq!(w.step(), 4);
+    }
+
+    /// The keyboard has no d-pad to fall back on, so it is asked for all
+    /// eight: the four buttons and then the four directions. Which device
+    /// pressed first decides how long the wizard is.
+    #[test]
+    fn the_wizard_takes_eight_distinct_keys_from_the_keyboard() {
+        let mut w = Wizard::new();
+        assert_eq!(w.total(), None);
+        let key = Profiles::KEYBOARD;
+        for (i, physical) in ["X", "Z", "Right Shift", "Return", "W", "S", "A"]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(w.press(key, "Keyboard", physical), WizardEvent::Advanced);
+            assert_eq!(w.total(), Some(8), "after {physical}");
+            assert_eq!(w.step(), i + 1);
+        }
+        // A key already spoken for is refused at every one of the eight steps,
+        // not just among the first four: W is up, and cannot also be right.
+        assert_eq!(w.press(key, "Keyboard", "W"), WizardEvent::Rejected);
+        assert_eq!(w.press(key, "Keyboard", "X"), WizardEvent::Rejected);
+        // And the device that pressed first still owns the rest of the steps.
+        assert_eq!(w.press("pad1", "Pad", "b"), WizardEvent::Rejected);
+        assert_eq!(w.step(), 7);
+        match w.press(key, "Keyboard", "D") {
+            WizardEvent::Done(saved, profile) => {
+                assert_eq!(saved, Profiles::KEYBOARD);
+                assert_eq!(
+                    *profile,
+                    Profile {
+                        name: "Keyboard".into(),
+                        a: "X".into(),
+                        b: "Z".into(),
+                        select: "Right Shift".into(),
+                        start: "Return".into(),
+                        up: "W".into(),
+                        down: "S".into(),
+                        left: "A".into(),
+                        right: "D".into(),
+                    }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        // Two keys at once on the last step: the extra press is refused.
+        assert_eq!(w.press(key, "Keyboard", "Q"), WizardEvent::Rejected);
+        assert_eq!(w.step(), 8);
+    }
+
+    /// What the panel names at each step, before and after the device is
+    /// known. Until something presses there is no device and so no total:
+    /// the four buttons every mapping starts with are all the wizard can
+    /// promise, and the keyboard adds its four directions on the first press.
+    #[test]
+    fn the_step_list_follows_the_device_that_pressed_first() {
+        let base = [
+            NesButton::A,
+            NesButton::B,
+            NesButton::Select,
+            NesButton::Start,
+        ];
+        let w = Wizard::new();
+        assert_eq!(w.steps(), base);
+        let mut pad = Wizard::new();
+        pad.press("pad1", "Pad", "b");
+        assert_eq!(pad.steps(), base);
+        let mut keyboard = Wizard::new();
+        keyboard.press(Profiles::KEYBOARD, "Keyboard", "X");
+        assert_eq!(keyboard.steps(), NesButton::ORDER);
     }
 }

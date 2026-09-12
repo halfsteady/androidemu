@@ -143,6 +143,12 @@ pub fn store_palette(dir: &Path, bytes: &[u8]) -> Result<[u32; 64], String> {
 /// Every field takes a default, so one profile written by an older shell — or
 /// edited by hand and missing a line — loses that one button rather than
 /// taking the whole file's worth of controllers down with it.
+///
+/// The four directions are the keyboard's. An empty one means the arrow key
+/// for that direction, which is what every profile written before the wizard
+/// asked for them says, so they all keep steering the way they always did. A
+/// controller never fills them in: its d-pad and its left stick steer without
+/// being mapped.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Profile {
     #[serde(default)]
@@ -155,6 +161,14 @@ pub struct Profile {
     pub select: String,
     #[serde(default)]
     pub start: String,
+    #[serde(default)]
+    pub up: String,
+    #[serde(default)]
+    pub down: String,
+    #[serde(default)]
+    pub left: String,
+    #[serde(default)]
+    pub right: String,
 }
 
 #[derive(Default)]
@@ -165,7 +179,7 @@ impl Profiles {
 
     /// The saved button profiles, and the reason when the file could not be
     /// read. Left intact and run without, the same way the settings are: these
-    /// are four presses each and somebody's to keep.
+    /// are four presses each — eight for the keyboard — and somebody's to keep.
     pub fn load(dir: &Path) -> (Profiles, Option<String>) {
         let path = dir.join(CONTROLLERS);
         let bytes = match read_optional(&path) {
@@ -358,12 +372,64 @@ mod tests {
                 b: "a".into(),
                 select: "back".into(),
                 start: "start".into(),
+                ..Profile::default()
             },
         );
         p.save(&dir).unwrap();
         let (back, _) = Profiles::load(&dir);
         assert_eq!(back.get("030000").unwrap().name, "Pad");
         assert_eq!(back.get("030000").unwrap().a, "b");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A keyboard profile carries its four directions as well as its four
+    /// buttons, and every field comes back off the disk as it went on. The
+    /// four-field shape every earlier shell wrote still loads: its directions
+    /// are empty, which is how `keyboard_bits` is told to use the arrows.
+    #[test]
+    fn a_keyboard_profile_round_trips_its_directions_and_an_old_one_still_loads() {
+        let dir = temp_dir("settings-directions");
+        let wasd = Profile {
+            name: "Keyboard".into(),
+            a: "X".into(),
+            b: "Z".into(),
+            select: "Right Shift".into(),
+            start: "Return".into(),
+            up: "W".into(),
+            down: "S".into(),
+            left: "A".into(),
+            right: "D".into(),
+        };
+        let (mut p, _) = Profiles::load(&dir);
+        p.set(Profiles::KEYBOARD.into(), wasd.clone());
+        p.save(&dir).unwrap();
+        let text = fs::read_to_string(dir.join("controllers.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(json["keyboard"]["up"], "W");
+        assert_eq!(json["keyboard"]["right"], "D");
+        let (back, problem) = Profiles::load(&dir);
+        assert_eq!(problem, None);
+        assert_eq!(back.get(Profiles::KEYBOARD), Some(&wasd));
+
+        // The shape written before the directions were part of a profile.
+        fs::write(
+            dir.join("controllers.json"),
+            r#"{"keyboard": {"name": "Keyboard", "a": "X", "b": "Z", "select": "Right Shift", "start": "Return"}}"#,
+        )
+        .unwrap();
+        let (old, problem) = Profiles::load(&dir);
+        assert_eq!(problem, None);
+        let keyboard = old.get(Profiles::KEYBOARD).unwrap();
+        assert_eq!(keyboard.start, "Return");
+        assert_eq!(
+            (
+                keyboard.up.as_str(),
+                keyboard.down.as_str(),
+                keyboard.left.as_str(),
+                keyboard.right.as_str()
+            ),
+            ("", "", "", "")
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

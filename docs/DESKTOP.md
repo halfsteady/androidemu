@@ -127,7 +127,7 @@ video and audio backends.
 
 | Key | Action |
 |---|---|
-| Arrow keys | Direction pad |
+| Arrow keys | Direction pad (remappable, unlike a controller's) |
 | X / Z | A / B |
 | Enter / Right Shift | Start / Select |
 | Escape or Space | Pause menu (Escape also backs out of panels, and of the archive) |
@@ -144,10 +144,14 @@ time at 2× and the triggers at 6×, left for backwards and right for forwards,
 held rather than toggled. Two controllers are taken, in the order they are
 plugged in, as the two ports.
 
-Settings → Controller buttons → Set up remaps A, B, Select and Start, either
-for a controller or for the keyboard: press the four buttons in turn and the
-profile is saved under that controller's SDL GUID, or under `keyboard`. The
-direction pad and stick are not remapped. Escape cancels.
+Settings → Controller buttons → Set up remaps the buttons, either for a
+controller or for the keyboard, and whichever device presses first owns the
+rest of the steps. A controller is asked for four — A, B, Select and Start —
+because its direction pad and its left stick steer on their own and are not
+remapped. The keyboard is asked for eight: those four, and then Up, Down, Left
+and Right, since a keyboard has no direction pad to fall back on. Press them in
+turn and the profile is saved under that controller's SDL GUID, or under
+`keyboard`. Escape cancels.
 
 ## Saves and data
 
@@ -192,8 +196,9 @@ A `settings.json` or `controllers.json` that will not parse is never written
 over: the shell runs on the usual choices, says so, and names the file in the
 problem log, so a stray comma can be fixed by hand. Nothing saves either file
 again until a setting is changed or the mapping wizard finishes. A profile
-missing one of its four buttons loses that button and keeps the rest of the
-file. `palette.pal` is the same: `palette` 5 with the file missing or no longer
+missing one of its buttons loses that button and keeps the rest of the file; a
+keyboard profile with no directions saved steers by the arrow keys, which is
+how every profile written before they could be remapped still plays. `palette.pal` is the same: `palette` 5 with the file missing or no longer
 a palette paints in the standard colours and says which file it was.
 
 The first desktop player kept `<identity>.sav` and `<identity>.state` loose in

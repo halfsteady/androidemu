@@ -482,14 +482,21 @@ fn dropped(app: &App, path: PathBuf) -> Action {
 
 fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) {
     let name = profile.name.clone();
+    let keyboard = key == Profiles::KEYBOARD;
     app.input.set_profile(key, profile);
     app.wizard = None;
     // The same way out as cancelling it: back to the pause panel over a game,
     // and to the shelf when there is none.
     leave_panel(app);
-    app.message = Some(format!(
-        "Buttons saved for {name}. The directional pad and stick work automatically."
-    ));
+    // The keyboard was asked for its directions too, so it has nothing left
+    // over to be reassured about; a controller steers from a d-pad and a
+    // stick the wizard never mentioned, and saying so saves somebody looking
+    // for the four steps that would have mapped them.
+    app.message = Some(if keyboard {
+        format!("Buttons saved for {name}.")
+    } else {
+        format!("Buttons saved for {name}. The directional pad and stick work automatically.")
+    });
 }
 
 /// Putting the open game away: it writes its autosave and its playtime, and
@@ -998,7 +1005,7 @@ fn handle_event(
                     let pressed =
                         wizard.press(Profiles::KEYBOARD, "Keyboard", &key_name(*scancode));
                     if let WizardEvent::Done(key, profile) = pressed {
-                        finish_wizard(app, key, profile);
+                        finish_wizard(app, key, *profile);
                     }
                 }
                 return;
@@ -1071,7 +1078,7 @@ fn handle_event(
                     _ => None,
                 };
                 if let Some(WizardEvent::Done(key, profile)) = pressed {
-                    finish_wizard(app, key, profile);
+                    finish_wizard(app, key, *profile);
                 }
                 return;
             }
@@ -1488,17 +1495,39 @@ mod tests {
             b: "Z".into(),
             select: "Right Shift".into(),
             start: "Return".into(),
+            up: "W".into(),
+            down: "S".into(),
+            left: "A".into(),
+            right: "D".into(),
         };
         app.panel = Panel::Mapping;
         app.wizard = Some(Wizard::new());
         finish_wizard(&mut app, Profiles::KEYBOARD.to_string(), profile.clone());
         assert!(app.wizard.is_none());
         assert_eq!(app.panel, Panel::None);
+        // The keyboard was asked for its directions too, so there is nothing
+        // left over that works on its own to promise.
+        assert_eq!(app.message.as_deref(), Some("Buttons saved for Keyboard."));
+        assert_eq!(app.input.profiles().get(Profiles::KEYBOARD), Some(&profile));
+        // A pad keeps the older sentence: its d-pad and stick steer without
+        // anybody being asked to press them.
+        app.panel = Panel::Mapping;
+        finish_wizard(
+            &mut app,
+            "030000".to_string(),
+            crate::settings::Profile {
+                name: "Pad".into(),
+                a: "b".into(),
+                b: "a".into(),
+                select: "back".into(),
+                start: "start".into(),
+                ..crate::settings::Profile::default()
+            },
+        );
         assert_eq!(
             app.message.as_deref(),
-            Some("Buttons saved for Keyboard. The directional pad and stick work automatically.")
+            Some("Buttons saved for Pad. The directional pad and stick work automatically.")
         );
-        assert_eq!(app.input.profiles().get(Profiles::KEYBOARD), Some(&profile));
         let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
         let (session, _) = Session::open(&app.library, game, None).unwrap();
         app.session = Some(session);

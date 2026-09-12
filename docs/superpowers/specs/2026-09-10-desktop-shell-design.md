@@ -258,7 +258,9 @@ Ports: keyboard and the first controller share port 1; the second controller
 is port 2. Connection order decides. A disconnect pauses with "Controller
 disconnected. Your game is paused."
 
-Keyboard defaults: arrows, X = A, Z = B, Return = Start, Right Shift = Select.
+Keyboard defaults: arrows, X = A, Z = B, Return = Start, Right Shift = Select;
+a keyboard profile names all eight, and a direction left empty — as every
+profile written before the wizard asked for them is — means that arrow key.
 Hotkeys: Escape opens the pause menu, or closes the topmost panel (ladder:
 problem log, settings, mapping cancel, slots, pause menu, then exit fullscreen);
 Space also opens the pause menu, and Space or Escape in the pause menu resumes
@@ -273,12 +275,16 @@ shoulder +2×, right trigger +6×, left shoulder −2×, left trigger −6×, he
 apply. Start on a paused game resumes, through the saved profile.
 
 **Mapping wizard** from Settings → Controller buttons → Set up: pauses the game,
-shows "Press A" at large size, ✓ progress, "Step N of 4", the device name once
-known; order A, B, Select, Start. Only presses (no repeats) count; all four
-must come from the device that pressed first; a button already used is
-rejected. Escape and the Cancel button abort. Completion saves the profile and
-reports "Buttons saved for <name>. The directional pad and stick work
-automatically."
+shows "Press A" at large size, ✓ progress, "Step N of M", the device name once
+known; order A, B, Select, Start. A controller is asked for those four and the
+keyboard for eight — Up, Down, Left and Right after them, a keyboard having no
+d-pad to steer with — so the device that presses first sets the length, and
+until one has the panel says "Step 1" and names no total. Only presses (no
+repeats) count; all of them must come from the device that pressed first; a
+button already used is rejected. Escape and the Cancel button abort. Completion
+saves the profile and reports "Buttons saved for <name>." for the keyboard, or
+"Buttons saved for <name>. The directional pad and stick work automatically."
+for a controller.
 
 ## Picture
 

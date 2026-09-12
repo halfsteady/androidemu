@@ -12,7 +12,6 @@
 use super::theme::*;
 use super::widgets;
 use super::{Action, Panel};
-use crate::input::NesButton;
 use crate::picture::{Aspect, Look, PaletteChoice};
 use crate::shell::App;
 use crate::video::Video;
@@ -184,7 +183,7 @@ fn settings(ctx: &egui::Context, app: &mut App) {
         if widgets::value_row(
             ui,
             "Controller buttons",
-            "Map A, B, Select and Start for a controller or the keyboard",
+            "Map A, B, Select and Start for a controller, or all eight keys for the keyboard",
             "Set up",
         )
         .clicked()
@@ -215,14 +214,17 @@ fn settings(ctx: &egui::Context, app: &mut App) {
     });
 }
 
-/// The four presses that teach a controller — or the keyboard — which of its
-/// buttons are A, B, Select and Start. The shell feeds it the presses; this
+/// The presses that teach a controller — or the keyboard — which of its
+/// buttons are which: four for a controller, and eight for the keyboard,
+/// whose directions are its to choose. The shell feeds it the presses; this
 /// only says which one it is waiting for.
 fn mapping(ctx: &egui::Context, app: &mut App) {
     let Some(wizard) = &app.wizard else {
         return;
     };
     let step = wizard.step();
+    let steps = wizard.steps();
+    let total = wizard.total();
     let device = wizard.device_name().map(str::to_string);
     widgets::panel(
         ctx,
@@ -233,10 +235,10 @@ fn mapping(ctx: &egui::Context, app: &mut App) {
         |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(12.0);
-                // The last step's name is held once all four are in: the
+                // The last step's name is held once they are all in: the
                 // wizard is finished on the same press, and a panel that
                 // blanks for the frame in between reads as a mistake.
-                let waiting = NesButton::ORDER[step.min(NesButton::ORDER.len() - 1)].label();
+                let waiting = steps[step.min(steps.len() - 1)].label();
                 // One space, where Android has two: at 44 points a doubled
                 // space is a hole in the biggest line on the screen.
                 ui.label(
@@ -246,8 +248,10 @@ fn mapping(ctx: &egui::Context, app: &mut App) {
                         .color(LEAF),
                 );
                 ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    for (i, b) in NesButton::ORDER.iter().enumerate() {
+                // Wrapped, because eight names do not fit across the card
+                // once the window is narrow enough to squeeze it.
+                ui.horizontal_wrapped(|ui| {
+                    for (i, b) in steps.iter().enumerate() {
                         let done = i < step;
                         let text = if done {
                             format!("{DONE} {}", b.label())
@@ -261,14 +265,22 @@ fn mapping(ctx: &egui::Context, app: &mut App) {
                         }));
                     }
                 });
-                // Held at the last step for the same reason the name above
-                // it is: all four are in for the frame before the wizard is
-                // put away, and "Step 5 of 4" is nobody's fourth step.
-                let of = NesButton::ORDER.len();
-                widgets::note(ui, &format!("Step {} of {of}", (step + 1).min(of)));
+                // How many steps there are is the device's to decide, and
+                // until one has pressed there is no honest total to give: the
+                // count stands on its own for that one screen rather than
+                // promising four and then asking for eight. The number is
+                // held at the last step for the same reason the name above it
+                // is: they are all in for the frame before the wizard is put
+                // away, and "Step 9 of 8" is nobody's eighth step.
+                widgets::note(
+                    ui,
+                    &match total {
+                        Some(of) => format!("Step {} of {of}", (step + 1).min(of)),
+                        None => "Step 1".to_string(),
+                    },
+                );
                 // Only once something has pressed: until then there is no
-                // device, and the four steps all belong to whichever presses
-                // first.
+                // device, and every step belongs to whichever presses first.
                 if let Some(name) = device {
                     widgets::note(ui, &name);
                 }
@@ -285,6 +297,7 @@ fn mapping(ctx: &egui::Context, app: &mut App) {
 mod tests {
     use super::*;
     use crate::engine::tests::test_rom;
+    use crate::input::NesButton;
     use crate::picture::model;
     use egui::epaint::ClippedShape;
     use std::path::PathBuf;
@@ -554,10 +567,11 @@ mod tests {
     }
 
     /// The wizard says which button it is waiting for, how far through it is,
-    /// and offers the way out. Four presses is four steps, and the fourth one
-    /// still names a button rather than running off the end of the four.
+    /// and offers the way out. How many steps there are is the device's to
+    /// decide, so before anything has pressed the panel says "Step 1" and
+    /// names no total it might have to take back.
     #[test]
-    fn the_mapping_panel_counts_the_four_presses() {
+    fn the_mapping_panel_counts_the_presses_the_device_owes() {
         let dir = temp_dir("settings-mapping");
         let ctx = context();
         let mut app = App::blank(&dir);
@@ -565,27 +579,33 @@ mod tests {
         // No wizard is no panel: the shell only ever raises the two together.
         assert!(texts(&drawn(&mut app, &ctx, WINDOW)).is_empty());
         app.wizard = Some(crate::input::Wizard::new());
-        let shapes = drawn(&mut app, &ctx, WINDOW);
-        let said = texts(&shapes);
+        let said = texts(&drawn(&mut app, &ctx, WINDOW));
         for line in [
             "Controller buttons",
             "Press each button on the controller or keyboard you want to use.",
             "Press A",
-            "Step 1 of 4",
+            "Step 1",
             "Cancel",
         ] {
             assert!(said.iter().any(|t| t == line), "no {line:?} in {said:?}");
         }
-        for (step, waiting) in ["B", "Select", "Start", "Start"].iter().enumerate() {
-            // The four presses, the last of which the shell answers by
-            // putting the wizard away; the panel holds still for that frame.
+        // Nothing has claimed the wizard, so nothing promises eight steps.
+        assert!(!said.iter().any(|t| t.starts_with("Step 1 of")), "{said:?}");
+        assert!(!said.iter().any(|t| t == "Up"), "{said:?}");
+
+        // The keyboard is asked for all eight, and says so from the first key.
+        let mut expected = NesButton::ORDER.iter().skip(1).map(|b| b.label());
+        for step in 0..8 {
+            let waiting = expected.next().unwrap_or("Right");
             app.wizard.as_mut().unwrap().press(
                 crate::settings::Profiles::KEYBOARD,
                 "Keyboard",
                 &format!("key{step}"),
             );
             let said = texts(&drawn(&mut app, &ctx, WINDOW));
-            let step_line = format!("Step {} of 4", (step + 2).min(4));
+            // Held at the last step, which the shell answers by putting the
+            // wizard away; the panel holds still for that one frame.
+            let step_line = format!("Step {} of 8", (step + 2).min(8));
             assert!(
                 said.iter().any(|t| t == &format!("Press {waiting}")),
                 "{said:?}"
@@ -594,13 +614,23 @@ mod tests {
             // The device that pressed first owns the rest of the steps, and
             // the panel says which one it is.
             assert!(said.iter().any(|t| t == "Keyboard"), "{said:?}");
-            // A button already learned is shown with its mark against it.
+            // A key already learned is shown with its mark against it.
             assert!(
                 said.iter()
                     .any(|t| t == &format!("{DONE} {}", NesButton::ORDER[step].label())),
                 "{said:?}"
             );
         }
+
+        // A pad is asked for four, and its directions are never on the list.
+        app.wizard = Some(crate::input::Wizard::new());
+        app.wizard.as_mut().unwrap().press("pad1", "Pad", "b");
+        let said = texts(&drawn(&mut app, &ctx, WINDOW));
+        assert!(said.iter().any(|t| t == "Step 2 of 4"), "{said:?}");
+        assert!(said.iter().any(|t| t == "Press B"), "{said:?}");
+        assert!(said.iter().any(|t| t == "Pad"), "{said:?}");
+        assert!(!said.iter().any(|t| t == "Up"), "{said:?}");
+
         let shapes = drawn(&mut app, &ctx, WINDOW);
         click(&mut app, &ctx, at(&shapes, "Cancel"));
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::CancelWizard]);
