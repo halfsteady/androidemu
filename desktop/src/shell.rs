@@ -423,22 +423,25 @@ fn on_focus_lost(app: &App) -> Option<Action> {
 
 /// The window has lost the keyboard.
 ///
-/// When it does not pause, the two halves of a pause that are not about
-/// stopping still have to happen. A key released while another window has the
-/// keyboard is never reported, so anything held on the way out would be held
-/// for ever; and nobody is going to pause this game now, so its battery RAM
-/// is written here rather than waiting for the next flush to come round.
+/// Whatever was held is let go of whichever way this goes: a key released
+/// while another window has the keyboard is never reported, so a direction
+/// held on the way out would be held for ever — whether the game was paused,
+/// or a panel was up over it, or it was left running on purpose.
+///
+/// Then, when it does not pause, the other half of a pause that is not about
+/// stopping: nobody is going to pause this game now, so its battery RAM is
+/// written here rather than waiting for the next flush to come round.
 fn focus_lost(app: &mut App) {
+    app.input.clear();
     if let Some(action) = on_focus_lost(app) {
         app.actions.push(action);
         return;
     }
     // Pausing is on and there was nothing to pause: a panel, the wizard or the
-    // shelf is up, none of which is holding a key or owes a save.
+    // shelf is up, and the game behind it was stopped and saved when it went.
     if app.settings.pause_on_focus_loss {
         return;
     }
-    app.input.clear();
     if let Some(session) = &mut app.session {
         if let Err(e) = session.flush_battery() {
             let title = session.game.title.clone();
@@ -477,6 +480,10 @@ fn reserved(scancode: Scancode) -> bool {
 /// then swallow it in every game that key was pressed in, leaving a button
 /// that does nothing and no way to tell why. Escape is the way out of the
 /// wizard rather than a refusal, as it is the way out of anything.
+///
+/// A refusal is answered by the next key that is not one: leaving it up while
+/// the panel has moved on to the next button is a sentence about a key nobody
+/// pressed any more, waiting to be clicked away.
 fn wizard_key(app: &mut App, scancode: Scancode) {
     if scancode == Scancode::Escape {
         let action = escape(app);
@@ -488,6 +495,9 @@ fn wizard_key(app: &mut App, scancode: Scancode) {
         return;
     }
     if let Some(wizard) = app.wizard.as_mut() {
+        // Before the press, not after: the last one finishes the wizard, and
+        // what it has to say is said by `finish_wizard`.
+        app.message = None;
         let pressed = wizard.press(Profiles::KEYBOARD, "Keyboard", &key_name(scancode));
         if let WizardEvent::Done(key, profile) = pressed {
             finish_wizard(app, key, *profile);
@@ -2128,9 +2138,10 @@ mod tests {
             assert!(app.wizard.as_ref().unwrap().device_name().is_none());
             assert_eq!(app.message.as_deref(), Some(RESERVED_KEY), "{scancode:?}");
             assert!(app.actions.is_empty(), "{:?}", app.actions);
-            app.message = None;
         }
-        // A key the shell has no use for is the button it was asked for.
+        // A key the shell has no use for is the button it was asked for, and
+        // it answers the refusal: the sentence goes with the press it was
+        // about, rather than hanging over the next button to be clicked away.
         wizard_key(&mut app, Scancode::X);
         assert_eq!(app.wizard.as_ref().unwrap().step(), 1);
         assert_eq!(app.message, None);
@@ -2169,6 +2180,20 @@ mod tests {
         assert_eq!(on_focus_lost(&app), None);
         app.wizard = None;
 
+        // Pausing is on and there is nothing to pause: the panel in front of
+        // the game stopped it when it opened, so nothing is asked for and
+        // nothing is written — but a key held while somebody clicked away
+        // from the panel is still let go of.
+        app.panel = Panel::Pause;
+        app.input.key(Scancode::X, true);
+        let _ = std::fs::remove_file(&battery);
+        focus_lost(&mut app);
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        assert_eq!(app.input.buttons().0 .0, 0);
+        assert!(!battery.exists());
+        assert_eq!(app.message, None);
+        app.panel = Panel::None;
+
         // Turned off, the game plays on — and the two halves of a pause that
         // are not about stopping still happen.
         app.settings.pause_on_focus_loss = false;
@@ -2187,6 +2212,7 @@ mod tests {
         app.input.key(Scancode::X, true);
         focus_lost(&mut app);
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::Pause]);
+        assert_eq!(app.input.buttons().0 .0, 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -161,11 +161,12 @@ turn and the profile is saved under that controller's SDL GUID, or under
 Any key can be mapped, Tab and the arrows included: the keyboard reaches the
 game and the hotkeys and nothing else, and egui's own focus and zoom shortcuts
 are off, so a key never moves the panels' focus or resizes the screen out from
-under the picture. Six keys are the shell's own — Escape, Space, Backspace,
-F5, F8 and F11 — and the wizard refuses them with "That key already does
-something. Pick another.", because the hotkey would swallow the button before
-the game ever saw it. `.` and `,` are held rather than pressed and can be
-mapped.
+under the picture. Five keys are the shell's own — Space, Backspace, F5, F8
+and F11 — and the wizard refuses them with "That key already does something.
+Pick another.", because the hotkey would swallow the button before the game
+ever saw it; the next key it accepts puts that sentence away. Escape cancels
+the wizard rather than being refused by it, as it backs out of everything
+else. `.` and `,` are held rather than pressed and can be mapped.
 
 ## Saves and data
 

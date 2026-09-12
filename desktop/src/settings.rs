@@ -21,7 +21,10 @@ pub struct Settings {
     pub pause_on_focus_loss: bool,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+/// Only ever written from a `Settings` and read from a file, so it has no
+/// `Default` of its own: a derived one would say `false` where `yes` says
+/// true, and two defaults for one field is one too many.
+#[derive(Serialize, Deserialize)]
 struct OnDisk {
     #[serde(default)]
     aspect: u32,
