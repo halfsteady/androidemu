@@ -99,10 +99,15 @@ whatever is under it — a hand over a control, an I-beam over text.
 
 In a game, the Menu button, Escape and Space all open the pause menu: Resume
 game, Save states, Screenshot, Full screen, Settings, Reset game and Back to
-your shelf. Escape backs out one level at a time. F11 is full screen; after
-five seconds with no key, no mouse, no controller button, no stick or trigger
-past its dead zone and no touch of the time control the chrome fades, and any
-of those brings it back.
+your shelf. Clicking away to another window opens it too, so walking away
+costs nothing; Settings → Play turns that off for somebody who wants a game
+running in a window behind something else, and with it off the held keys are
+still let go of — a key released while another window has the keyboard is
+never reported — and the battery RAM is still written, but nothing stops and
+no automatic save is taken. Escape backs out one level at a time. F11 is full
+screen; after five seconds with no key, no mouse, no controller button, no
+stick or trigger past its dead zone and no touch of the time control the
+chrome fades, and any of those brings it back.
 
 ```
 nes-desktop [rom.nes] [--data-dir <dir>] [--mute] [--frames <n>] [--list-drivers] [--help]
@@ -153,6 +158,15 @@ and Right, since a keyboard has no direction pad to fall back on. Press them in
 turn and the profile is saved under that controller's SDL GUID, or under
 `keyboard`. Escape cancels.
 
+Any key can be mapped, Tab and the arrows included: the keyboard reaches the
+game and the hotkeys and nothing else, and egui's own focus and zoom shortcuts
+are off, so a key never moves the panels' focus or resizes the screen out from
+under the picture. Six keys are the shell's own — Escape, Space, Backspace,
+F5, F8 and F11 — and the wizard refuses them with "That key already does
+something. Pick another.", because the hotkey would swallow the button before
+the game ever saw it. `.` and `,` are held rather than pressed and can be
+mapped.
+
 ## Saves and data
 
 The data directory is `~/Library/Application Support/Emulia` on macOS and
@@ -161,7 +175,8 @@ The data directory is `~/Library/Application Support/Emulia` on macOS and
 storage; `--save-dir` is still accepted as an alias for it.
 
 ```
-settings.json                     shape, look, palette, trim, shelf view, full screen
+settings.json                     shape, look, palette, trim, shelf view,
+                                  full screen, pause on focus loss
 controllers.json                  one button profile per SDL GUID, plus "keyboard"
 palette.pal                       the imported palette, raw bytes
 library/index.json                one entry per game: id, title, added, played, seconds, archived
@@ -180,10 +195,11 @@ Every write is atomic — a temp file in the same directory, fsync, rename — s
 crash never leaves half a save, index or setting behind.
 
 Battery RAM is written every five seconds while a game runs, the moment it is
-paused (losing the window's focus pauses it), whenever a slot is saved, on the
-way back to the shelf and on quit. Leaving and quitting also write the
-automatic save, which is what the game resumes from next time. Force-quitting
-can still lose the few seconds since the last flush.
+paused (losing the window's focus pauses it unless Settings → Play says
+otherwise, in which case the focus loss writes it without pausing), whenever a
+slot is saved, on the way back to the shelf and on quit. Leaving and quitting
+also write the automatic save, which is what the game resumes from next time.
+Force-quitting can still lose the few seconds since the last flush.
 
 A battery save that will not load is never written over: it is renamed
 `battery.sav.unreadable` beside itself, the reason goes in the problem log, and
@@ -287,10 +303,17 @@ controller. Working through the shell:
       work." with the reason in the problem log.
 - [ ] From a game, the preview is the paused frame, "Done" returns to the
       pause menu, and the game takes the chosen look and palette at once.
+- [ ] Settings → Play: with "Pause when the window loses focus" on, clicking
+      another window opens the pause menu; turned off, the game plays on while
+      another window has the keyboard, no key stays held, and the choice
+      survives a restart.
 - [ ] Controller buttons → Set up: four presses on the keyboard save it and
       say "Buttons saved for Keyboard…", and the new keys play; the same four
       on a controller save under its GUID in `controllers.json`; pressing one
-      button twice is ignored; Escape cancels.
+      button twice is ignored; Space, Backspace, F5, F8 and F11 say "That key
+      already does something. Pick another." and do not count as a step; Tab
+      does count, and afterwards still plays the game rather than moving the
+      panels' focus; Escape cancels.
 - [ ] "Audio delay" in Settings shows about 30 ms while a game plays.
 
 The separate external ROM accuracy suite requires the files described in

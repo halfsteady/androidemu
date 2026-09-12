@@ -36,7 +36,8 @@ One main thread. Each loop iteration:
    holds less than two frames of samples, exactly as today. Fast-forward at N×:
    step N frames per display tick, queue only the last frame's samples. Rewind
    at N×: pop N rewind states per display tick, clear the queue. Paused, or a
-   panel open, or unfocused: step nothing, pause and clear audio, zero buttons.
+   panel open, or unfocused unless the Play setting says to carry on: step
+   nothing, pause and clear audio, zero buttons.
 3. Upload the RGB frame, run the preparation pass if the look needs one, draw the
    present pass into the letterboxed viewport, run the egui frame, paint it,
    swap. Vsync on (`gl_set_swap_interval(1)`) when the driver allows; otherwise
@@ -132,15 +133,16 @@ Raw 256×240 framebuffer, no shape, trim or look, as on Android.
 ### settings.json
 
 ```json
-{"aspect": 0, "look": 0, "palette": 0, "trimEdges": false, "shelfList": false, "fullscreen": false}
+{"aspect": 0, "look": 0, "palette": 0, "trimEdges": false, "shelfList": false, "fullscreen": false, "pauseOnFocusLoss": true}
 ```
 
 Ids match Android: `look` uses `Filter.id` (0 Off, 1 Scanlines, 2 Old TV,
 3 Dot matrix, 4 Four greens, 6 Old photo, 7 Neon, 8 Cartoon, 9 Smooth,
 10 Composite; retired 5 maps to 6), `palette` uses `Palette.id` (0 Standard,
 1 Hardware, 2 Soft, 3 Vivid, 5 From a file; retired 4 maps to 0). Unknown keys
-are ignored, missing keys take defaults. If `palette` is 5 but `palette.pal` is
-missing or invalid, fall back to Standard and log it.
+are ignored, missing keys take defaults — `pauseOnFocusLoss` defaults to true,
+so a file written before it keeps pausing. If `palette` is 5 but `palette.pal`
+is missing or invalid, fall back to Standard and log it.
 
 ### controllers.json
 
@@ -244,7 +246,10 @@ when you're ready." and resets the rewind chain.
 
 **Autosave** (slot `auto`) on: opening the pause menu (also records playtime),
 window focus loss, leaving to the shelf, quitting, and after a reset. Battery
-RAM is also flushed every five seconds as today.
+RAM is also flushed every five seconds as today. Focus loss pauses only while
+`pauseOnFocusLoss` is on, which is its default and what every settings file
+written before it means; with it off nothing pauses and nothing is autosaved,
+and the shell only drops the held keys and flushes the battery RAM.
 
 **Screenshot** does not pause; shows "Screenshot saved to <folder>."
 
@@ -281,10 +286,13 @@ keyboard for eight — Up, Down, Left and Right after them, a keyboard having no
 d-pad to steer with — so the device that presses first sets the length, and
 until one has the panel says "Step 1" and names no total. Only presses (no
 repeats) count; all of them must come from the device that pressed first; a
-button already used is rejected. Escape and the Cancel button abort. Completion
-saves the profile and reports "Buttons saved for <name>." for the keyboard, or
-"Buttons saved for <name>. The directional pad and stick work automatically."
-for a controller.
+button already used is rejected. The keys the shell reserves — Space,
+Backspace, F5, F8 and F11 — are refused with "That key already does something.
+Pick another." rather than captured, since the hotkey would swallow them before
+the game saw them; every other key, Tab included, is somebody's to map. Escape
+and the Cancel button abort. Completion saves the profile and reports "Buttons
+saved for <name>." for the keyboard, or "Buttons saved for <name>. The
+directional pad and stick work automatically." for a controller.
 
 ## Picture
 
@@ -315,9 +323,10 @@ a 640×480 framebuffer object and shown as an egui texture. Sample source: the
 paused frame if a game is open, else the newest autosave thumbnail on the
 shelf, else the generated sample frame; always the generated frame when a
 palette other than Standard is chosen. Sections: Shape, Look, Colours, Palette
-file (Replace, only for From a file), Trim the edges, Controller buttons (Set
-up), Audio delay (queued milliseconds from the SDL queue, polled twice a
-second), Version, Problem log (Open). Done closes it and frees the preview.
+file (Replace, only for From a file), Trim the edges, Pause when the window
+loses focus, Controller buttons (Set up), Audio delay (queued milliseconds from
+the SDL queue, polled twice a second), Version, Problem log (Open). Done closes
+it and frees the preview.
 
 **Problem log**: newest first, up to 40 rows, "Nothing has gone wrong yet."
 when empty.

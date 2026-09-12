@@ -71,6 +71,7 @@ pub enum Action {
     SetAspect(Aspect),
     SetPalette(PaletteChoice),
     SetTrim(bool),
+    SetPauseOnFocusLoss(bool),
     ImportPalette,
     StartWizard,
     CancelWizard,

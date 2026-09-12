@@ -15,6 +15,10 @@ pub struct Settings {
     pub trim_edges: bool,
     pub shelf_list: bool,
     pub fullscreen: bool,
+    /// Whether a game stops when its window loses the keyboard. On by
+    /// default: a game left running behind another window is a game nobody
+    /// is watching, and its progress goes on being spent.
+    pub pause_on_focus_loss: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -31,6 +35,16 @@ struct OnDisk {
     shelf_list: bool,
     #[serde(default)]
     fullscreen: bool,
+    /// Missing from every settings file written before there was a choice
+    /// about it, and those files all mean "pause", which is what the shell
+    /// did then: the default is the old behaviour rather than `false`.
+    #[serde(default = "yes", rename = "pauseOnFocusLoss")]
+    pause_on_focus_loss: bool,
+}
+
+/// What serde fills that field in with when the file has no line for it.
+fn yes() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -42,6 +56,7 @@ impl Default for Settings {
             trim_edges: false,
             shelf_list: false,
             fullscreen: false,
+            pause_on_focus_loss: true,
         }
     }
 }
@@ -73,6 +88,7 @@ impl Settings {
                     trim_edges: disk.trim_edges,
                     shelf_list: disk.shelf_list,
                     fullscreen: disk.fullscreen,
+                    pause_on_focus_loss: disk.pause_on_focus_loss,
                 },
                 None,
             ),
@@ -91,6 +107,7 @@ impl Settings {
             trim_edges: self.trim_edges,
             shelf_list: self.shelf_list,
             fullscreen: self.fullscreen,
+            pause_on_focus_loss: self.pause_on_focus_loss,
         };
         let text = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
         write_atomic(&dir.join(SETTINGS), text.as_bytes())
@@ -232,6 +249,9 @@ mod tests {
         assert_eq!(s.look, Look::Off);
         assert_eq!(s.palette, PaletteChoice::Standard);
         assert!(!s.trim_edges && !s.shelf_list && !s.fullscreen);
+        // The one choice that starts on: a game left running while its window
+        // is behind another is a game nobody is watching.
+        assert!(s.pause_on_focus_loss);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -245,6 +265,7 @@ mod tests {
             trim_edges: true,
             shelf_list: true,
             fullscreen: true,
+            pause_on_focus_loss: false,
         };
         s.save(&dir).unwrap();
         let text = fs::read_to_string(dir.join("settings.json")).unwrap();
@@ -252,6 +273,7 @@ mod tests {
         assert_eq!(json["look"], 10);
         assert_eq!(json["palette"], 3);
         assert_eq!(json["aspect"], 2);
+        assert_eq!(json["pauseOnFocusLoss"], false);
         assert_eq!(Settings::load(&dir).0, s);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -269,6 +291,9 @@ mod tests {
         assert_eq!(s.look, Look::OldPhoto);
         assert_eq!(s.palette, PaletteChoice::Standard);
         assert_eq!(s.aspect, Aspect::Television);
+        // A file written before there was a choice about it — which is every
+        // file on anybody's disk today — keeps pausing the way it always has.
+        assert!(s.pause_on_focus_loss);
         fs::remove_dir_all(dir).unwrap();
     }
 

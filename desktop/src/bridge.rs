@@ -18,11 +18,7 @@ use std::{sync::Arc, time::Instant};
 pub struct Bridge {
     pub ctx: egui::Context,
     painter: egui_glow::Painter,
-    events: Vec<Event>,
-    modifiers: Modifiers,
-    /// Whether the window has the keyboard. egui dims what it draws and drops
-    /// held keys when it does not.
-    focused: bool,
+    feed: Feed,
     /// What the last pass scaled by. The painter has to use the same number
     /// the shapes were tessellated with, not whatever the window says now: a
     /// display change between the two would smear the frame.
@@ -35,6 +31,20 @@ pub struct Bridge {
     cursors: HashMap<SystemCursor, Cursor>,
     /// What the pointer is showing now, so it is only changed when it changes.
     cursor: CursorIcon,
+}
+
+/// What SDL says, in egui's words: the events waiting for the next pass, the
+/// modifiers they carry, and whether the window has the keyboard.
+///
+/// Kept apart from the painter because the painter is the half that needs a
+/// GL context, and this half is a table — the same reason `shell.rs` keeps
+/// `escape` and `space` out of the loop, and what lets a test press a key.
+struct Feed {
+    events: Vec<Event>,
+    modifiers: Modifiers,
+    /// Whether the window has the keyboard. egui dims what it draws and drops
+    /// held keys when it does not.
+    focused: bool,
 }
 
 /// The SDL cursor for what egui asked for. Everything egui can ask for that
@@ -100,23 +110,26 @@ fn button(b: MouseButton) -> Option<PointerButton> {
     }
 }
 
-impl Bridge {
-    pub fn new(gl: Arc<glow::Context>) -> Result<Bridge, String> {
-        let painter = egui_glow::Painter::new(gl, "", None, false).map_err(|e| e.to_string())?;
-        Ok(Bridge {
-            ctx: egui::Context::default(),
-            painter,
+impl Feed {
+    fn new() -> Feed {
+        Feed {
             events: Vec::new(),
             modifiers: Modifiers::default(),
             focused: true,
-            scale: 1.0,
-            start: Instant::now(),
-            cursors: HashMap::new(),
-            cursor: CursorIcon::Default,
-        })
+        }
     }
 
-    pub fn handle(&mut self, event: &SdlEvent) {
+    /// One SDL event, turned into however many egui ones it is worth.
+    ///
+    /// `typing` is whether a text field has the keyboard. Only then does egui
+    /// see a key or a piece of text: its focus handler moves the focused
+    /// widget on Tab, Shift+Tab and the arrows, and everything it draws
+    /// swallows every key for as long as something is focused, so one Tab
+    /// used to hand the keyboard to the title bar's Menu button and the game
+    /// stopped answering until somebody clicked. The modifiers are told
+    /// either way, because a click carries the ones that were held when it
+    /// was made.
+    fn handle(&mut self, event: &SdlEvent, typing: bool) {
         match event {
             SdlEvent::MouseMotion { x, y, .. } => self
                 .events
@@ -174,18 +187,23 @@ impl Bridge {
                     self.modifiers = now;
                     self.events.push(Event::ModifiersChanged(now));
                 }
-                if let Some(key) = key(*keycode) {
-                    let pressed = matches!(event, SdlEvent::KeyDown { .. });
-                    self.events.push(Event::Key {
-                        key,
-                        physical_key: None,
-                        pressed,
-                        repeat: *repeat,
-                        modifiers: self.modifiers,
-                    });
+                // Only a text field has any use for the key itself.
+                if typing {
+                    if let Some(key) = key(*keycode) {
+                        let pressed = matches!(event, SdlEvent::KeyDown { .. });
+                        self.events.push(Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed,
+                            repeat: *repeat,
+                            modifiers: self.modifiers,
+                        });
+                    }
                 }
             }
-            SdlEvent::TextInput { text, .. } => self.events.push(Event::Text(text.clone())),
+            SdlEvent::TextInput { text, .. } if typing => {
+                self.events.push(Event::Text(text.clone()))
+            }
             SdlEvent::Window {
                 win_event: WindowEvent::FocusGained,
                 ..
@@ -213,6 +231,31 @@ impl Bridge {
             } => self.events.push(Event::PointerGone),
             _ => {}
         }
+    }
+}
+
+impl Bridge {
+    pub fn new(gl: Arc<glow::Context>) -> Result<Bridge, String> {
+        let painter = egui_glow::Painter::new(gl, "", None, false).map_err(|e| e.to_string())?;
+        Ok(Bridge {
+            ctx: egui::Context::default(),
+            painter,
+            feed: Feed::new(),
+            scale: 1.0,
+            start: Instant::now(),
+            cursors: HashMap::new(),
+            cursor: CursorIcon::Default,
+        })
+    }
+
+    /// One SDL event on its way to egui.
+    ///
+    /// The keyboard belongs to the game and to the shell's hotkeys, so egui is
+    /// only told about keys and typed text while a text field has the focus —
+    /// of which this shell has none today. Everything else goes through
+    /// whatever is on screen: see `Feed::handle`.
+    pub fn handle(&mut self, event: &SdlEvent) {
+        self.feed.handle(event, self.ctx.text_edit_focused());
     }
 
     /// Device pixels to a point. SDL reports mouse positions and window size
@@ -246,8 +289,8 @@ impl Bridge {
             )),
             max_texture_side: Some(self.painter.max_texture_side()),
             time: Some(self.start.elapsed().as_secs_f64()),
-            events: std::mem::take(&mut self.events),
-            focused: self.focused,
+            events: std::mem::take(&mut self.feed.events),
+            focused: self.feed.focused,
             ..Default::default()
         };
         // Told as the display's own scale rather than as a zoom, so that a
@@ -346,5 +389,94 @@ mod tests {
         // than nothing at all.
         assert_eq!(system_cursor(CursorIcon::ZoomIn), SystemCursor::Arrow);
         assert_eq!(system_cursor(CursorIcon::Help), SystemCursor::Arrow);
+    }
+
+    /// A key down, the way SDL reports one.
+    fn key_down(keycode: Keycode, keymod: Mod) -> SdlEvent {
+        SdlEvent::KeyDown {
+            timestamp: 0,
+            window_id: 0,
+            keycode: Some(keycode),
+            scancode: Scancode::from_keycode(keycode),
+            keymod,
+            repeat: false,
+        }
+    }
+
+    /// The keyboard belongs to the game and to the shell's hotkeys. egui moves
+    /// widget focus on Tab, Shift+Tab and the arrow keys, and then swallows
+    /// every key that reaches it for as long as something is focused: one Tab
+    /// handed the keyboard to the title bar's Menu button and the game stopped
+    /// answering until somebody clicked or pressed Escape. Nothing in this
+    /// shell is typed into, so nothing here has any use for a key.
+    #[test]
+    fn the_keyboard_is_the_games_until_something_is_being_typed_into() {
+        let mut feed = Feed::new();
+        for keycode in [
+            Keycode::Tab,
+            Keycode::Up,
+            Keycode::Down,
+            Keycode::Left,
+            Keycode::Right,
+            Keycode::X,
+        ] {
+            feed.handle(&key_down(keycode, Mod::NOMOD), false);
+        }
+        feed.handle(
+            &SdlEvent::TextInput {
+                timestamp: 0,
+                window_id: 0,
+                text: "x".to_string(),
+            },
+            false,
+        );
+        assert!(
+            !feed
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Key { .. } | Event::Text(_))),
+            "{:?}",
+            feed.events
+        );
+        // The modifiers go through either way: a click carries the ones that
+        // were held when it was made, and that is what they are kept for.
+        feed.handle(&key_down(Keycode::LShift, Mod::LSHIFTMOD), false);
+        assert!(
+            feed.events
+                .iter()
+                .any(|e| matches!(e, Event::ModifiersChanged(m) if m.shift)),
+            "{:?}",
+            feed.events
+        );
+        // And a text field, the day there is one, is typed into as usual.
+        let mut feed = Feed::new();
+        feed.handle(&key_down(Keycode::Tab, Mod::NOMOD), true);
+        feed.handle(
+            &SdlEvent::TextInput {
+                timestamp: 0,
+                window_id: 0,
+                text: "x".to_string(),
+            },
+            true,
+        );
+        assert!(
+            feed.events.iter().any(|e| matches!(
+                e,
+                Event::Key {
+                    key: Key::Tab,
+                    pressed: true,
+                    ..
+                }
+            )),
+            "{:?}",
+            feed.events
+        );
+        assert!(
+            feed.events
+                .iter()
+                .any(|e| matches!(e, Event::Text(t) if t == "x")),
+            "{:?}",
+            feed.events
+        );
     }
 }

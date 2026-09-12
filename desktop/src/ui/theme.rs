@@ -49,6 +49,12 @@ pub const PANEL_WIDTH: f32 = 620.0;
 /// desktop must not repaint half of it.
 pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
+    // egui's own zoom is off: Cmd and plus would scale the panels and the
+    // chrome, and the picture — fitted to the window in device pixels, under a
+    // title bar measured in points — would stay exactly the size it was, with
+    // the bar growing down over the top of the game. There is nothing here a
+    // reader needs bigger, and the keyboard is the game's.
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
     ctx.all_styles_mut(style);
 }
 
@@ -82,4 +88,18 @@ fn style(style: &mut egui::Style) {
     v.widgets.active.fg_stroke = Stroke::new(1.0, ON_LEAF);
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(16.0, 10.0);
+}
+
+#[cfg(test)]
+mod tests {
+    /// Cmd and plus is egui's own zoom, and this shell has nothing to zoom:
+    /// it would scale the panels and the chrome while the picture, which is
+    /// fitted to the window in device pixels, stayed exactly where it was —
+    /// the title bar would grow down over the top of the game.
+    #[test]
+    fn the_keyboard_cannot_resize_the_screen_out_from_under_the_picture() {
+        let ctx = egui::Context::default();
+        super::apply(&ctx);
+        assert!(!ctx.options(|o| o.zoom_with_keyboard));
+    }
 }

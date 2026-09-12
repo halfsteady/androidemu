@@ -593,6 +593,19 @@ mod tests {
             Buttons::UP | Buttons::RIGHT
         );
         assert_eq!(keyboard_bits(&half, &held(&[Scancode::Up])), 0);
+
+        // A direction naming a key SDL has never heard of — a profile typed
+        // by hand — steers nothing at all. Falling back to the arrow would be
+        // a profile that says one key and plays as another.
+        let nonsense = Profile {
+            up: "Wsdf".into(),
+            ..old.clone()
+        };
+        assert_eq!(keyboard_bits(&nonsense, &held(&[Scancode::Up])), 0);
+        assert_eq!(
+            keyboard_bits(&nonsense, &held(&[Scancode::W, Scancode::Down])),
+            Buttons::DOWN
+        );
     }
 
     #[test]

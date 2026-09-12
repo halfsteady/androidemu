@@ -179,6 +179,17 @@ fn settings(ctx: &egui::Context, app: &mut App) {
             app.actions.push(Action::SetTrim(trim));
         }
 
+        widgets::section(ui, "Play");
+        let mut pause = settings.pause_on_focus_loss;
+        if widgets::switch_row(
+            ui,
+            "Pause when the window loses focus",
+            "Keeps progress safe when you switch away",
+            &mut pause,
+        ) {
+            app.actions.push(Action::SetPauseOnFocusLoss(pause));
+        }
+
         widgets::section(ui, "Controls");
         if widgets::value_row(
             ui,
@@ -381,9 +392,10 @@ mod tests {
         found
     }
 
-    /// Where the one switch on the panel is. It has no label to be found by,
-    /// so it is found by its shape: the only 52-by-30 rounded rect drawn.
-    fn switch(shapes: &[ClippedShape]) -> egui::Pos2 {
+    /// Where the switches on the panel are, in the order they are drawn down
+    /// it. They have no label to be found by, so they are found by their
+    /// shape: the 52-by-30 rounded rects.
+    fn switches(shapes: &[ClippedShape]) -> Vec<egui::Pos2> {
         fn walk(shape: &egui::Shape, found: &mut Vec<egui::Pos2>) {
             match shape {
                 egui::Shape::Rect(r) if (r.rect.size() - Vec2::new(52.0, 30.0)).length() < 0.5 => {
@@ -397,8 +409,8 @@ mod tests {
         for clipped in shapes {
             walk(&clipped.shape, &mut found);
         }
-        assert_eq!(found.len(), 1, "{} switches drawn", found.len());
-        found[0]
+        found.sort_by(|a, b| a.y.total_cmp(&b.y));
+        found
     }
 
     fn at(shapes: &[ClippedShape], label: &str) -> egui::Pos2 {
@@ -434,16 +446,25 @@ mod tests {
         let dir = temp_dir("settings-draw");
         let ctx = context();
         let mut app = App::blank(&dir);
-        app.wizard = Some(crate::input::Wizard::new());
         for palette in PaletteChoice::ALL {
             app.settings.palette = palette;
             app.has_palette_file = palette == PaletteChoice::File;
             for panel in [Panel::Settings, Panel::Mapping] {
                 app.panel = panel;
-                // Roomy, tight, and narrower than the card asks to be.
-                for width in [1440.0, 640.0, 160.0] {
-                    for _ in 0..2 {
-                        pass(&mut app, &ctx, Vec2::new(width, 600.0), Vec::new());
+                // A wizard nothing has pressed yet draws the four names a
+                // controller owes; one the keyboard has claimed draws eight,
+                // five of them marked, which is the row that has to wrap.
+                for keys in [0, 5] {
+                    let mut wizard = crate::input::Wizard::new();
+                    for key in ["X", "Z", "Right Shift", "Return", "W"].iter().take(keys) {
+                        wizard.press(crate::settings::Profiles::KEYBOARD, "Keyboard", key);
+                    }
+                    app.wizard = Some(wizard);
+                    // Roomy, tight, and narrower than the card asks to be.
+                    for width in [1440.0, 640.0, 160.0] {
+                        for _ in 0..2 {
+                            pass(&mut app, &ctx, Vec2::new(width, 600.0), Vec::new());
+                        }
                     }
                 }
             }
@@ -468,11 +489,13 @@ mod tests {
             "LOOK",
             "COLOURS",
             "PICTURE",
+            "PLAY",
             "CONTROLS",
             "ABOUT",
             PREPARING,
             "Pixel-perfect drops to the next whole multiple",
             "Trim the edges",
+            "Pause when the window loses focus",
             "Controller buttons",
             "Audio delay",
             "Version",
@@ -558,10 +581,18 @@ mod tests {
             std::mem::take(&mut app.actions),
             vec![Action::CloseSettings]
         );
-        click(&mut app, &ctx, switch(&shapes));
+        let switches = switches(&shapes);
+        assert_eq!(switches.len(), 2, "{} switches drawn", switches.len());
+        click(&mut app, &ctx, switches[0]);
         assert_eq!(
             std::mem::take(&mut app.actions),
             vec![Action::SetTrim(true)]
+        );
+        // The second one starts on, so what it asks for is to be turned off.
+        click(&mut app, &ctx, switches[1]);
+        assert_eq!(
+            std::mem::take(&mut app.actions),
+            vec![Action::SetPauseOnFocusLoss(false)]
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

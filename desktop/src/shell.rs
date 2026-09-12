@@ -41,6 +41,11 @@ pub const SETTINGS_UNREADABLE: &str =
     "Your settings couldn't be read, so the usual ones are in use.";
 pub const CONTROLLERS_UNREADABLE: &str =
     "Your controller buttons couldn't be read, so the usual ones are in use.";
+/// Said when the mapping wizard is offered a key the shell has already spoken
+/// for. On the message bar rather than the amber pill: the pill is only drawn
+/// over an open game, and the wizard is reached from the shelf as often as
+/// from a game.
+pub const RESERVED_KEY: &str = "That key already does something. Pick another.";
 /// Said when `palette: 5` is chosen and `palette.pal` cannot be honoured. The
 /// file's name and what is wrong with it go in the problem log beside it.
 pub const PALETTE_FELL_BACK: &str =
@@ -390,6 +395,103 @@ fn space(app: &App) -> Action {
         Action::Pause
     } else {
         Action::CloseMessage
+    }
+}
+
+/// Whether a key belongs to egui rather than to the game: only while a text
+/// field has the focus, of which this shell has none today.
+///
+/// Not "is anything focused at all", which is what `egui_wants_keyboard_input`
+/// answers. egui moves the focus on Tab and leaves it on a button that has
+/// been clicked, and from that moment every key the game wanted was swallowed
+/// until somebody clicked somewhere else or pressed Escape.
+fn typing(ctx: &egui::Context) -> bool {
+    ctx.text_edit_focused()
+}
+
+/// What the window losing the keyboard means for the game behind it.
+///
+/// Pausing is the safe thing and what the shell has always done, and it is a
+/// setting because it is not the only thing somebody might want: a game left
+/// running in a window behind something else is a game that is still being
+/// played. A pause that is already up stays up, and the presses the wizard is
+/// waiting for are not interrupted by a click on another window.
+fn on_focus_lost(app: &App) -> Option<Action> {
+    let playing = app.session.is_some() && app.panel == Panel::None && app.wizard.is_none();
+    (app.settings.pause_on_focus_loss && playing).then_some(Action::Pause)
+}
+
+/// The window has lost the keyboard.
+///
+/// When it does not pause, the two halves of a pause that are not about
+/// stopping still have to happen. A key released while another window has the
+/// keyboard is never reported, so anything held on the way out would be held
+/// for ever; and nobody is going to pause this game now, so its battery RAM
+/// is written here rather than waiting for the next flush to come round.
+fn focus_lost(app: &mut App) {
+    if let Some(action) = on_focus_lost(app) {
+        app.actions.push(action);
+        return;
+    }
+    // Pausing is on and there was nothing to pause: a panel, the wizard or the
+    // shelf is up, none of which is holding a key or owes a save.
+    if app.settings.pause_on_focus_loss {
+        return;
+    }
+    app.input.clear();
+    if let Some(session) = &mut app.session {
+        if let Err(e) = session.flush_battery() {
+            let title = session.game.title.clone();
+            app.report(
+                "Progress couldn't be saved automatically.",
+                &format!("{title}: {e}"),
+            );
+        }
+    }
+}
+
+/// Whether the shell keeps this key for itself. Escape is the way out of
+/// anything; Space opens and closes the pause menu, Backspace jumps back, and
+/// the three function keys are full screen and the quick save and load.
+///
+/// `,` and `.` are not here: they are held rather than pressed, and they reach
+/// the game through `Input` the way every other key does, so they are
+/// somebody's to map if they want them.
+fn reserved(scancode: Scancode) -> bool {
+    matches!(
+        scancode,
+        Scancode::Escape
+            | Scancode::Space
+            | Scancode::Backspace
+            | Scancode::F5
+            | Scancode::F8
+            | Scancode::F11
+    )
+}
+
+/// One key while the wizard has the keyboard, where every key is a button it
+/// is trying to learn.
+///
+/// Every key but the ones the shell has already spoken for. The wizard runs
+/// before the hotkeys, so it would take Space happily — and the hotkey would
+/// then swallow it in every game that key was pressed in, leaving a button
+/// that does nothing and no way to tell why. Escape is the way out of the
+/// wizard rather than a refusal, as it is the way out of anything.
+fn wizard_key(app: &mut App, scancode: Scancode) {
+    if scancode == Scancode::Escape {
+        let action = escape(app);
+        app.actions.push(action);
+        return;
+    }
+    if reserved(scancode) {
+        app.message = Some(RESERVED_KEY.to_string());
+        return;
+    }
+    if let Some(wizard) = app.wizard.as_mut() {
+        let pressed = wizard.press(Profiles::KEYBOARD, "Keyboard", &key_name(scancode));
+        if let WizardEvent::Done(key, profile) = pressed {
+            finish_wizard(app, key, *profile);
+        }
     }
 }
 
@@ -898,6 +1000,12 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.settings_dirty = true;
             app.preview_dirty = true;
         }
+        // Nothing about the picture, so nothing to preview: it is read by
+        // `focus_lost` the next time the window loses the keyboard.
+        Action::SetPauseOnFocusLoss(pause) => {
+            app.settings.pause_on_focus_loss = pause;
+            app.settings_dirty = true;
+        }
         // The palette is the one picture choice the engine has to be told
         // about: the rest happen in the shader, and this one is baked into
         // the frame the console draws.
@@ -970,14 +1078,7 @@ fn handle_event(
         Event::Window {
             win_event: WindowEvent::FocusLost,
             ..
-        } => {
-            // Walking away from a running game should not cost progress, and a
-            // pause that is already up stays up.
-            let playing = app.session.is_some() && app.panel == Panel::None && app.wizard.is_none();
-            if playing {
-                app.actions.push(Action::Pause);
-            }
-        }
+        } => focus_lost(app),
         Event::DropFile { filename, .. } => {
             let action = dropped(app, PathBuf::from(filename));
             app.actions.push(action);
@@ -995,23 +1096,11 @@ fn handle_event(
             let shift =
                 keymod.intersects(sdl2::keyboard::Mod::LSHIFTMOD | sdl2::keyboard::Mod::RSHIFTMOD);
             if app.wizard.is_some() {
-                // The wizard has the keyboard: every key is a button it is
-                // trying to learn. Every key but Escape, which is the way out
-                // of anything, and would otherwise become someone's A button.
-                if *scancode == Scancode::Escape {
-                    let action = escape(app);
-                    app.actions.push(action);
-                } else if let Some(wizard) = app.wizard.as_mut() {
-                    let pressed =
-                        wizard.press(Profiles::KEYBOARD, "Keyboard", &key_name(*scancode));
-                    if let WizardEvent::Done(key, profile) = pressed {
-                        finish_wizard(app, key, *profile);
-                    }
-                }
+                wizard_key(app, *scancode);
                 return;
             }
             // A text field, once there is one, gets the key instead.
-            if bridge.ctx.egui_wants_keyboard_input() {
+            if typing(&bridge.ctx) {
                 return;
             }
             match scancode {
@@ -1969,6 +2058,135 @@ mod tests {
         // Back in the middle, the keys have it again.
         app.scrub_fraction = 0.0;
         assert_eq!(app.time_speed(), app.input.time_speed());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// What decides whether a key is egui's. The gate used to ask whether
+    /// anything at all was focused: egui moves the focus on Tab and on the
+    /// arrows, and leaves it on a button that was clicked, so one Tab handed
+    /// the keyboard to the title bar's Menu button and the game stopped
+    /// answering until somebody clicked somewhere else. Nothing in this shell
+    /// is typed into.
+    #[test]
+    fn a_focused_button_does_not_take_the_keyboard_from_the_game() {
+        let ctx = egui::Context::default();
+        let mut button = egui::Id::NULL;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let response = ui.button("Menu");
+            response.request_focus();
+            button = response.id;
+        })
+        .textures_delta
+        .clear();
+        // Focused, and the old gate said the keyboard was egui's for it.
+        assert_eq!(ctx.memory(|m| m.focused()), Some(button));
+        assert!(ctx.egui_wants_keyboard_input());
+        // Nobody is typing, so the key is still the game's.
+        assert!(!typing(&ctx));
+    }
+
+    /// The keys the shell keeps for itself cannot be mapped to a button. The
+    /// wizard runs before the hotkeys, so Space would be captured happily —
+    /// and then swallowed by the pause hotkey every time it was pressed in a
+    /// game, leaving somebody with a button that does nothing and no way to
+    /// tell why. Escape is the way out of the wizard rather than a refusal.
+    #[test]
+    fn the_wizard_refuses_the_keys_the_shell_has_already_spoken_for() {
+        for scancode in [
+            Scancode::Escape,
+            Scancode::Space,
+            Scancode::Backspace,
+            Scancode::F5,
+            Scancode::F8,
+            Scancode::F11,
+        ] {
+            assert!(reserved(scancode), "{scancode:?}");
+        }
+        // The two time keys are held rather than pressed and reach the game
+        // through `Input` like any other key, so they are somebody's to map.
+        for scancode in [
+            Scancode::Comma,
+            Scancode::Period,
+            Scancode::X,
+            Scancode::Z,
+            Scancode::Return,
+            Scancode::Tab,
+            Scancode::W,
+        ] {
+            assert!(!reserved(scancode), "{scancode:?}");
+        }
+
+        let dir = temp_dir("shell-reserved");
+        let mut app = App::blank(&dir);
+        app.panel = Panel::Mapping;
+        app.wizard = Some(Wizard::new());
+        // A reserved key costs the wizard nothing: the step it is waiting for
+        // is the step it was waiting for, and the sentence says why.
+        for scancode in [Scancode::Space, Scancode::Backspace, Scancode::F5] {
+            wizard_key(&mut app, scancode);
+            assert_eq!(app.wizard.as_ref().unwrap().step(), 0, "{scancode:?}");
+            assert!(app.wizard.as_ref().unwrap().device_name().is_none());
+            assert_eq!(app.message.as_deref(), Some(RESERVED_KEY), "{scancode:?}");
+            assert!(app.actions.is_empty(), "{:?}", app.actions);
+            app.message = None;
+        }
+        // A key the shell has no use for is the button it was asked for.
+        wizard_key(&mut app, Scancode::X);
+        assert_eq!(app.wizard.as_ref().unwrap().step(), 1);
+        assert_eq!(app.message, None);
+        // And Escape is still the way out, rather than a key to be told off
+        // for pressing.
+        wizard_key(&mut app, Scancode::Escape);
+        assert_eq!(app.message, None);
+        assert_eq!(std::mem::take(&mut app.actions), vec![Action::CancelWizard]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Walking away from a running game pauses it, which is what keeps the
+    /// progress; somebody who wants to watch it run in a window behind
+    /// something else turns that off. Either way the keys are let go of — a
+    /// key released while another window has the keyboard is never reported,
+    /// so a held direction would be held for ever — and the battery RAM is
+    /// written, because with no pause coming nothing else is going to write
+    /// it until the next flush comes round.
+    #[test]
+    fn losing_the_window_pauses_a_game_unless_that_was_turned_off() {
+        let dir = temp_dir("shell-focus");
+        let mut app = App::blank(&dir);
+        // Nothing open is nothing to pause.
+        assert_eq!(on_focus_lost(&app), None);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let battery = app.library.battery_path(&game.id);
+        let (session, _) = Session::open(&app.library, game, None).unwrap();
+        app.session = Some(session);
+        assert_eq!(on_focus_lost(&app), Some(Action::Pause));
+        // A pause that is already up stays up, and the four presses the
+        // wizard is waiting for are not interrupted by another window.
+        app.panel = Panel::Pause;
+        assert_eq!(on_focus_lost(&app), None);
+        app.panel = Panel::None;
+        app.wizard = Some(Wizard::new());
+        assert_eq!(on_focus_lost(&app), None);
+        app.wizard = None;
+
+        // Turned off, the game plays on — and the two halves of a pause that
+        // are not about stopping still happen.
+        app.settings.pause_on_focus_loss = false;
+        assert_eq!(on_focus_lost(&app), None);
+        app.input.key(Scancode::X, true);
+        assert_ne!(app.input.buttons().0 .0, 0);
+        let _ = std::fs::remove_file(&battery);
+        focus_lost(&mut app);
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        assert_eq!(app.input.buttons().0 .0, 0);
+        assert!(battery.exists());
+        assert_eq!(app.message, None);
+        // With it on, the pause is what does both, so nothing happens here
+        // but the asking.
+        app.settings.pause_on_focus_loss = true;
+        app.input.key(Scancode::X, true);
+        focus_lost(&mut app);
+        assert_eq!(std::mem::take(&mut app.actions), vec![Action::Pause]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
