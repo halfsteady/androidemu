@@ -87,6 +87,14 @@ for review in Publishing overview"). What is still missing is graphics:
 | Privacy policy URL | **done** | `https://emulia.website/privacy.html` |
 | Data safety form | not answered | answers in the checklist below |
 
+**Production was attempted on 2026-09-12 and refused.** Tagging `v0.2.6` with
+`PLAY_PRODUCTION_ENABLED=true` uploaded the AAB successfully and then failed to
+commit the edit with `Precondition check failed.` — the API's way of saying the
+app is not eligible for the track. The three rows above marked "not uploaded" /
+"not captured", plus the Data safety form, are what that error is made of. The
+release went to internal testing instead; see
+[docs/RELEASING.md](RELEASING.md#publishing-to-play-from-ci).
+
 Both graphics are built and on the `/stuff` shelf. They cannot be uploaded from
 a script: the console has no `<input type=file>` in its DOM and opens a native
 picker instead, so those three rows are a human at a keyboard.

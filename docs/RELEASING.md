@@ -64,12 +64,31 @@ and re-running the one job is cheap. It downloads the same `.aab` the build job
 signed and verified, so Play and the GitHub Release get byte-identical files.
 
 **Production is off.** Emulia is still a Draft app: production is Inactive and
-the setup checklist is 8/11, with the privacy policy and the Data safety form
-outstanding. The job exists and is wired, but it is gated on a repository
-*variable*. Switch it on with `gh variable set PLAY_PRODUCTION_ENABLED --body
-true`, and grant the service account *Release to production* in the same sitting.
-`environment: play-production` is where an approval gate goes — add required
-reviewers to that environment and a production upload waits for a click.
+the setup checklist is 8/11, with the Data safety form outstanding and the app
+icon, feature graphic and phone screenshots not yet uploaded. The job exists and
+is wired, but it is gated on a repository *variable*. Switch it on with `gh
+variable set PLAY_PRODUCTION_ENABLED --body true`, and grant the service account
+*Release to production* in the same sitting. `environment: play-production` is
+where an approval gate goes — add required reviewers to that environment and a
+production upload waits for a click.
+
+**This was tried on 2026-09-12 and Play refused it**, which is worth recording
+because the build side was blameless. With the variable set to `true`, `v0.2.6`
+built, signed and verified, and the AAB reached Play — `Creating a new Edit`,
+`Validating tracks: 'production'`, `Successfully uploaded 1 artifacts` — and then
+committing the edit failed with **`Precondition check failed.`** That error is
+the app being ineligible for the track, not a credential or a version code: the
+same AAB, at the same version code, was accepted on internal testing minutes
+later, so the abandoned edit burned nothing. Finishing the console checklist is
+the only thing that changes this outcome, and no amount of workflow will
+substitute for it.
+
+Note the shape of the failure: with production enabled, a stable tag selects
+*only* the production job, so the rejection left `v0.2.6` on no Play track at all
+— the same stranding that [PR #5](https://github.com/bsteinfeld/androidemu/pull/5)
+fixed for the disabled case, reappearing on the enabled path. It was recovered
+with `play-internal.yml`. Until the checklist is done the variable stays `false`;
+turning it on before then converts every stable release into a manual recovery.
 
 **Without `PLAY_SERVICE_ACCOUNT_JSON` the workflow behaves exactly as it did
 before**, printing a notice and skipping the upload. Setting it is what turns
