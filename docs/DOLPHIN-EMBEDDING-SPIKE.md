@@ -63,9 +63,11 @@ arm64 fixture, not all games or platforms.
 
 The host supplies start/pump/stop calls. Escape and Back to shelf stop Dolphin,
 shut down its core/controllers, then remove its native view. Resizing adjusts
-the view and requests a Dolphin surface resize. These interactive paths and
-keyboard control are pending manual qualification because macOS input automation
-is unavailable. The user was asked to test Return, resizing and Back to shelf.
+the view and requests a Dolphin surface resize. The user reported that the requested Return/input, resize and Back to shelf
+check looked good. A follow-up window capture confirmed the Emulia shelf was
+visible again in the same process, with the embedded rendering view removed.
+This is one manual smoke check; repeated sessions and failure recovery remain
+unqualified. macOS input automation is unavailable.
 
 The prototype builds only when explicitly requested; default application and
 packaging behavior retain the external Dolphin launcher. A fresh temporary
@@ -90,7 +92,7 @@ was checked through the actual source-built bridge and screenshots. The build sc
 Cargo output, a copied Sys resource directory, and successful ad-hoc bundle
 signature verification.
 
-Next acceptance work: embedded keyboard/gamepad input, resize/back/close and
+Next acceptance work: extended embedded input/gamepad mapping, window close and
 repeat-launch lifecycle, saved-progress reopening, longer play, and equivalent
 Linux/Android native surfaces. Production integration also needs deliberate
 profile ownership, user-visible error handling, build/dependency packaging and

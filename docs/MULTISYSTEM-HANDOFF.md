@@ -121,7 +121,9 @@ results do not qualify tablet performance or audio.
 
 The opt-in `dolphin-embed-probe` Cargo feature renders source-built Dolphin 2606a
 Metal output into a native child view inside the existing SDL/egui Emulia window.
-Animal Crossing's title showed 100% speed/~60 FPS. Default builds retain the
+Animal Crossing's title showed 100% speed/~60 FPS. The user then reported the
+Return/input, resize and Back to shelf check looked good; a follow-up capture
+confirmed the shelf returned in the same process. Default builds retain the
 external launcher. No production Android code is changed. The experiment's
 source pin, build commands, profile isolation, checks and remaining interactive
 acceptance are in [DOLPHIN-EMBEDDING-SPIKE.md](DOLPHIN-EMBEDDING-SPIKE.md).
