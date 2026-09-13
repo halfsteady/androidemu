@@ -107,7 +107,8 @@ already-running Dolphin is not detected; wrappers that detach are not qualified.
 Closing Emulia intentionally leaves Dolphin running. The launch currently
 raises the shelf after child exit, not merely after switching focus back.
 
-Linux Dolphin and extended Wii gameplay remain pending. Android launching remains
+Linux Dolphin and extended Wii gameplay remain pending. The separate Android APK boot and opt-in macOS embedding experiment are recorded
+in [DOLPHIN-EMBEDDING-SPIKE.md](DOLPHIN-EMBEDDING-SPIKE.md). Android launch integration remains
 a later milestone; physical-tablet validation is deferred per the user. GitHub
 Actions is blocked before job startup by account billing/spending limits; local
 tests are not a substitute for the pending platform matrix.

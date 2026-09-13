@@ -110,6 +110,22 @@ while paused. Regression checks cover clicking the handle in both states and
 freezing/resuming frames for both cores. All 140 desktop tests and strict Clippy
 pass on macOS.
 
+## Android Dolphin and macOS embedding experiment
+
+The user authorized Android boot testing and a macOS in-window prototype;
+Dolphin rewind/fast-forward are not required. Official Dolphin 2606a now boots
+Animal Crossing on the API 35 ARM64 AVD through Android's document picker.
+Touch Start advances to the initial conversation. Software and host GPU modes
+rendered, with large performance variation and virtual-driver warnings; these
+results do not qualify tablet performance or audio.
+
+The opt-in `dolphin-embed-probe` Cargo feature renders source-built Dolphin 2606a
+Metal output into a native child view inside the existing SDL/egui Emulia window.
+Animal Crossing's title showed 100% speed/~60 FPS. Default builds retain the
+external launcher. No production Android code is changed. The experiment's
+source pin, build commands, profile isolation, checks and remaining interactive
+acceptance are in [DOLPHIN-EMBEDDING-SPIKE.md](DOLPHIN-EMBEDDING-SPIKE.md).
+
 ## Historical implementation record (superseded where it conflicts above)
 
 

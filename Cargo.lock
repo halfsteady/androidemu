@@ -889,6 +889,7 @@ dependencies = [
  "emulation-runtime",
  "glow",
  "image",
+ "libloading",
  "nes-core",
  "png",
  "rfd",

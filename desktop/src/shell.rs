@@ -1510,7 +1510,25 @@ pub fn run(options: Options) -> Result<(), String> {
             app.report("Full screen didn't work.", &e);
         }
     }
-    if let Some(rom) = &options.rom {
+    #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+    let mut probe = if crate::dolphin_embed_probe::Probe::requested() {
+        let rom = options
+            .rom
+            .as_ref()
+            .ok_or("The Dolphin probe needs a disc path")?;
+        let game = crate::import(&app.library, rom)?;
+        if !game.is_external() {
+            return Err("The Dolphin probe needs a GameCube/Wii disc".into());
+        }
+        Some(crate::dolphin_embed_probe::Probe::start(&window, rom)?)
+    } else {
+        None
+    };
+    #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+    let probe_requested = probe.is_some();
+    #[cfg(not(all(target_os = "macos", feature = "dolphin-embed-probe")))]
+    let probe_requested = false;
+    if let Some(rom) = options.rom.as_ref().filter(|_| !probe_requested) {
         match crate::import(&app.library, rom) {
             Ok(game) => app.actions.push(Action::OpenGame(game)),
             Err(e) => app.report("That game file didn't work.", &e),
@@ -1530,6 +1548,10 @@ pub fn run(options: Options) -> Result<(), String> {
         if poll_external(&mut app) {
             window.raise();
         }
+        #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+        if probe.as_ref().is_some_and(|p| !p.pump()) {
+            probe = None;
+        }
         // 0. The long job whose scrim is now on screen. Run through `apply`
         // rather than `act`, because this is what the waiting was for.
         if scrim_painted {
@@ -1540,11 +1562,33 @@ pub fn run(options: Options) -> Result<(), String> {
         // 1. Events.
         for event in events.poll_iter() {
             bridge.handle(&event);
+            #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+            if probe.is_some() {
+                match event {
+                    Event::Quit { .. } => app.quit = true,
+                    Event::KeyDown {
+                        scancode: Some(Scancode::Escape),
+                        repeat: false,
+                        ..
+                    } => probe = None,
+                    _ => {}
+                }
+                continue;
+            }
             handle_event(&mut app, &event, &bridge, &controllers, &joysticks);
         }
         // 2. UI. The pass ends here without painting: the actions it raised
         // have to be applied before the engine runs.
-        let (primitives, mut textures) = bridge.frame(&window, |ui| draw(ui, &mut app, &mut video));
+        let (primitives, mut textures) = bridge.frame(&window, |ui| {
+            #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+            if let Some(p) = &probe {
+                if p.draw(ui) {
+                    probe = None;
+                }
+                return;
+            }
+            draw(ui, &mut app, &mut video)
+        });
         // Taken before the actions below can raise a new scrim: what matters
         // is what the frame just built says, not what this iteration decides
         // afterwards.
@@ -1683,6 +1727,8 @@ pub fn run(options: Options) -> Result<(), String> {
     if let Some(mut session) = app.session.take() {
         session.close();
     }
+    #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+    drop(probe);
     video.destroy();
     bridge.destroy();
     Ok(())
