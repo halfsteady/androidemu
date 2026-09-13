@@ -1,0 +1,15 @@
+# Super Mario World (USA), canonical SHA256 0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b
+# Frames, decimal Buttons mask, output checkpoint name. Fresh power-on; no imported save.
+600 0 title
+1 8 start
+120 0 file-menu
+1 8 select-file
+120 0 player-menu
+1 8 select-player
+2102 0 intro
+12 2 dismiss-intro
+240 0 overworld
+12 64 left
+90 0 level-node
+12 2 enter-level
+180 0 level-start
