@@ -53,7 +53,7 @@ limits. Manual audio/input assessment, real in-game SRAM checkpoint, extended
 compatibility and physical desktop sessions remain acceptance work. Android
 integration from the earlier checkpoint has not yet been restored onto this
 branch; Android itself remains the PR #6 version. Physical tablet validation
-is deferred, not a blocker. Dolphin remains a separate subsequent milestone.
+is deferred, not a blocker. The initial desktop Dolphin launcher is implemented below.
 Do not resurrect the shared Compose desktop: the user's explicit PR #6
 foundation decision supersedes that part of the original feasibility plan.
 
@@ -63,6 +63,31 @@ preserved in stash commit `d59231721ac68868d82dd2a10fb92a2ab6f87b26`, also retai
 and formerly untracked files from its third parent. Do not apply the whole stash
 over PR #6: that would replace its desktop shell. The older branch is
 `multisystem/nes-core-boundary`.
+
+## September 13: external desktop Dolphin launcher
+
+The existing shell now imports GameCube/Wii ISO/GCM references, streams their
+fingerprints without copying discs, and supports relinking moved files. Settings
+selects Dolphin, with macOS app/PATH discovery as defaults. Launch uses a literal
+argument array `--batch --exec <absolute path>` and Dolphin's existing user
+profile. Emulia saves/closes any embedded session before handoff, drains bounded
+stderr diagnostics, prevents concurrent managed launches, and raises its shelf
+when the child exits. Dolphin owns controls, settings and saves; no speed or
+recording overrides are applied. Closing Emulia leaves Dolphin running.
+
+Local macOS checks: 138 desktop tests pass, one commercial-ROM test ignored;
+strict desktop Clippy passes. Updated macOS app/DMG builds, packaged NES/SNES
+smoke checks, bundle signature and DMG integrity checks pass. Existing Linux
+package artifacts predate the Dolphin launcher and need rebuilding. Tests cover reference identity/relink/deletion,
+literal paths, subprocess failures and large stderr output, settings recovery,
+and actual shell handoff from NES through subprocess completion. Dolphin 2606a
+on macOS arm64 rendered the user's Animal Crossing GAFE01 title screen. The user
+confirmed normal speed after diagnostic PNG frame dumping was disabled. The
+`.iso` is an NKit image; production launches retain Dolphin's warning. See
+[DOLPHIN-QUALIFICATION.md](DOLPHIN-QUALIFICATION.md) for exact limits. Real GUI
+return focus, controller/memory-card workflows, Linux Dolphin and Wii gameplay
+remain unqualified; this is not completion of the full compatibility matrix.
+The account billing blocker still prevents remote CI from starting.
 
 ## Historical implementation record (superseded where it conflicts above)
 

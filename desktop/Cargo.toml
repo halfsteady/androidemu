@@ -6,6 +6,7 @@ license = "GPL-3.0-only"
 description = "Portable Emulia desktop player for macOS and Linux"
 
 [dependencies]
+sha2 = "0.10"
 emulation-api = { path = "../emulation-api" }
 emulation-runtime = { path = "../emulation-runtime" }
 snes-adapter = { path = "../cores/snes-adapter" }

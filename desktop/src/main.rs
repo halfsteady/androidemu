@@ -1,4 +1,5 @@
 mod bridge;
+mod dolphin;
 mod engine;
 mod files;
 mod input;
@@ -22,8 +23,10 @@ use std::{
 };
 
 const HELP: &str = "Emulia desktop
-Usage: nes-desktop [rom.nes|rom.sfc|rom.smc] [--data-dir <directory>] [--mute] [--frames <count>]
-With no ROM the shelf opens. A ROM path is added to the shelf and opened.
+Usage: nes-desktop [game.nes|game.sfc|game.smc|game.iso|game.gcm] [--data-dir <directory>] [--mute] [--frames <count>]
+With no game the shelf opens. A game path is added to the shelf and opened.
+GameCube/Wii ISO/GCM images open in separately installed Dolphin, which owns controls and saves.
+The controls below and --frames apply to embedded NES/SNES games.
 Arrows: move   Z: B   X: A   Enter: Start   Right Shift: Select
 SNES: A key = Y, S key = X, Q/W = L/R; controller shoulders play L/R, triggers control time
 Escape or Space: pause menu   F11: full screen   F5 / F8: save / load slot 1
@@ -90,6 +93,15 @@ fn options(mut args: impl Iterator<Item = OsString>) -> Result<Option<Options>, 
 
 /// Read, validate and shelve a ROM file. The same ROM twice is one game.
 pub fn import(library: &Library, path: &Path) -> Result<Game, String> {
+    if path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("iso") || s.eq_ignore_ascii_case("gcm"))
+    {
+        let disc = dolphin::Disc::inspect(path)?;
+        let title = path.file_stem().unwrap_or_default().to_string_lossy();
+        return library.add_disc(&title, &disc);
+    }
     let (title, bytes) = library::read_import(path)?;
     let engine = engine::Engine::new(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     library.add(&engine.id(), &title, &bytes)
@@ -118,6 +130,9 @@ fn headless(options: &Options, frames: u64) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", options.data_dir.display()))?;
     let library = Library::open(&options.data_dir)?;
     let game = import(&library, rom)?;
+    if game.is_external() {
+        return Err("--frames is only available for NES and SNES games".into());
+    }
     let sdl = sdl2::init()?;
     let audio = if options.mute {
         None

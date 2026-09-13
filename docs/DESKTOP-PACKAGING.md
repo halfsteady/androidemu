@@ -1,7 +1,8 @@
 # Native desktop packages
 
 These commands package PR #6's Rust/SDL/egui shell, including the existing NES
-core and the jgenesis SNES adapter. No Java runtime or Android SDK is needed.
+core, the jgenesis SNES adapter and the external Dolphin launcher. Dolphin must
+be installed separately and is not included in these packages. No Java runtime or Android SDK is needed.
 Run them from a checkout using the pinned Rust toolchain, Python 3.11+, CMake
 and the platform dependencies in [DESKTOP.md](DESKTOP.md).
 
@@ -14,7 +15,7 @@ open target/packages/Emulia.app
 ```
 
 The app contains the native executable, the established Emulia icon, a bundle
-identifier, cartridge document types, and license/source notices. The DMG has
+identifier, game image document types, and license/source notices. The DMG has
 an Applications shortcut. Builds use the host architecture (Apple Silicon or
 Intel). Local packages are ad-hoc signed; Developer ID signing and notarization
 remain release work. The app is not a universal binary.

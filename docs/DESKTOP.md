@@ -48,6 +48,28 @@ reopening. It does not claim enhancement-chip compatibility or an actual in-game
 save checkpoint. See [native packaging](DESKTOP-PACKAGING.md) for macOS app/DMG
 and Debian/RPM build paths.
 
+## GameCube and Wii through Dolphin
+
+Import an `.iso` or `.gcm` from the shelf or command line, then choose **Play in
+Dolphin**. Install Dolphin separately; Emulia finds `/Applications/Dolphin.app`,
+`~/Applications/Dolphin.app`, or `dolphin-emu` on PATH. Settings lets you choose a
+specific application or executable. Dolphin uses its existing user profile and
+owns gameplay, controller configuration, memory cards, Wii data and save states.
+Emulia does not enable recording or override Dolphin's speed settings.
+
+Disc imports store a reference and a streaming SHA-256 fingerprint, without
+copying the disc into Emulia. If it moves, use **Relink disc image** in its shelf
+menu; the replacement must match the original fingerprint. Forgetting the entry
+leaves the source image intact. RVZ, WBFS and other containers are not supported
+by this initial importer. NKit ISO images retain Dolphin's compatibility warning.
+
+Launching saves and closes the embedded game first. The shelf tracks the child
+process, reports failures, and raises Emulia after it exits. Another launch is
+blocked while that child is running; unrelated Dolphin instances are not tracked.
+Closing Emulia leaves Dolphin running. Launch order is recorded, but external
+playtime is not inferred from process lifetime. See
+[Dolphin qualification](DOLPHIN-QUALIFICATION.md) for tested behavior and limits.
+
 ## Build
 
 Use the Rust version pinned in `rust-toolchain.toml`, a C/C++ compiler and CMake. No Android SDK, NDK, Java or

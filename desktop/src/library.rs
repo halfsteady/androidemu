@@ -27,6 +27,9 @@ pub struct Game {
 }
 
 impl Game {
+    pub fn is_external(&self) -> bool {
+        self.id.starts_with("dolphin-")
+    }
     pub fn audio_channels(&self) -> u8 {
         if self.id.starts_with("snes-") {
             2
@@ -152,6 +155,44 @@ impl Library {
         games.push(game.clone());
         self.write(&games)?;
         Ok(game)
+    }
+
+    pub fn add_disc(&self, title: &str, disc: &crate::dolphin::Disc) -> Result<Game, String> {
+        let id = disc.id();
+        let mut games = self.read()?;
+        if let Some(game) = games.iter().find(|g| g.id == id) {
+            return Ok(game.clone());
+        }
+        let game = Game {
+            id: id.clone(),
+            title: title.into(),
+            added: now_millis(),
+            played: 0,
+            seconds: 0,
+            archived: false,
+        };
+        write_atomic(
+            &self.folder(&id).join("disc.json"),
+            &serde_json::to_vec_pretty(disc).map_err(|e| e.to_string())?,
+        )?;
+        games.push(game.clone());
+        self.write(&games)?;
+        Ok(game)
+    }
+    pub fn disc(&self, id: &str) -> Result<crate::dolphin::Disc, String> {
+        let path = self.directory(id).join("disc.json");
+        serde_json::from_slice(&fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?)
+            .map_err(|e| e.to_string())
+    }
+    pub fn relink_disc(&self, id: &str, path: &Path) -> Result<(), String> {
+        let disc = crate::dolphin::Disc::inspect(path)?;
+        if disc.id() != id {
+            return Err("That image is different from this library entry".into());
+        }
+        write_atomic(
+            &self.directory(id).join("disc.json"),
+            &serde_json::to_vec_pretty(&disc).map_err(|e| e.to_string())?,
+        )
     }
 
     fn update(&self, id: &str, change: impl FnOnce(&mut Game)) -> Result<(), String> {

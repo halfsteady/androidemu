@@ -52,7 +52,7 @@ fn panels(ctx: &egui::Context, app: &mut App) {
 /// Draws the sample through the real pipeline and keeps the result, when
 /// something has changed that it would look different for.
 fn refresh_preview(ctx: &egui::Context, app: &mut App, video: &mut Video) {
-    if !app.preview_dirty {
+    if !app.preview_dirty || app.external.is_some() {
         return;
     }
     let source = app.sample_source();
@@ -116,94 +116,104 @@ fn settings(ctx: &egui::Context, app: &mut App) {
     let audio_ms = app.audio_ms;
     let has_file = app.has_palette_file;
     widgets::panel(ctx, "settings", "Settings", None, false, |ui| {
-        let width = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, width * 0.75), Sense::hover());
-        match &app.preview {
-            Some(texture) => {
-                ui.painter().image(
-                    texture.id(),
-                    rect,
-                    Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
+        if app.external.is_none() {
+            let width = ui.available_width();
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, width * 0.75), Sense::hover());
+            match &app.preview {
+                Some(texture) => {
+                    ui.painter().image(
+                        texture.id(),
+                        rect,
+                        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+                None => {
+                    ui.painter().rect_filled(
+                        rect,
+                        egui::CornerRadius::same(CORNER_MEDIUM as u8),
+                        WELL,
+                    );
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        PREPARING,
+                        egui::FontId::proportional(14.0),
+                        ON_SURFACE_VARIANT,
+                    );
+                }
             }
-            None => {
-                ui.painter()
-                    .rect_filled(rect, egui::CornerRadius::same(CORNER_MEDIUM as u8), WELL);
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    PREPARING,
-                    egui::FontId::proportional(14.0),
-                    ON_SURFACE_VARIANT,
-                );
-            }
-        }
 
-        widgets::section(ui, "Shape");
-        if let Some(a) =
-            widgets::choice_row(ui, "shape", &Aspect::ALL, settings.aspect, Aspect::label)
-        {
-            app.actions.push(Action::SetAspect(a));
-        }
-        widgets::note(ui, "Pixel-perfect drops to the next whole multiple");
-
-        widgets::section(ui, "Look");
-        if let Some(l) = widgets::choice_row(ui, "look", &Look::ALL, settings.look, Look::label) {
-            app.actions.push(Action::SetLook(l));
-        }
-        widgets::note(ui, settings.look.note());
-
-        if !app.session.as_ref().is_some_and(|s| s.engine.is_snes()) {
-            widgets::section(ui, "Colours");
-            if let Some(p) = widgets::choice_row(
-                ui,
-                "colours",
-                &PaletteChoice::ALL,
-                settings.palette,
-                PaletteChoice::label,
-            ) {
-                // Choosing a file with no file imported asks for one rather than
-                // quietly selecting a palette that would fall back to Standard.
-                app.actions.push(if p == PaletteChoice::File && !has_file {
-                    Action::ImportPalette
-                } else {
-                    Action::SetPalette(p)
-                });
-            }
-            widgets::note(ui, settings.palette.note());
-            if settings.palette == PaletteChoice::File
-                && widgets::value_row(ui, "Palette file", "Load a different .pal file", "Replace")
-                    .clicked()
+            widgets::section(ui, "Shape");
+            if let Some(a) =
+                widgets::choice_row(ui, "shape", &Aspect::ALL, settings.aspect, Aspect::label)
             {
-                app.actions.push(Action::ImportPalette);
+                app.actions.push(Action::SetAspect(a));
+            }
+            widgets::note(ui, "Pixel-perfect drops to the next whole multiple");
+
+            widgets::section(ui, "Look");
+            if let Some(l) = widgets::choice_row(ui, "look", &Look::ALL, settings.look, Look::label)
+            {
+                app.actions.push(Action::SetLook(l));
+            }
+            widgets::note(ui, settings.look.note());
+
+            if !app.session.as_ref().is_some_and(|s| s.engine.is_snes()) {
+                widgets::section(ui, "Colours");
+                if let Some(p) = widgets::choice_row(
+                    ui,
+                    "colours",
+                    &PaletteChoice::ALL,
+                    settings.palette,
+                    PaletteChoice::label,
+                ) {
+                    // Choosing a file with no file imported asks for one rather than
+                    // quietly selecting a palette that would fall back to Standard.
+                    app.actions.push(if p == PaletteChoice::File && !has_file {
+                        Action::ImportPalette
+                    } else {
+                        Action::SetPalette(p)
+                    });
+                }
+                widgets::note(ui, settings.palette.note());
+                if settings.palette == PaletteChoice::File
+                    && widgets::value_row(
+                        ui,
+                        "Palette file",
+                        "Load a different .pal file",
+                        "Replace",
+                    )
+                    .clicked()
+                {
+                    app.actions.push(Action::ImportPalette);
+                }
+
+                widgets::section(ui, "Picture");
+                let mut trim = settings.trim_edges;
+                if widgets::switch_row(
+                    ui,
+                    "Trim the edges",
+                    "Hides the 8 rows a television lost to overscan",
+                    &mut trim,
+                ) {
+                    app.actions.push(Action::SetTrim(trim));
+                }
             }
 
-            widgets::section(ui, "Picture");
-            let mut trim = settings.trim_edges;
+            widgets::section(ui, "Play");
+            let mut pause = settings.pause_on_focus_loss;
             if widgets::switch_row(
                 ui,
-                "Trim the edges",
-                "Hides the 8 rows a television lost to overscan",
-                &mut trim,
+                "Pause when the window loses focus",
+                "Keeps progress safe when you switch away",
+                &mut pause,
             ) {
-                app.actions.push(Action::SetTrim(trim));
+                app.actions.push(Action::SetPauseOnFocusLoss(pause));
             }
-        }
 
-        widgets::section(ui, "Play");
-        let mut pause = settings.pause_on_focus_loss;
-        if widgets::switch_row(
-            ui,
-            "Pause when the window loses focus",
-            "Keeps progress safe when you switch away",
-            &mut pause,
-        ) {
-            app.actions.push(Action::SetPauseOnFocusLoss(pause));
-        }
-
-        widgets::section(ui, "Controls");
-        if widgets::value_row(
+            widgets::section(ui, "Controls");
+            if widgets::value_row(
             ui,
             "Controller buttons",
             if app.session.as_ref().is_some_and(|s| s.engine.is_snes()) {
@@ -216,6 +226,13 @@ fn settings(ctx: &egui::Context, app: &mut App) {
         .clicked()
         {
             app.actions.push(Action::StartWizard);
+        }
+        }
+
+        widgets::section(ui, "Dolphin");
+        widgets::note(ui, "Dolphin runs GameCube and Wii games in its own window, using its existing controls, settings and saves.");
+        if widgets::value_row(ui, "Dolphin application", &app.dolphin_label, "Choose").clicked() {
+            app.actions.push(Action::ChooseDolphin);
         }
 
         widgets::section(ui, "About");
@@ -330,7 +347,8 @@ mod tests {
     use std::path::PathBuf;
 
     /// The window every one of these is drawn in unless it says otherwise.
-    const WINDOW: Vec2 = Vec2::new(1024.0, 1800.0);
+    // Keep all preference rows visible to the click harness, including Dolphin.
+    const WINDOW: Vec2 = Vec2::new(1024.0, 2100.0);
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("emulia-{name}-{}", std::process::id()));

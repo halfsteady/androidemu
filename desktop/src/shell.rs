@@ -55,6 +55,8 @@ pub const PALETTE_FELL_BACK: &str =
 /// value, passed to the panels by `&mut`, so there is no state hiding in the
 /// widgets between frames.
 pub struct App {
+    pub external: Option<crate::dolphin::Running>,
+    pub dolphin_label: String,
     pub data_dir: PathBuf,
     pub library: Library,
     pub settings: Settings,
@@ -290,6 +292,8 @@ impl App {
             settings_dirty: false,
             input: Input::new(Profiles::load(data_dir).0),
             session: None,
+            external: None,
+            dolphin_label: "Automatic discovery".into(),
             panel: Panel::None,
             panel_before: Panel::None,
             dialog: None,
@@ -640,7 +644,69 @@ fn close_session(app: &mut App) {
     app.input.clear();
 }
 
+fn poll_external(app: &mut App) -> bool {
+    let exited = app.external.as_mut().and_then(|run| match run.poll() {
+        Ok(None) => None,
+        other => Some(other),
+    });
+    let Some(result) = exited else {
+        return false;
+    };
+    if let Some(run) = app.external.take() {
+        match result {
+            Ok(Some(status)) if status.success() => {
+                app.message = Some(format!("{}: Dolphin closed.", run.title))
+            }
+            other => app.report(
+                "Dolphin stopped unexpectedly. See the problem log.",
+                &format!("{other:?}\n{}", run.diagnostics()),
+            ),
+        }
+    }
+    true
+}
+
 fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
+    if app.external.is_some() {
+        app.report(
+            "Close Dolphin before opening another game.",
+            "The launched Dolphin process is still running.",
+        );
+        return;
+    }
+    if game.is_external() {
+        let result = (|| -> Result<crate::dolphin::Running, String> {
+            let profile = crate::dolphin::Profile::load(&app.data_dir)?;
+            let executable = profile.resolve()?;
+            let disc = app.library.disc(&game.id)?;
+            if !disc.path.is_file() {
+                return Err(format!(
+                    "{} is missing. Relink the disc from its shelf menu.",
+                    disc.path.display()
+                ));
+            }
+            if let Some(session) = &mut app.session {
+                session.save(Slot::Auto)?;
+            }
+            close_session(app);
+            crate::dolphin::Running::launch(&executable, &disc, &game.title)
+        })();
+        match result {
+            Ok(running) => {
+                app.external = Some(running);
+                if let Err(e) = app.library.record(&game.id, 0) {
+                    app.library.log_problem(&game.title, &e);
+                }
+                app.message =
+                    Some("Opened in Dolphin. Controls and saves are managed there.".into());
+            }
+            Err(e) => app.report(
+                "Dolphin couldn't start. Check Settings or relink the disc.",
+                &e,
+            ),
+        }
+        return;
+    }
     // Whatever is open is being put away, not abandoned: its autosave and its
     // playtime are written before the window belongs to something else. A
     // .nes dropped on a running game used to cost both.
@@ -697,6 +763,7 @@ fn is_long(action: &Action) -> bool {
     matches!(
         action,
         Action::ImportFrom(_)
+            | Action::RelinkDisc(_)
             | Action::ChooseArtFrom(..)
             | Action::SaveConfirmed(_)
             | Action::Screenshot
@@ -770,9 +837,43 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         // drawing the window: the loop stops for as long as the dialog is up
         // and picks up again with the answer. Nothing is running behind it —
         // the shelf is the only screen that raises either of these.
+        Action::ChooseDolphin => {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title("Choose Dolphin.app or the Dolphin executable")
+                .pick_file()
+            {
+                match crate::dolphin::executable(&path).and_then(|_| {
+                    crate::dolphin::Profile {
+                        executable: Some(path),
+                    }
+                    .save(&app.data_dir)
+                }) {
+                    Ok(()) => {
+                        app.dolphin_label = crate::dolphin::Profile::load(&app.data_dir)
+                            .and_then(|p| p.resolve())
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|e| e);
+                        app.message = Some("Dolphin application saved.".into());
+                    }
+                    Err(e) => app.report("That Dolphin application couldn't be used.", &e),
+                }
+            }
+        }
+        Action::RelinkDisc(game) => {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Disc image", &["iso", "gcm"])
+                .set_title("Locate this game's disc image")
+                .pick_file()
+            {
+                match app.library.relink_disc(&game.id, &path) {
+                    Ok(()) => app.message = Some("Disc location updated.".into()),
+                    Err(e) => app.report("That disc couldn't be linked.", &e),
+                }
+            }
+        }
         Action::Import => {
             let picked = rfd::FileDialog::new()
-                .add_filter("NES / SNES game", &["nes", "sfc", "smc"])
+                .add_filter("Game image", &["nes", "sfc", "smc", "iso", "gcm"])
                 .set_title("Add a game")
                 .pick_file();
             if let Some(path) = picked {
@@ -1009,6 +1110,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         }
         Action::BackToShelf => close_session(app),
         Action::OpenSettings => {
+            app.dolphin_label = crate::dolphin::Profile::load(&app.data_dir)
+                .and_then(|p| p.resolve())
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|e| e);
             app.panel = Panel::Settings;
             // Both halves of the preview — the settings and the frame it is
             // drawn from — can have moved since the panel was last up, and so
@@ -1323,6 +1428,8 @@ pub fn run(options: Options) -> Result<(), String> {
         settings_dirty: false,
         input: Input::new(profiles),
         session: None,
+        external: None,
+        dolphin_label: "Automatic discovery".into(),
         panel: Panel::None,
         panel_before: Panel::None,
         dialog: None,
@@ -1387,6 +1494,9 @@ pub fn run(options: Options) -> Result<(), String> {
     let mut scrim_painted = false;
     while !app.quit {
         let started = Instant::now();
+        if poll_external(&mut app) {
+            window.raise();
+        }
         // 0. The long job whose scrim is now on screen. Run through `apply`
         // rather than `act`, because this is what the waiting was for.
         if scrim_painted {
@@ -1572,6 +1682,53 @@ mod tests {
     /// and the way out of it has to lead back to the one you came in by.
     /// Everything else over a game goes back to the pause panel, and anything
     /// over the shelf goes back to the shelf.
+    #[test]
+    fn dolphin_handoff_saves_the_embedded_game_and_returns_to_the_shelf() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("dolphin-handoff");
+        let mut app = App::blank(&dir);
+        let rom = crate::engine::tests::test_rom();
+        let nes = crate::engine::Engine::new(&rom).unwrap();
+        let nes_game = app.library.add(&nes.id(), "NES", &rom).unwrap();
+        open_game(&mut app, nes_game.clone(), None);
+        let state = app.session.as_ref().unwrap().engine.save_state().unwrap();
+        let disc_path = dir.join("disc.iso");
+        let mut header = vec![0; 1024];
+        header[28..32].copy_from_slice(&[0xc2, 0x33, 0x9f, 0x3d]);
+        std::fs::write(&disc_path, header).unwrap();
+        let game = crate::import(&app.library, &disc_path).unwrap();
+        let executable = dir.join("fake-dolphin");
+        std::fs::write(&executable, "#!/bin/sh\nsleep 0.1\nexit 0\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::dolphin::Profile {
+            executable: Some(executable),
+        }
+        .save(&dir)
+        .unwrap();
+        open_game(&mut app, game.clone(), None);
+        assert!(app.session.is_none());
+        assert!(app.external.is_some());
+        assert_eq!(app.panel, Panel::None);
+        assert_eq!(
+            std::fs::read(app.library.state_path(&nes_game.id, Slot::Auto)).unwrap(),
+            state
+        );
+        open_game(&mut app, nes_game, None);
+        assert!(
+            app.session.is_none(),
+            "two emulators must not run audio together"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !poll_external(&mut app) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.external.is_none());
+        assert_eq!(app.library.find(&game.id).unwrap().seconds, 0);
+        assert!(app.message.as_deref().unwrap().contains("Dolphin closed"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn closing_a_panel_goes_back_to_wherever_it_was_opened_from() {
         let dir = temp_dir("shell-close");

@@ -41,6 +41,8 @@ pub enum Dialog {
 /// them after the frame, so the panels never touch the engine or the disk.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    ChooseDolphin,
+    RelinkDisc(Game),
     Import,
     ImportFrom(PathBuf),
     OpenGame(Game),

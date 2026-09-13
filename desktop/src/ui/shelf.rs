@@ -44,6 +44,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 .inner_margin(if tight { 14.0 } else { 24.0 }),
         )
         .show(ui, |ui| {
+            if let Some(run) = &app.external {
+                widgets::note(ui, &format!("{} is open in Dolphin. Close its game window to return; controls and saves stay in Dolphin.", run.title));
+            }
             // The index is read once a frame, not once a widget: the shelf and
             // the archive are the same file.
             let games = if app.show_archive {
@@ -270,6 +273,9 @@ fn cover(ui: &mut egui::Ui, app: &mut App, game: &Game, rect: Rect) {
 
 /// Where you got to. A game with an autosave is one you are in the middle of.
 fn status(app: &App, game: &Game) -> &'static str {
+    if game.is_external() {
+        return "Play in Dolphin";
+    }
     if app.library.has_autosave(&game.id) {
         "Resume"
     } else {
@@ -327,6 +333,9 @@ fn menu(ui: &mut egui::Ui, app: &mut App, game: &Game) {
                     app.actions.push(Action::DeleteRequested(game.clone()));
                 }
                 return;
+            }
+            if game.is_external() && item(ui, "Relink disc image", false).clicked() {
+                app.actions.push(Action::RelinkDisc(game.clone()));
             }
             if item(ui, "Choose box art", false).clicked() {
                 app.actions.push(Action::ChooseArt(game.clone()));

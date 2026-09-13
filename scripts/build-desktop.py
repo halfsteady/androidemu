@@ -72,8 +72,8 @@ def mac(binary, stage):
                 CFBundleIdentifier=APP_ID, CFBundlePackageType='APPL', CFBundleIconFile='Emulia.icns',
                 CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION, NSHighResolutionCapable=True,
                 LSMinimumSystemVersion='11.0', NSHumanReadableCopyright='Emulia and contributors; GPL-3.0-only',
-                CFBundleDocumentTypes=[dict(CFBundleTypeName='NES / SNES cartridge', CFBundleTypeRole='Viewer',
-                                           LSHandlerRank='Alternate', CFBundleTypeExtensions=['nes', 'sfc', 'smc'])])
+                CFBundleDocumentTypes=[dict(CFBundleTypeName='Emulia game image', CFBundleTypeRole='Viewer',
+                                           LSHandlerRank='Alternate', CFBundleTypeExtensions=['nes', 'sfc', 'smc', 'iso', 'gcm'])])
     (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
     run('codesign', '--force', '--sign', '-', app)
     run('codesign', '--verify', '--deep', '--strict', app)
