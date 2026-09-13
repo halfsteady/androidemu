@@ -26,6 +26,9 @@ bundled, so this is not a portable app distribution.
 The experiment requires both Cargo feature `dolphin-embed-probe` and
 `EMULIA_DOLPHIN_PROBE_LIB` pointing at its native library. `run.py` supplies the
 latter. In this mode GameCube/Wii shelf launches also use the embedded host.
+A feature-enabled app also discovers a backend bundled in `Contents/Frameworks`
+when launched from Finder. Use `--release --desktop-app OUTPUT` to package a local
+`Emulia.app`; see `docs/DESKTOP-PACKAGING.md`.
 Default builds and packages retain the external launcher. Close this probe app
 before rebuilding it; the builder refuses to overwrite a running executable.
 

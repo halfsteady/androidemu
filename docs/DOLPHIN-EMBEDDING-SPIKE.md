@@ -119,7 +119,8 @@ Emulia's bars and menus, and requires held clicks to be released after a pause.
 Keyboard/gamepad pointer movement takes over until the mouse moves again.
 New Wii entries default to Remote + Nunchuk; existing per-game choices persist.
 Unit tests cover mouse direction, bounds, click clearing and controller handoff;
-manual mouse tracking/click feel still needs user verification.
+the user accepted the corrected Mario Kart Wii mouse alignment ("Nice much better").
+Physical gamepad feel and broader game compatibility remain unqualified.
 
 The native bridge drains AppKit work before joining Dolphin during shutdown.
 This fixes the observed boot-cancellation wait between Quartz device setup and

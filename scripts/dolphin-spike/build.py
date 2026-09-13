@@ -32,6 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work-dir', type=Path, default=ROOT / 'target/dolphin-spike')
     parser.add_argument('--jobs', type=int, default=6)
+    parser.add_argument('--release', action='store_true', help='Build an optimized host without the debug qualification harness')
+    parser.add_argument('--desktop-app', type=Path, help='Also package a Finder-launchable Emulia.app in this output directory')
     args = parser.parse_args()
     if sys.platform != 'darwin':
         parser.error('This rendering prototype currently supports macOS only')
@@ -41,8 +43,12 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     executable = work / 'EmuliaDolphinProbe.app/Contents/MacOS/Emulia'
     processes = subprocess.check_output(['ps', '-axo', 'command='], text=True).splitlines()
-    if any(line.startswith(str(executable) + ' ') or line == str(executable) for line in processes):
-        raise RuntimeError('Close this probe app before rebuilding it')
+    executables = [executable]
+    if args.desktop_app:
+        executables.append(args.desktop_app.resolve() / 'Emulia.app/Contents/MacOS/Emulia')
+    if any(line.startswith(str(path) + ' ') or line == str(path)
+           for path in executables for line in processes):
+        raise RuntimeError('Close the target app before rebuilding it')
     geometry_test = work / 'pointer-geometry-test'
     run('c++', '-std=c++20', HERE / 'pointer_geometry_test.cpp', '-o', geometry_test)
     run(geometry_test)
@@ -76,13 +82,13 @@ def main():
     # Separate output prevents a prototype build replacing the normal desktop binary.
     rust_target = work / 'rust-target'
     run('cargo', 'build', '--locked', '--config', 'profile.dev.package.sha2.opt-level=3', '--config', 'profile.dev.package.nes-desktop.opt-level=1', '-p', 'nes-desktop', '--features',
-        'dolphin-embed-probe', '--target-dir', rust_target)
+        'dolphin-embed-probe', '--target-dir', rust_target, *(['--release'] if args.release else []))
     app = work / 'EmuliaDolphinProbe.app'
     contents = app / 'Contents'
     (contents / 'MacOS').mkdir(parents=True, exist_ok=True)
     (contents / 'Resources').mkdir(exist_ok=True)
     (contents / 'Frameworks').mkdir(exist_ok=True)
-    shutil.copy2(rust_target / 'debug/nes-desktop', contents / 'MacOS/Emulia')
+    shutil.copy2(rust_target / ('release' if args.release else 'debug') / 'nes-desktop', contents / 'MacOS/Emulia')
     shutil.copy2(build / 'emulia-probe/libemulia_dolphin_probe.dylib',
                  contents / 'Frameworks/libemulia_dolphin_probe.dylib')
     sys_path = contents / 'Resources/Sys'
@@ -101,6 +107,23 @@ def main():
     run('codesign', '--force', '--sign', '-', contents / 'Frameworks/libemulia_dolphin_probe.dylib')
     run('codesign', '--force', '--sign', '-', app)
     run('codesign', '--verify', '--deep', '--strict', app)
+    if args.desktop_app:
+        output = args.desktop_app.resolve()
+        run(sys.executable, ROOT / 'scripts/build-desktop.py', 'app', '--skip-build',
+            '--binary', contents / 'MacOS/Emulia', '--output', output)
+        desktop_app = output / 'Emulia.app'
+        desktop_contents = desktop_app / 'Contents'
+        shutil.copytree(contents / 'Frameworks', desktop_contents / 'Frameworks', dirs_exist_ok=True)
+        shutil.copytree(contents / 'Resources', desktop_contents / 'Resources', dirs_exist_ok=True)
+        # This local native build has not been qualified on older macOS versions.
+        info_path = desktop_contents / 'Info.plist'
+        info = plistlib.loads(info_path.read_bytes())
+        info['LSMinimumSystemVersion'] = subprocess.check_output(
+            ['sw_vers', '-productVersion'], text=True).strip()
+        info_path.write_bytes(plistlib.dumps(info))
+        run('codesign', '--force', '--sign', '-', desktop_app)
+        run('codesign', '--verify', '--deep', '--strict', desktop_app)
+        print(f'Desktop app: {desktop_app}')
     print(f'Probe app: {app}')
     print('Run using scripts/dolphin-spike/run.py --app APP --data-dir DIRECTORY GAME')
 

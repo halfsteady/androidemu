@@ -20,6 +20,22 @@ an Applications shortcut. Builds use the host architecture (Apple Silicon or
 Intel). Local packages are ad-hoc signed; Developer ID signing and notarization
 remain release work. The app is not a universal binary.
 
+### Local app with embedded Dolphin
+
+For the opt-in embedded Dolphin integration, build an optimized, Finder-launchable
+app (including its native backend and resources):
+
+```sh
+python3 scripts/dolphin-spike/build.py --release --desktop-app target/packages-embedded
+ditto target/packages-embedded/Emulia.app /Applications/Emulia.app
+open /Applications/Emulia.app
+```
+
+The installed app uses the regular Emulia library. The development preview's
+separate data directory remains separate. No environment variables are needed;
+the feature-enabled host discovers its bundled backend. This is a local build
+for the current Mac with Homebrew dependencies, not a portable release package.
+
 ## Debian / Ubuntu, GNOME and KDE
 
 ```sh

@@ -58,9 +58,20 @@ pub struct Probe {
 fn cpath(path: &Path) -> Result<CString, String> {
     CString::new(path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())
 }
+fn library_path() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("EMULIA_DOLPHIN_PROBE_LIB") {
+        return Some(path.into());
+    }
+    let executable = std::env::current_exe().ok()?;
+    let bundled = executable
+        .parent()?
+        .parent()?
+        .join("Frameworks/libemulia_dolphin_probe.dylib");
+    bundled.is_file().then_some(bundled)
+}
 impl Probe {
     pub fn requested() -> bool {
-        std::env::var_os("EMULIA_DOLPHIN_PROBE_LIB").is_some()
+        library_path().is_some()
     }
     pub fn start(
         window: &sdl2::video::Window,
@@ -69,7 +80,7 @@ impl Probe {
         controllers: &sdl2::GameControllerSubsystem,
         restore: bool,
     ) -> Result<Self, String> {
-        let dylib = std::env::var_os("EMULIA_DOLPHIN_PROBE_LIB").ok_or("Missing probe library")?;
+        let dylib = library_path().ok_or("Missing probe library")?;
         let disc = app.library.disc(&entry.id)?;
         // Verify the file still belongs to this shelf entry before booting or restoring.
         if crate::dolphin::Disc::inspect(&disc.path)?.id() != entry.id {

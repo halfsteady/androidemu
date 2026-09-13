@@ -163,7 +163,8 @@ Emulia's bars and menus, and requires held clicks to be released after a pause.
 Keyboard/gamepad pointer movement takes over until the mouse moves again.
 New Wii entries default to Remote + Nunchuk; existing per-game choices persist.
 Unit tests cover mouse direction, bounds, click clearing and controller handoff;
-manual mouse tracking/click feel still needs user verification.
+the user accepted the corrected Mario Kart Wii mouse alignment ("Nice much better").
+Physical gamepad feel and broader game compatibility remain unqualified.
 The user's off-center overshoot report led to renderer aspect-ratio compensation
 and measured USA Mario Kart Wii mouse defaults (horizontal 0.75, vertical 0.96).
 Settings now stores independent per-game range overrides. Copied-session captures
