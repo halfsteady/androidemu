@@ -43,7 +43,10 @@ arm64 and Debian 12 arm64; packaged NES/SNES executable smoke checks on macOS ar
 arm64; Debian installation, metadata, actual window/pause/settings rendering
 under Xvfb/Mesa, WM_CLASS and icon; macOS bundle signature and DMG integrity.
 RPM builds, but installation on an RPM distribution is not qualified. CI covers
-Linux/macOS arm64 and x64; remote status must be checked separately.
+Linux/macOS arm64 and x64. Remote jobs on this update did not start: GitHub
+reports failed account payments or an insufficient spending limit. See run
+`34765764588`. The account owner must resolve Billing & plans before remote
+validation can run. PR #7 remains open and has not been merged into PR #6.
 
 See [SNES-SMW-QUALIFICATION.md](SNES-SMW-QUALIFICATION.md) for exact evidence and
 limits. Manual audio/input assessment, real in-game SRAM checkpoint, extended
