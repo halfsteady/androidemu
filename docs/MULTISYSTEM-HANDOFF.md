@@ -91,8 +91,12 @@ Mario Kart Wii (USA) RMCE01 has now also been imported through the packaged
 macOS shell and launched successfully in Dolphin 2606a using an isolated test
 profile. Its title screen showed 100% speed and ~59.9 FPS/VPS with recording
 disabled, and first-run Wii save files were created. The shelf handoff banner
-was visually checked. Race input/audio, save reopening and real window return
-remain pending manual input because macOS input automation is unavailable.
+was visually checked. The user then completed and won a race, reporting smooth play with frame drops
+during loading. A second-race intro capture showed 100% speed and ~59.9 FPS/VPS.
+The hitches have not been attributed to JIT or any other cause by profiling.
+Saved-progress reopening, detailed audio assessment and real window return
+remain pending; Dolphin was still running after that report. macOS input
+automation is unavailable.
 See the qualification document for the fixture fingerprint and exact test flags.
 The account billing blocker still prevents remote CI from starting.
 

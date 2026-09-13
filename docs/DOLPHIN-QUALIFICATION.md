@@ -29,6 +29,7 @@ removes only Emulia's managed metadata, never the referenced disc.
 | Automated launcher / shell | 138 desktop tests passed, 1 optional SNES commercial-ROM test ignored; strict Clippy passed |
 | Updated macOS packages | App/DMG rebuilt; package NES/SNES smoke, bundle signature and DMG integrity checks passed |
 | Wii on macOS | Mario Kart Wii RMCE01 imported through packaged Emulia and reached title screen at 100% speed, ~59.9 FPS/VPS; first-run save files created |
+| Wii race on macOS | User completed and won a race, reporting smooth play with loading frame drops; a subsequent race-intro capture showed 100% speed and ~59.9 FPS/VPS |
 | Linux | Header handling and process logic covered by macOS tests; actual Linux Dolphin gameplay not yet qualified |
 
 The official installer used was
@@ -82,8 +83,16 @@ sustained race benchmark. Dolphin created `rksys.dat`, `banner.bin` and related
 Wii data in the temporary profile. File creation alone does not qualify saved
 progress recovery. At the title's A-button prompt, manual input was requested:
 macOS `CGPreflightPostEventAccess()` returned false. The generated Dolphin
-GameCube keyboard profile maps A to X. Race controls, audio assessment and
-normal window-close/return behavior remain pending that interactive check.
+GameCube keyboard profile maps A to X. The user subsequently reported winning a race with generally smooth play and
+frame drops during loading. A follow-up capture showed the 100cc Mushroom Cup
+second-race introduction (Moo Moo Meadows) at 100% speed, 59.95 FPS and 59.94 VPS.
+This qualifies one manually completed race, not a full compatibility or audio
+assessment. The cause of the loading hitches was not profiled; JIT compilation
+is not established as the cause. Dolphin documents shader-compilation stutter
+in its [Ubershaders explanation](https://dolphin-emu.org/blog/2017/07/30/ubershaders/),
+and the installed NKit warning identifies longer loading as another concern.
+Normal window-close/return behavior and saved-progress reopening remain pending;
+the Dolphin child was still active after the user's race report.
 
 ## Remaining acceptance work
 
@@ -98,7 +107,7 @@ already-running Dolphin is not detected; wrappers that detach are not qualified.
 Closing Emulia intentionally leaves Dolphin running. The launch currently
 raises the shelf after child exit, not merely after switching focus back.
 
-Linux Dolphin and sustained Wii race gameplay remain pending. Android launching remains
+Linux Dolphin and extended Wii gameplay remain pending. Android launching remains
 a later milestone; physical-tablet validation is deferred per the user. GitHub
 Actions is blocked before job startup by account billing/spending limits; local
 tests are not a substitute for the pending platform matrix.
