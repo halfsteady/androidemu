@@ -64,6 +64,7 @@ pub struct App {
     pub input: Input,
     pub session: Option<Session>,
     pub panel: Panel,
+    pub playback_paused: bool,
     /// Where `ClosePanel` returns to when the problem log was opened from
     /// somewhere other than the shelf.
     pub panel_before: Panel,
@@ -134,12 +135,22 @@ impl App {
     /// otherwise whatever the keys and the triggers say. One answer, because
     /// the engine and the pill above it have to agree about it.
     pub fn time_speed(&self) -> i32 {
-        if self.scrub_fraction != 0.0 {
+        if self.playback_paused {
+            0
+        } else if self.scrub_fraction != 0.0 {
             crate::scrub::speed(self.scrub_fraction)
         } else {
             self.input
                 .game_time_speed(self.session.as_ref().is_some_and(|s| s.engine.is_snes()))
         }
+    }
+
+    fn emulation_paused(&self) -> bool {
+        self.playback_paused
+            || self.panel != Panel::None
+            || self.dialog.is_some()
+            || self.busy
+            || self.wizard.is_some()
     }
 
     /// A game is running and nothing is in front of it.
@@ -295,6 +306,7 @@ impl App {
             external: None,
             dolphin_label: "Automatic discovery".into(),
             panel: Panel::None,
+            playback_paused: false,
             panel_before: Panel::None,
             dialog: None,
             show_archive: false,
@@ -632,6 +644,7 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
 /// the shell forgets everything that was only true while it was open. Its own
 /// function so that leaving can be tested without a window.
 fn close_session(app: &mut App) {
+    app.playback_paused = false;
     if let Some(mut session) = app.session.take() {
         session.close();
     }
@@ -714,6 +727,7 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
         open.close();
     }
     app.thumbs.clear();
+    app.playback_paused = false;
     app.scrub_fraction = 0.0;
     app.input.clear();
     let audio = match sdl {
@@ -818,6 +832,37 @@ fn take_pending(app: &mut App) -> Option<Action> {
 fn act(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
     if let Some(now) = defer(app, action) {
         apply(app, now, window, sdl);
+    }
+}
+
+fn pause_game(app: &mut App, menu: bool) {
+    if let Some(session) = &mut app.session {
+        session.paused = true;
+        session.record_playtime();
+        if let Err(e) = session.save(Slot::Auto) {
+            let title = session.game.title.clone();
+            app.report(
+                "Progress couldn't be saved automatically.",
+                &format!("{title}: {e}"),
+            );
+        }
+        app.thumbs.clear();
+        if menu {
+            app.panel = Panel::Pause;
+        }
+        app.input.clear();
+    }
+}
+
+fn toggle_playback(app: &mut App) {
+    if app.session.is_none() {
+        return;
+    }
+    app.playback_paused = !app.playback_paused;
+    app.scrub_fraction = 0.0;
+    app.input.clear();
+    if app.playback_paused {
+        pause_game(app, false);
     }
 }
 
@@ -951,23 +996,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.settings.shelf_list = !app.settings.shelf_list;
             app.settings_dirty = true;
         }
-        Action::Pause => {
-            if let Some(session) = &mut app.session {
-                session.paused = true;
-                session.record_playtime();
-                if let Err(e) = session.save(Slot::Auto) {
-                    let title = session.game.title.clone();
-                    app.report(
-                        "Progress couldn't be saved automatically.",
-                        &format!("{title}: {e}"),
-                    );
-                }
-                app.thumbs.clear();
-                app.panel = Panel::Pause;
-                app.input.clear();
-            }
-        }
+        Action::Pause => pause_game(app, true),
+        Action::TogglePlayback => toggle_playback(app),
         Action::Resume => {
+            app.playback_paused = false;
             app.panel = Panel::None;
             app.message = None;
         }
@@ -1431,6 +1463,7 @@ pub fn run(options: Options) -> Result<(), String> {
         external: None,
         dolphin_label: "Automatic discovery".into(),
         panel: Panel::None,
+        playback_paused: false,
         panel_before: Panel::None,
         dialog: None,
         show_archive: false,
@@ -1527,12 +1560,10 @@ pub fn run(options: Options) -> Result<(), String> {
         let mut trouble = None;
         let mut queued_ms = 0.0;
         let speed = app.time_speed();
+        let paused = app.emulation_paused();
         if let Some(session) = &mut app.session {
             session.scrub = speed;
-            session.paused = app.panel != Panel::None
-                || app.dialog.is_some()
-                || app.busy
-                || app.wizard.is_some();
+            session.paused = paused;
             let (p1, p2) = if session.paused {
                 (emulation_api::Buttons(0), emulation_api::Buttons(0))
             } else {
@@ -1636,7 +1667,8 @@ pub fn run(options: Options) -> Result<(), String> {
             }
         }
         if app.fullscreen && app.session.is_some() {
-            sdl.mouse().show_cursor(Instant::now() < app.chrome_until);
+            sdl.mouse()
+                .show_cursor(app.playback_paused || Instant::now() < app.chrome_until);
         } else {
             sdl.mouse().show_cursor(true);
         }
@@ -1666,6 +1698,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn slider_pause_freezes_both_cores_without_opening_a_panel() {
+        let dir = temp_dir("slider-pause");
+        for rom in [test_rom(), crate::engine::tests::snes_rom(false)] {
+            let mut app = App::blank(&dir);
+            let engine = crate::engine::Engine::new(&rom).unwrap();
+            let game = app.library.add(&engine.id(), "Pause test", &rom).unwrap();
+            open_game(&mut app, game, None);
+            toggle_playback(&mut app);
+            assert_eq!(app.panel, Panel::None);
+            assert!(app.emulation_paused());
+            assert_eq!(app.time_speed(), 0);
+            let paused = app.emulation_paused();
+            let session = app.session.as_mut().unwrap();
+            session.paused = paused;
+            let before = session.engine.save_state().unwrap();
+            for _ in 0..3 {
+                assert_eq!(
+                    session
+                        .advance(emulation_api::Buttons(0), emulation_api::Buttons(0))
+                        .frames,
+                    0
+                );
+            }
+            assert_eq!(session.engine.save_state().unwrap(), before);
+            assert!(app
+                .library
+                .has_autosave(&app.session.as_ref().unwrap().game.id));
+            assert_eq!(escape(&app), Action::Pause);
+            toggle_playback(&mut app);
+            assert!(!app.emulation_paused());
+            let session = app.session.as_mut().unwrap();
+            session.paused = false;
+            assert!(
+                session
+                    .advance(emulation_api::Buttons(0), emulation_api::Buttons(0))
+                    .frames
+                    > 0
+            );
+            pause_game(&mut app, true);
+            assert_eq!(app.panel, Panel::Pause);
+            close_session(&mut app);
+            assert!(!app.playback_paused);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A texture handle to stand in for the preview. Nothing here looks at

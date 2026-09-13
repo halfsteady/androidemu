@@ -14,6 +14,10 @@ settings previewed by the real shader; and two controller ports with a mapping
 wizard. The saves and the folder layout are Android's, file for file. Colour
 emphasis remains a core limitation.
 
+Click the centre pause button on the time slider to freeze NES/SNES gameplay
+without opening a panel; click **Play** there to resume. **Menu** and **Escape**
+open the pause menu.
+
 ## SNES in the existing shell
 
 The same shelf and session now select jgenesis for standard SNES LoROM/HiROM

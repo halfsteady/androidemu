@@ -38,7 +38,7 @@ pub enum ScrubEvent {
     Tapped,
 }
 
-pub fn scrubber(ui: &mut egui::Ui, fraction: f32, width: f32) -> ScrubEvent {
+pub fn scrubber(ui: &mut egui::Ui, fraction: f32, width: f32, paused: bool) -> ScrubEvent {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, HEIGHT), Sense::click_and_drag());
     // Never zero. A track squeezed narrower than its own handle would divide
@@ -46,7 +46,7 @@ pub fn scrubber(ui: &mut egui::Ui, fraction: f32, width: f32) -> ScrubEvent {
     let travel = ((width - HANDLE) / 2.0).max(1.0);
     let centre = rect.center() + Vec2::new(fraction.clamp(-1.0, 1.0) * travel, 0.0);
     let handle = Rect::from_center_size(centre, Vec2::new(HANDLE, HEIGHT - 8.0));
-    let speed = scrub::speed(fraction);
+    let speed = if paused { 0 } else { scrub::speed(fraction) };
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         painter.rect(
@@ -90,7 +90,11 @@ pub fn scrubber(ui: &mut egui::Ui, fraction: f32, width: f32) -> ScrubEvent {
             egui::StrokeKind::Inside,
         );
         let glyph = if speed == 0 {
-            STOPPED.to_string()
+            if paused {
+                "Play".to_string()
+            } else {
+                STOPPED.to_string()
+            }
         } else {
             format!("{}×", speed.abs())
         };
@@ -151,7 +155,7 @@ mod tests {
             ..Default::default()
         };
         let mut event = ScrubEvent::None;
-        ctx.run_ui(input, |ui| event = scrubber(ui, fraction, width))
+        ctx.run_ui(input, |ui| event = scrubber(ui, fraction, width, false))
             .textures_delta
             .clear();
         event

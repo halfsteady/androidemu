@@ -100,6 +100,16 @@ automation is unavailable.
 See the qualification document for the fixture fingerprint and exact test flags.
 The account billing blocker still prevents remote CI from starting.
 
+## Desktop time-slider pause
+
+The time-slider handle now toggles an independent NES/SNES playback pause,
+without opening the pause panel. It displays Play while paused; Menu/Escape
+retain the pause menu and its Resume clears the playback pause. Autosave and
+audio pause behavior are preserved, and full-screen time controls remain visible
+while paused. Regression checks cover clicking the handle in both states and
+freezing/resuming frames for both cores. All 140 desktop tests and strict Clippy
+pass on macOS.
+
 ## Historical implementation record (superseded where it conflicts above)
 
 

@@ -59,6 +59,7 @@ pub enum Action {
     OpenProblems,
     ClosePanel,
     Pause,
+    TogglePlayback,
     Resume,
     OpenSlots,
     SaveRequested(u8),
