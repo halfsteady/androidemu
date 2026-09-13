@@ -25,25 +25,73 @@ bundled, so this is not a portable app distribution.
 
 The experiment requires both Cargo feature `dolphin-embed-probe` and
 `EMULIA_DOLPHIN_PROBE_LIB` pointing at its native library. `run.py` supplies the
-latter. Ordinary shelf launches still use the external launcher. The embedded
-game is chosen on the command line, once per process. Return/Enter is Dolphin's
-default GameCube Start mapping; X is A. The prototype provides Escape and a
-Back to shelf button. No rewind, fast-forward, state-slot UI or controller wizard
-is supplied for this embedded game.
+latter. In this mode GameCube/Wii shelf launches also use the embedded host.
+Default builds and packages retain the external launcher. Close this probe app
+before rebuilding it; the builder refuses to overwrite a running executable.
 
-Each launch creates a fresh temporary Dolphin profile and prints its path. It
-selects Metal, enables performance counters, disables frame dumping/analytics,
-and acknowledges the supplied NKit fixtures for this experiment only. Normal
-Dolphin profiles and Emulia libraries are not migrated. Keep the printed profile
-if it contains progress you want to inspect; subsequent probe launches do not
-reuse it.
+Menu or Escape captures one frame, pauses Dolphin, hides its Metal view, and
+shows the existing Emulia pause panel over that image. Resume restores the view.
+The shared ten-slot screen supports save, replace confirmation and load. Pausing
+and leaving write a separate autosave; reopening offers that moment in the pause
+panel. Screenshot exports the pause picture. Reset restarts without restoring
+the autosave. Rewind and fast-forward are intentionally absent for Dolphin.
+
+Settings opens player-one control mappings. Keyboard and the first connected SDL
+gamepad share that port. Buttons, each stick direction, analog triggers, pointer,
+tilt and shake can be mapped. Escape cancels capture; Clear removes a binding.
+GameCube uses its own layout. Wii games can choose GameCube (where the game
+supports it), sideways Remote, Remote + Nunchuk, or Classic controller. Changing
+controller style takes effect after Reset/reopening; remapping individual inputs
+takes effect on Resume. Mappings are per game, saved atomically in
+`library/<game-id>/dolphin-controls.json`.
+
+GameCube defaults: X/Z = A/B, C/V = X/Y, F = Z, Return = Start,
+WASD = main stick, IJKL = C stick, arrows = D-pad, Q/E = triggers.
+Wii uses X/Z = A/B, C/V = 1/2, Return = +, Space = shake;
+IJKL/right stick aim the pointer. All displayed bindings can be changed.
+New Wii entries default to Remote + Nunchuk. Mouse movement aims the Wii Remote;
+left click is A, right click is B, including the selected extension's buttons.
+Only clicks inside the focused game view are forwarded. Moving a stick switches
+back to gamepad aiming until the mouse moves; Settings can disable mouse input.
+Nunchuk C uses Left Shift, avoiding the WASD stick bindings. The sideways preset
+uses WASD/left stick for tilt; other styles leave tilt unbound by default.
+Physical controller feel, rumble and motion-heavy games are not qualified by
+the automated checks; rumble and additional player ports are not implemented.
+
+The owned Dolphin profile now persists under
+`<data-dir>/dolphin/embedded-2606a`, protected by an OS file lock. It contains
+Dolphin's memory cards/NAND and controller expressions for Emulia's virtual
+input device. It initializes Metal, disables frame dumping/counters/analytics,
+and acknowledges NKit fixtures for this experiment only. Normal Dolphin
+profiles and older temporary probe profiles are not migrated.
 
 The bridge supplies an NSView inside SDL's Cocoa window to Dolphin's
-WindowSystemInfo. Dolphin renders Metal directly into that view while egui draws
-the surrounding shell with OpenGL. No screenshots or CPU pixel copies are used
-for display. Emulia pumps Dolphin host jobs and stops/shuts down the core before
-removing the view. The library remains loaded for process lifetime because
-Dolphin has global objects and callbacks. Dolphin internals are pinned source
-interfaces, not a stable third-party SDK.
+WindowSystemInfo. Metal renders directly while playing; a single PNG readback
+is used only when entering the pause overlay. Dolphin remains loaded for process
+lifetime because its globals retain callbacks. Shutdown services the AppKit
+queue before joining the emulation thread, including during boot cancellation.
+
+`patch_state.py` applies a small checked-operation patch to pinned Dolphin
+`State.h`/`State.cpp`. It retains Dolphin's state format and reports serialization,
+write, close, rename and load failure. Emulia writes to staging and atomically
+replaces a slot only after success. The builder rejects unrelated source edits.
+These are pinned internal interfaces, not a stable Dolphin SDK.
+
+Run the reproducible debug-build qualification with a **new disposable** directory:
+
+```sh
+python3 scripts/dolphin-spike/qualify.py \
+  --app target/dolphin-spike/EmuliaDolphinProbe.app \
+  --game '/path/to/Animal Crossing (USA).iso' \
+  --work-dir /tmp/emulia-gc-qualification
+# Use --wii and a Wii disc to check the three Wii controller styles.
+```
+
+The harness checks state round trips, failed operations, thumbnails, virtual
+controller values, mapping persistence/restarts and shutdown. An explicit
+`EMULIA_DOLPHIN_PROBE_COMMAND` file enables its in-app command/status interface
+in debug builds only; it does not generate macOS input events. It is not a
+replacement for physical gamepad or sustained-play qualification. The build
+optimizes the host and SHA-256 even in debug mode so large Wii images can be verified promptly.
 
 See [qualification and limitations](../../docs/DOLPHIN-EMBEDDING-SPIKE.md).

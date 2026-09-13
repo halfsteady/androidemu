@@ -61,20 +61,59 @@ showed 100% speed, 59.87 FPS and 59.86 VPS. Native diagnostics identify JITARM64
 Metal and HLE. This qualifies the rendering approach for this initial macOS
 arm64 fixture, not all games or platforms.
 
-The host supplies start/pump/stop calls. Escape and Back to shelf stop Dolphin,
-shut down its core/controllers, then remove its native view. Resizing adjusts
-the view and requests a Dolphin surface resize. The user reported that the requested Return/input, resize and Back to shelf
-check looked good. A follow-up window capture confirmed the Emulia shelf was
-visible again in the same process, with the embedded rendering view removed.
-This is one manual smoke check; repeated sessions and failure recovery remain
-unqualified. macOS input automation is unavailable.
+The initial Return/input, resize and Back to shelf test was manually accepted
+by the user. A follow-up window capture confirmed the shelf in the same process.
+The subsequent integration adds the existing pause menu and save-slot panel,
+plus a Dolphin control-mapping editor. Menu/Escape takes one screenshot and
+pauses the core; the native view is hidden while egui shows the menus over the
+snapshot. Resume restores native rendering. There is no continuous readback.
 
-The prototype builds only when explicitly requested; default application and
-packaging behavior retain the external Dolphin launcher. A fresh temporary
-profile isolates each run. It deliberately enables Metal/counters and disables
-recording/analytics, with NKit warnings acknowledged only in that probe profile.
-Rewind, fast-forward and Emulia save slots are absent. Dolphin is retained in
-memory until process exit to avoid unloading code referenced by its globals.
+Ten slots, replacement confirmations, thumbnails, screenshots, automatic saving
+on pause/exit and automatic-save reopening now use the existing library paths.
+The bridge has checked save/load operations, retaining Dolphin's state format.
+Serialization and disk completion must succeed before a staging file replaces
+the previous slot. Failed loads remain paused with a visible error.
+
+The profile persists under `<data-dir>/dolphin/embedded-2606a` with a file lock.
+It owns memory cards/NAND and initializes Metal with recording/analytics/counters
+disabled. Only this experimental profile acknowledges NKit fixtures. Existing
+Dolphin/temporary profiles are not migrated. Default builds and packages retain
+the external launcher; embedded-mode shelf launches use the native host.
+
+Player-one keyboard/SDL gamepad mappings are stored per game. An Emulia virtual
+Dolphin device feeds the normal controller-expression engine, including analog
+sticks/triggers and simulated Wii motion. GameCube, sideways Remote,
+Remote + Nunchuk and Classic layouts are available; Wii can also choose a
+GameCube controller for games that support it. Style changes require a restart;
+individual bindings apply when resuming. Input is cleared for menus, focus loss
+and disconnects. Additional players and rumble are not implemented.
+
+Local Animal Crossing checks passed through `qualify.py`: save/load round trip,
+PNG thumbnail, rejected invalid load, old-slot preservation on failed replacement,
+GameCube A, proportional stick and trigger values, remapping A to Q, persistence
+across reset, autosave and clean shutdown. An independent process reopen restored
+the prior autosave. Captures also show the actual shared pause and slot panels.
+These debug harness checks exercise the native bridge without macOS input
+injection; physical controller feel still needs a manual check.
+
+Mario Kart Wii passed the same state round trip/failure/thumbnail checks and
+all three Wii native presets: sideways Remote, Nunchuk and Classic. The harness
+verified their actual extension settings, A/C button expressions, proportional
+IR pointer input, repeated restarts and clean shutdown. This qualifies the bridge
+and configuration paths; it is not a race or motion-feel test for those presets.
+
+Mouse aim uses AppKit coordinates inside the actual embedded view, with left
+click A/right click B. It follows resizing and fullscreen, ignores clicks on
+Emulia's bars and menus, and requires held clicks to be released after a pause.
+Keyboard/gamepad pointer movement takes over until the mouse moves again.
+New Wii entries default to Remote + Nunchuk; existing per-game choices persist.
+Unit tests cover mouse direction, bounds, click clearing and controller handoff;
+manual mouse tracking/click feel still needs user verification.
+
+The native bridge drains AppKit work before joining Dolphin during shutdown.
+This fixes the observed boot-cancellation wait between Quartz device setup and
+the main thread. The builder also refuses to overwrite an active probe app.
+Dolphin remains loaded until process exit to keep its callbacks valid.
 
 ## Build and acceptance boundaries
 
@@ -85,17 +124,15 @@ macOS 11 deployment or a self-contained distributable package. The upstream
 source checkout, game images, profile data and screenshots are not committed.
 Only the host bridge, build scripts and opt-in Emulia path are in this PR.
 
-Default and feature-enabled macOS desktop checks: all 140 tests pass (one optional commercial
-SNES test ignored), and strict Clippy passes. These retain the desktop regression
+Feature-enabled macOS desktop checks: 147 tests pass (one optional commercial
+SNES test ignored), 141 default-build tests pass, and strict Clippy passes. These retain the desktop regression
 coverage; they do not exercise Dolphin's native renderer in unit tests. Rendering
 was checked through the actual source-built bridge and screenshots. The build script completed with an isolated
 Cargo output, a copied Sys resource directory, and successful ad-hoc bundle
 signature verification.
 
-Next acceptance work: extended embedded input/gamepad mapping, window close and
-repeat-launch lifecycle, saved-progress reopening, longer play, and equivalent
-Linux/Android native surfaces. Production integration also needs deliberate
-profile ownership, user-visible error handling, build/dependency packaging and
-an upstream update process. Android embedding remains a subsequent prototype;
-the installed APK cannot donate its surface to Emulia through the current
-external-launch interface.
+Remaining acceptance work: physical gamepad/motion feel, longer embedded play,
+and equivalent Linux/Android native surfaces. Production rollout also needs
+portable native dependency packaging and an upstream update process. Android
+embedding remains a subsequent prototype; the installed APK cannot donate its
+surface to Emulia through the external-launch interface.

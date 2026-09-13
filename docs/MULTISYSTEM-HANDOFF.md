@@ -128,6 +128,49 @@ external launcher. No production Android code is changed. The experiment's
 source pin, build commands, profile isolation, checks and remaining interactive
 acceptance are in [DOLPHIN-EMBEDDING-SPIKE.md](DOLPHIN-EMBEDDING-SPIKE.md).
 
+## Embedded Dolphin menus and controls
+
+The next authorized increment is implemented in the opt-in macOS host: Menu/
+Escape pauses behind the existing pause panel; the shared ten slots, confirmations,
+thumbnails and screenshots work with Dolphin. Pausing/exit autosave, and reopen
+restores the automatic moment into the pause panel. The profile now persists in
+`<data-dir>/dolphin/embedded-2606a`, with a file lock and separate per-game control
+JSON. Normal Dolphin profiles remain separate.
+
+Player one supports keyboard and the first SDL gamepad, GameCube buttons/sticks/
+analog triggers, plus sideways Remote, Nunchuk and Classic presets with pointer,
+tilt and shake bindings. Individual mapping changes apply on resume; controller
+style changes require a reset/reopen. No Dolphin rewind/fast-forward is required.
+The virtual controller expressions are persisted before boot because Dolphin
+reloads its controller files on the boot thread.
+
+Animal Crossing native checks pass for save/load, invalid load, failed-replacement
+preservation, thumbnails, analog inputs, remapped A, reset/reopen persistence and
+shutdown. The shared pause/slots panels were visually inspected. The native stop
+path services AppKit to avoid a Quartz boot/shutdown deadlock. Rebuilding a running
+probe is rejected. `scripts/dolphin-spike/qualify.py` reproduces the checks using
+local games and fresh disposable data; no game content is committed.
+
+Mario Kart Wii passed the same state round trip/failure/thumbnail checks and
+all three Wii native presets: sideways Remote, Nunchuk and Classic. The harness
+verified their actual extension settings, A/C button expressions, proportional
+IR pointer input, repeated restarts and clean shutdown. This qualifies the bridge
+and configuration paths; it is not a race or motion-feel test for those presets.
+
+Mouse aim uses AppKit coordinates inside the actual embedded view, with left
+click A/right click B. It follows resizing and fullscreen, ignores clicks on
+Emulia's bars and menus, and requires held clicks to be released after a pause.
+Keyboard/gamepad pointer movement takes over until the mouse moves again.
+New Wii entries default to Remote + Nunchuk; existing per-game choices persist.
+Unit tests cover mouse direction, bounds, click clearing and controller handoff;
+manual mouse tracking/click feel still needs user verification.
+
+Feature tests: 147 pass, one optional SNES fixture test ignored; strict Clippy
+passes. Default packaging still uses the external launcher. Physical gamepad feel,
+additional players/rumble, extended Wii motion compatibility, Linux embedding,
+Android embedding and portable Dolphin packaging remain follow-up work. See the
+[spike record](DOLPHIN-EMBEDDING-SPIKE.md) for the current acceptance boundary.
+
 ## Historical implementation record (superseded where it conflicts above)
 
 

@@ -1,6 +1,8 @@
 mod bridge;
 mod dolphin;
 #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+mod dolphin_controls;
+#[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
 mod dolphin_embed_probe;
 mod engine;
 mod files;

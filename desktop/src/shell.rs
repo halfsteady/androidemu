@@ -63,6 +63,7 @@ pub struct App {
     pub settings_dirty: bool,
     pub input: Input,
     pub session: Option<Session>,
+    pub embedded_game: Option<crate::library::Game>,
     pub panel: Panel,
     pub playback_paused: bool,
     /// Where `ClosePanel` returns to when the problem log was opened from
@@ -120,6 +121,12 @@ pub struct App {
 }
 
 impl App {
+    pub fn active_game(&self) -> Option<&crate::library::Game> {
+        self.session
+            .as_ref()
+            .map(|s| &s.game)
+            .or(self.embedded_game.as_ref())
+    }
     /// Says what went wrong in one plain sentence and keeps the detail in the
     /// problem log, where someone helping can find it.
     pub fn report(&mut self, label: &str, detail: &str) {
@@ -303,6 +310,7 @@ impl App {
             settings_dirty: false,
             input: Input::new(Profiles::load(data_dir).0),
             session: None,
+            embedded_game: None,
             external: None,
             dolphin_label: "Automatic discovery".into(),
             panel: Panel::None,
@@ -360,7 +368,7 @@ fn draw(ui: &mut egui::Ui, app: &mut App, video: &mut Video) {
 /// at all. The message is last because it is the one thing that has to be read
 /// before anything else is worth doing; it puts away itself and nothing else,
 /// so a question behind it is still waiting.
-fn over_everything(ctx: &egui::Context, app: &mut App) {
+pub(crate) fn over_everything(ctx: &egui::Context, app: &mut App) {
     if app.busy {
         crate::ui::widgets::busy(ctx);
     }
@@ -1460,6 +1468,7 @@ pub fn run(options: Options) -> Result<(), String> {
         settings_dirty: false,
         input: Input::new(profiles),
         session: None,
+        embedded_game: None,
         external: None,
         dolphin_label: "Automatic discovery".into(),
         panel: Panel::None,
@@ -1520,7 +1529,14 @@ pub fn run(options: Options) -> Result<(), String> {
         if !game.is_external() {
             return Err("The Dolphin probe needs a GameCube/Wii disc".into());
         }
-        Some(crate::dolphin_embed_probe::Probe::start(&window, rom)?)
+        app.embedded_game = Some(game.clone());
+        Some(crate::dolphin_embed_probe::Probe::start(
+            &window,
+            game,
+            &mut app,
+            &controllers,
+            true,
+        )?)
     } else {
         None
     };
@@ -1549,8 +1565,28 @@ pub fn run(options: Options) -> Result<(), String> {
             window.raise();
         }
         #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
-        if probe.as_ref().is_some_and(|p| !p.pump()) {
-            probe = None;
+        if let Some(p) = &mut probe {
+            let running = p.pump(&mut app);
+            if !running || p.leaving {
+                let restart = p.restarting.then(|| p.game.clone());
+                p.finish(&mut app);
+                probe = None;
+                if let Some(game) = restart {
+                    match crate::dolphin_embed_probe::Probe::start(
+                        &window,
+                        game.clone(),
+                        &mut app,
+                        &controllers,
+                        false,
+                    ) {
+                        Ok(p) => {
+                            app.embedded_game = Some(game);
+                            probe = Some(p);
+                        }
+                        Err(e) => app.report("Dolphin couldn't restart.", &e),
+                    }
+                }
+            }
         }
         // 0. The long job whose scrim is now on screen. Run through `apply`
         // rather than `act`, because this is what the waiting was for.
@@ -1563,16 +1599,8 @@ pub fn run(options: Options) -> Result<(), String> {
         for event in events.poll_iter() {
             bridge.handle(&event);
             #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
-            if probe.is_some() {
-                match event {
-                    Event::Quit { .. } => app.quit = true,
-                    Event::KeyDown {
-                        scancode: Some(Scancode::Escape),
-                        repeat: false,
-                        ..
-                    } => probe = None,
-                    _ => {}
-                }
+            if let Some(p) = &mut probe {
+                p.event(&event, &mut app, &controllers);
                 continue;
             }
             handle_event(&mut app, &event, &bridge, &controllers, &joysticks);
@@ -1581,10 +1609,8 @@ pub fn run(options: Options) -> Result<(), String> {
         // have to be applied before the engine runs.
         let (primitives, mut textures) = bridge.frame(&window, |ui| {
             #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
-            if let Some(p) = &probe {
-                if p.draw(ui) {
-                    probe = None;
-                }
+            if let Some(p) = &mut probe {
+                p.draw(ui, &mut app);
                 return;
             }
             draw(ui, &mut app, &mut video)
@@ -1596,6 +1622,34 @@ pub fn run(options: Options) -> Result<(), String> {
         // 3. Actions.
         let actions = std::mem::take(&mut app.actions);
         for action in actions {
+            #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+            {
+                if let Some(p) = &mut probe {
+                    if p.action(&action, &mut app) {
+                        continue;
+                    }
+                } else if let Action::OpenGame(game) = &action {
+                    if game.is_external()
+                        && crate::dolphin_embed_probe::Probe::requested()
+                        && app.session.is_none()
+                    {
+                        match crate::dolphin_embed_probe::Probe::start(
+                            &window,
+                            game.clone(),
+                            &mut app,
+                            &controllers,
+                            true,
+                        ) {
+                            Ok(p) => {
+                                app.embedded_game = Some(game.clone());
+                                probe = Some(p);
+                            }
+                            Err(e) => app.report("Dolphin couldn't start.", &e),
+                        }
+                        continue;
+                    }
+                }
+            }
             act(&mut app, action, &mut window, audio_sdl.as_ref());
         }
         // 4. Emulation. What the tick has to say is collected here and said
@@ -1728,7 +1782,10 @@ pub fn run(options: Options) -> Result<(), String> {
         session.close();
     }
     #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
-    drop(probe);
+    if let Some(mut p) = probe {
+        p.finish(&mut app);
+        drop(p);
+    }
     video.destroy();
     bridge.destroy();
     Ok(())

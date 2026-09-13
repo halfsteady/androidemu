@@ -6,6 +6,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+from patch_state import apply as patch_state
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -38,6 +39,10 @@ def main():
         parser.error('--jobs must be positive')
     work = args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
+    executable = work / 'EmuliaDolphinProbe.app/Contents/MacOS/Emulia'
+    processes = subprocess.check_output(['ps', '-axo', 'command='], text=True).splitlines()
+    if any(line.startswith(str(executable) + ' ') or line == str(executable) for line in processes):
+        raise RuntimeError('Close this probe app before rebuilding it')
     source, build = work / 'source', work / 'build'
     if not source.exists():
         run('git', 'clone', '--depth', '1', '--branch', '2606a',
@@ -55,6 +60,7 @@ def main():
     if cmake_file.read_text() not in (original, original + STANZA):
         raise RuntimeError('Dolphin CMakeLists has other edits; use a fresh work directory')
     cmake_file.write_text(original + STANZA)
+    patch_state(source, REV)
     disabled = ('QT', 'NOGUI', 'CLI_TOOL', 'TESTS', 'AUTOUPDATE', 'ANALYTICS',
                 'VULKAN', 'LLVM', 'SDL')
     run('cmake', '-S', source, '-B', build, '-G', 'Unix Makefiles',
@@ -66,7 +72,7 @@ def main():
     run('cmake', '--build', build, '--target', 'emulia_dolphin_probe', '-j', args.jobs)
     # Separate output prevents a prototype build replacing the normal desktop binary.
     rust_target = work / 'rust-target'
-    run('cargo', 'build', '--locked', '-p', 'nes-desktop', '--features',
+    run('cargo', 'build', '--locked', '--config', 'profile.dev.package.sha2.opt-level=3', '--config', 'profile.dev.package.nes-desktop.opt-level=1', '-p', 'nes-desktop', '--features',
         'dolphin-embed-probe', '--target-dir', rust_target)
     app = work / 'EmuliaDolphinProbe.app'
     contents = app / 'Contents'

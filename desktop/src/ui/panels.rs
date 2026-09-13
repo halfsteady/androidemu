@@ -110,10 +110,10 @@ fn pause(ctx: &egui::Context, app: &mut App) {
 
 /// The ten slots, each with the picture of the moment it holds.
 fn slots(ctx: &egui::Context, app: &mut App) {
-    let Some(session) = &app.session else {
+    let Some(game) = app.active_game() else {
         return;
     };
-    let id = session.game.id.clone();
+    let id = game.id.clone();
     // Read once a frame rather than once a tile: ten slots are ten looks at
     // the disk, and all ten have to agree about what is on it.
     let slots = app.library.slots(&id);
@@ -254,9 +254,8 @@ fn confirm(ctx: &egui::Context, app: &mut App, dialog: Dialog) {
     let (title, body, yes, no, danger, yes_action) = match &dialog {
         Dialog::ConfirmReset => {
             let title = app
-                .session
-                .as_ref()
-                .map(|s| s.game.title.clone())
+                .active_game()
+                .map(|g| g.title.clone())
                 .unwrap_or_default();
             (
                 "Reset game?".to_string(),
@@ -502,6 +501,32 @@ mod tests {
             }
         }
         assert!(app.actions.is_empty(), "{:?}", app.actions);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn embedded_game_uses_the_shared_slots_without_a_nes_session() {
+        let dir = temp_dir("panels-embedded-slots");
+        let ctx = context();
+        let mut app = App::blank(&dir);
+        let mut game = app
+            .library
+            .add("aaaa", "Animal Crossing", &test_rom())
+            .unwrap();
+        game.id = "dolphin-test".into();
+        std::fs::create_dir_all(app.library.directory(&game.id)).unwrap();
+        std::fs::write(
+            app.library.state_path(&game.id, Slot::Number(0)),
+            b"native state",
+        )
+        .unwrap();
+        app.embedded_game = Some(game);
+        app.panel = Panel::Slots;
+        let shapes = drawn(&mut app, &ctx, WINDOW);
+        assert!(texts(&shapes).iter().any(|s| s == "Slot 1"));
+        click(&mut app, &ctx, in_tile(&shapes, "Slot 1", "Load"));
+        assert_eq!(std::mem::take(&mut app.actions), vec![Action::Load(0)]);
+        assert!(app.session.is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
