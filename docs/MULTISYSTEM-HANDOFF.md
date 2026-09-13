@@ -35,10 +35,11 @@ metadata, source archives and license notices. Build commands are in
 [DESKTOP-PACKAGING.md](DESKTOP-PACKAGING.md). Generated packages live under
 `target/packages/`; older ignored `desktop-ui/build` artifacts are obsolete.
 
-Verified locally: original 130-test desktop baseline; expanded desktop tests;
+Verified locally: original 130-test desktop baseline; 134 desktop tests pass on
+macOS and Linux (the commercial-ROM test is separately run);
 strict desktop Clippy; shared runtime and adapter tests; Super Mario World
 first-level route, exact state replay, rewind and autosave reopening on macOS
-arm64; packaged NES/SNES executable smoke checks on macOS arm64 and Debian 12
+arm64 and Debian 12 arm64; packaged NES/SNES executable smoke checks on macOS arm64 and Debian 12
 arm64; Debian installation, metadata, actual window/pause/settings rendering
 under Xvfb/Mesa, WM_CLASS and icon; macOS bundle signature and DMG integrity.
 RPM builds, but installation on an RPM distribution is not qualified. CI covers

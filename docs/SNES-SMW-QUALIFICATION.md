@@ -16,7 +16,7 @@ Earlier Compose screenshots and tests describe a superseded frontend.
 
 | Check | Evidence |
 |---|---|
-| Scripted first-level route | Local-ROM desktop session test reaches Yoshi's Island 1; saved thumbnail inspected |
+| Scripted first-level route | Local-ROM desktop session test passes on macOS arm64 and Debian 12 arm64, reaches Yoshi's Island 1; saved thumbnail inspected |
 | State replay | Save slot load followed by 120 identical inputs reproduces the exact final serialized state |
 | Restored preview | Slot load immediately restores the saved RGBA frame |
 | Rewind | Reverses all 120 frames exactly to the saved checkpoint; exhaustion holds |
