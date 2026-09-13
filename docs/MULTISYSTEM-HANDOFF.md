@@ -87,6 +87,13 @@ confirmed normal speed after diagnostic PNG frame dumping was disabled. The
 [DOLPHIN-QUALIFICATION.md](DOLPHIN-QUALIFICATION.md) for exact limits. Real GUI
 return focus, controller/memory-card workflows, Linux Dolphin and Wii gameplay
 remain unqualified; this is not completion of the full compatibility matrix.
+Mario Kart Wii (USA) RMCE01 has now also been imported through the packaged
+macOS shell and launched successfully in Dolphin 2606a using an isolated test
+profile. Its title screen showed 100% speed and ~59.9 FPS/VPS with recording
+disabled, and first-run Wii save files were created. The shelf handoff banner
+was visually checked. Race input/audio, save reopening and real window return
+remain pending manual input because macOS input automation is unavailable.
+See the qualification document for the fixture fingerprint and exact test flags.
 The account billing blocker still prevents remote CI from starting.
 
 ## Historical implementation record (superseded where it conflicts above)

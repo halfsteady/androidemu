@@ -28,7 +28,8 @@ removes only Emulia's managed metadata, never the referenced disc.
 | Audio/speed | User reported approximately half speed with PNG dumping enabled; confirmed normal speed after disabling it |
 | Automated launcher / shell | 138 desktop tests passed, 1 optional SNES commercial-ROM test ignored; strict Clippy passed |
 | Updated macOS packages | App/DMG rebuilt; package NES/SNES smoke, bundle signature and DMG integrity checks passed |
-| Linux / Wii | Header handling and process logic covered by local tests; actual Dolphin gameplay not yet qualified |
+| Wii on macOS | Mario Kart Wii RMCE01 imported through packaged Emulia and reached title screen at 100% speed, ~59.9 FPS/VPS; first-run save files created |
+| Linux | Header handling and process logic covered by macOS tests; actual Linux Dolphin gameplay not yet qualified |
 
 The official installer used was
 [2606a universal DMG](https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a-universal.dmg),
@@ -53,6 +54,37 @@ verifies the NES autosave and absence of an embedded session, rejects a second
 launch, and returns to the shelf when the subprocess ends without fabricating
 playtime.
 
+## Mario Kart Wii through packaged Emulia
+
+User fixture: `~/Downloads/Mario Kart Wii (USA) (En,Fr,Es).nkit.iso`,
+2,713,321,472 bytes, disc ID `RMCE01`, Wii header magic `5d1c9ea3`, NKit v01.
+Streaming importer SHA-256:
+`1e84a7ab26825260eeeb7d21024d544918bf06210a7279de6ee559bcc71e9ade`.
+
+The rebuilt macOS `Emulia.app/Contents/MacOS/Emulia` imported the actual image
+using a separate `/tmp/emulia-mario-kart-wii/emulia-data` library. Its metadata
+correctly records system `wii`, the canonical path and NKit marker; the entire
+Emulia data folder occupied only 12 KiB, confirming no multi-gigabyte disc copy.
+The native shelf rendered the game and its active Dolphin handoff banner.
+
+A selected test executable used `execv` to replace itself with Dolphin 2606a,
+preserving Emulia's tracked child through the real launch. It appended Emulia's
+literal `--batch --exec <path>` arguments after explicit test-only settings:
+an isolated `/tmp/emulia-mario-kart-wii/profile`, acknowledged NKit warning,
+disabled analytics and frame dumping, and enabled FPS/VPS/speed overlays.
+There was no speed-limit override or continuous recording. Production launcher
+arguments and default profile behavior are unchanged.
+
+Window captures showed the Wii strap screen and Mario Kart Wii title screen.
+The title overlay reported 100% speed, 59.92 FPS and 59.94 VPS. One first-run
+save-creation capture showed 78% speed; these are point observations, not a
+sustained race benchmark. Dolphin created `rksys.dat`, `banner.bin` and related
+Wii data in the temporary profile. File creation alone does not qualify saved
+progress recovery. At the title's A-button prompt, manual input was requested:
+macOS `CGPreflightPostEventAccess()` returned false. The generated Dolphin
+GameCube keyboard profile maps A to X. Race controls, audio assessment and
+normal window-close/return behavior remain pending that interactive check.
+
 ## Remaining acceptance work
 
 The observed Animal Crossing boot does not qualify sustained gameplay, physical
@@ -66,7 +98,7 @@ already-running Dolphin is not detected; wrappers that detach are not qualified.
 Closing Emulia intentionally leaves Dolphin running. The launch currently
 raises the shelf after child exit, not merely after switching focus back.
 
-Linux Dolphin and Wii disc gameplay remain pending. Android launching remains
+Linux Dolphin and sustained Wii race gameplay remain pending. Android launching remains
 a later milestone; physical-tablet validation is deferred per the user. GitHub
 Actions is blocked before job startup by account billing/spending limits; local
 tests are not a substitute for the pending platform matrix.
