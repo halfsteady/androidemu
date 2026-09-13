@@ -103,7 +103,18 @@ IR pointer input, repeated restarts and clean shutdown. This qualifies the bridg
 and configuration paths; it is not a race or motion-feel test for those presets.
 
 Mouse aim uses AppKit coordinates inside the actual embedded view, with left
-click A/right click B. It follows resizing and fullscreen, ignores clicks on
+click A/right click B. After the user reported center-aligned but off-center
+drift, the bridge was corrected to apply Dolphin's own `GetWindowInputScale()`
+aspect-ratio adjustment, matching its Quartz mouse backend. Geometry tests cover
+letterboxing, pillarboxing, Retina scaling and rejecting clicks in the bars. Further user feedback and
+measurements on a copy of the saved Mario Kart Wii session showed an additional
+in-game range mismatch: a half-width input moved the pointer approximately 276
+pixels instead of 208.5 in the 834-pixel game image. Mouse-only multipliers of
+0.75 horizontally and 0.96 vertically brought the sampled right/up/diagonal
+positions within a few pixels relative to center. These are defaults for the
+qualified USA disc ID `RMCE01`; other games retain Dolphin's default range.
+Settings exposes independent per-game horizontal/vertical range overrides, and
+existing overrides take precedence. Keyboard/gamepad aiming is unaffected. It follows resizing and fullscreen, ignores clicks on
 Emulia's bars and menus, and requires held clicks to be released after a pause.
 Keyboard/gamepad pointer movement takes over until the mouse moves again.
 New Wii entries default to Remote + Nunchuk; existing per-game choices persist.
@@ -124,7 +135,7 @@ macOS 11 deployment or a self-contained distributable package. The upstream
 source checkout, game images, profile data and screenshots are not committed.
 Only the host bridge, build scripts and opt-in Emulia path are in this PR.
 
-Feature-enabled macOS desktop checks: 147 tests pass (one optional commercial
+Feature-enabled macOS desktop checks: 148 tests pass (one optional commercial
 SNES test ignored), 141 default-build tests pass, and strict Clippy passes. These retain the desktop regression
 coverage; they do not exercise Dolphin's native renderer in unit tests. Rendering
 was checked through the actual source-built bridge and screenshots. The build script completed with an isolated

@@ -105,6 +105,7 @@ impl Probe {
         if new_controls && disc.system == "wii" {
             controls.config.style = 2;
         }
+        controls.game_defaults(&disc.disc_id);
         let style = controls.config.style;
         let snapshot_path = user.join("pause.png");
         eprintln!("Embedded Dolphin profile: {}", user.display());

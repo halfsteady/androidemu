@@ -10,6 +10,8 @@ struct Command {
     name: String,
     #[serde(default)]
     value: i16,
+    #[serde(default)]
+    position: Option<[f64; 2]>,
 }
 impl Probe {
     pub(super) fn qualify(&mut self, app: &mut App) {
@@ -21,6 +23,21 @@ impl Probe {
             let _ = fs::remove_file(&path);
             if let Ok(command) = serde_json::from_slice::<Command>(&bytes) {
                 let action = match command.action.as_str() {
+                    "pointer" => {
+                        self.controls.test_pointer = command
+                            .position
+                            .filter(|xy| xy.iter().all(|v| v.is_finite() && v.abs() <= 1.0));
+                        None
+                    }
+                    "range" => {
+                        if let Some(range) = command.position.filter(|xy| {
+                            xy.iter().all(|v| v.is_finite() && (0.1..=2.0).contains(v))
+                        }) {
+                            self.controls.config.mouse_range = Some(range);
+                            self.controls.dirty = true;
+                        }
+                        None
+                    }
                     "style" => {
                         if command.slot < 4 {
                             self.controls.config.style = command.slot as usize;

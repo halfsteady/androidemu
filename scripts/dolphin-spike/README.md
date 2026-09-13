@@ -51,7 +51,13 @@ Wii uses X/Z = A/B, C/V = 1/2, Return = +, Space = shake;
 IJKL/right stick aim the pointer. All displayed bindings can be changed.
 New Wii entries default to Remote + Nunchuk. Mouse movement aims the Wii Remote;
 left click is A, right click is B, including the selected extension's buttons.
-Only clicks inside the focused game view are forwarded. Moving a stick switches
+Dolphin's renderer-provided input scale aligns aiming with the displayed picture,
+including letterboxing and pillarboxing. Only clicks inside the focused game
+picture are forwarded. The build runs standalone pointer-geometry regression tests.
+Mouse alignment in Settings offers independent horizontal/vertical range controls;
+lower a value if the in-game pointer travels too far. USA Mario Kart Wii uses the
+measured 0.75/0.96 defaults. Overrides persist per game and apply on Resume,
+without changing gamepad input. Reset mouse alignment restores the game's defaults. Moving a stick switches
 back to gamepad aiming until the mouse moves; Settings can disable mouse input.
 Nunchuk C uses Left Shift, avoiding the WASD stick bindings. The sideways preset
 uses WASD/left stick for tilt; other styles leave tilt unbound by default.

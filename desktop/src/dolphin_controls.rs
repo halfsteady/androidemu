@@ -35,6 +35,11 @@ pub struct Config {
     pub maps: BTreeMap<String, Binding>,
     #[serde(default = "mouse_default")]
     pub mouse: bool,
+    #[serde(default)]
+    pub mouse_range: Option<[f64; 2]>,
+}
+fn mouse_range_default() -> [f64; 2] {
+    [1.0, 1.0]
 }
 fn mouse_default() -> bool {
     true
@@ -46,6 +51,7 @@ impl Default for Config {
             style: 0,
             maps: BTreeMap::new(),
             mouse: true,
+            mouse_range: None,
         }
     }
 }
@@ -59,11 +65,14 @@ pub struct Controls {
     buttons: HashSet<String>,
     axes: HashMap<String, i16>,
     pub dirty: bool,
+    default_mouse_range: [f64; 2],
     mouse_position: Option<[f64; 2]>,
     mouse_aim: Option<[f64; 2]>,
     mouse_inside: bool,
     mouse_buttons: u32,
     mouse_armed: bool,
+    #[cfg(debug_assertions)]
+    pub test_pointer: Option<[f64; 2]>,
 }
 impl Controls {
     pub fn open(path: &Path) -> Result<Self, String> {
@@ -71,7 +80,14 @@ impl Controls {
             Some(bytes) => serde_json::from_slice::<Config>(&bytes).map_err(|e| e.to_string())?,
             None => Config::default(),
         };
-        if config.version != 1 || config.style >= STYLES.len() {
+        if config.version != 1
+            || config.style >= STYLES.len()
+            || config
+                .mouse_range
+                .iter()
+                .flatten()
+                .any(|v| !v.is_finite() || !(0.1..=2.0).contains(v))
+        {
             return Err("Unsupported Dolphin controls file".into());
         }
         Ok(Self {
@@ -84,12 +100,24 @@ impl Controls {
             buttons: HashSet::new(),
             axes: HashMap::new(),
             dirty: false,
+            default_mouse_range: mouse_range_default(),
             mouse_position: None,
             mouse_aim: None,
             mouse_inside: false,
             mouse_buttons: 0,
             mouse_armed: false,
+            #[cfg(debug_assertions)]
+            test_pointer: None,
         })
+    }
+    pub fn game_defaults(&mut self, disc_id: &str) {
+        // Measured at centered and off-center points in the USA Mario Kart Wii
+        // menu. Keep other titles at Dolphin's default; explicit overrides win.
+        self.default_mouse_range = if disc_id == "RMCE01" {
+            [0.75, 0.96]
+        } else {
+            [1.0, 1.0]
+        };
     }
     pub fn connect(&mut self, subsystem: &sdl2::GameControllerSubsystem) {
         for i in 0..subsystem.num_joysticks().unwrap_or(0) {
@@ -129,6 +157,11 @@ impl Controls {
         }
     }
     pub fn pointer(&mut self, position: [f64; 2], buttons: u32, inside: bool) {
+        #[cfg(debug_assertions)]
+        let (position, buttons, inside) = self
+            .test_pointer
+            .map(|p| (p, 0, true))
+            .unwrap_or((position, buttons, inside));
         if buttons == 0 {
             self.mouse_armed = true;
         }
@@ -273,6 +306,9 @@ impl Controls {
             return physical.max(f64::from(self.mouse_buttons & 2 != 0));
         }
         if let Some([x, y]) = self.mouse_aim {
+            let range = self.config.mouse_range.unwrap_or(self.default_mouse_range);
+            let x = x * range[0];
+            let y = y * range[1];
             match name {
                 "Wii/IR/Right" => return x.clamp(0.0, 1.0),
                 "Wii/IR/Left" => return (-x).clamp(0.0, 1.0),
@@ -299,6 +335,26 @@ impl Controls {
                             "Mouse aims Wii Remote · left click A · right click B",
                         )
                         .changed();
+                }
+                if wii && self.config.mouse {
+                    ui.label(
+                        "Mouse alignment · lower the range if the Wii pointer travels too far.",
+                    );
+                    let mut range = self.config.mouse_range.unwrap_or(self.default_mouse_range);
+                    let horizontal = ui
+                        .add(egui::Slider::new(&mut range[0], 0.1..=2.0).text("Horizontal range"))
+                        .changed();
+                    let vertical = ui
+                        .add(egui::Slider::new(&mut range[1], 0.1..=2.0).text("Vertical range"))
+                        .changed();
+                    if horizontal || vertical {
+                        self.config.mouse_range = Some(range);
+                        self.dirty = true;
+                    }
+                    if ui.small_button("Reset mouse alignment").clicked() {
+                        self.config.mouse_range = None;
+                        self.dirty = true;
+                    }
                 }
                 let old = self.config.style;
                 egui::ComboBox::from_id_salt("dolphin-style")
@@ -568,6 +624,33 @@ mod tests {
         assert_eq!(controls.value("Wii/Tilt/Right"), 0.0);
         controls.config.style = 1;
         assert!(controls.value("Wii/Tilt/Right") > 0.0);
+    }
+    #[test]
+    fn mario_kart_mouse_calibration_keeps_center_and_gamepad_range() {
+        let mut controls =
+            Controls::open(Path::new("/tmp/emulia-no-calibration-config.json")).unwrap();
+        controls.game_defaults("RMCE01");
+        controls.pointer([0.5, -0.5], 0, true);
+        assert_eq!(controls.value("Wii/IR/Right"), 0.375);
+        assert_eq!(controls.value("Wii/IR/Down"), 0.48);
+        controls.pointer([0.0, 0.0], 0, true);
+        assert_eq!(controls.value("Wii/IR/Right"), 0.0);
+        controls.config.mouse_range = Some([0.5, 0.8]);
+        controls.pointer([0.5, -0.5], 0, true);
+        assert_eq!(controls.value("Wii/IR/Right"), 0.25);
+        controls.clear();
+        controls.axes.insert(Axis::RightX.string(), 32767);
+        assert_eq!(controls.value("Wii/IR/Right"), 1.0);
+        let old: Config =
+            serde_json::from_str(r#"{"version":1,"style":2,"maps":{},"mouse":true}"#).unwrap();
+        assert!(old.mouse_range.is_none());
+        let decoded: Config =
+            serde_json::from_slice(&serde_json::to_vec(&controls.config).unwrap()).unwrap();
+        assert_eq!(decoded.mouse_range, Some([0.5, 0.8]));
+        controls.game_defaults("OTHER");
+        controls.config.mouse_range = None;
+        controls.pointer([0.5, 0.0], 0, true);
+        assert_eq!(controls.value("Wii/IR/Right"), 0.5);
     }
     #[test]
     fn analog_deadzone_retains_range_and_direction() {

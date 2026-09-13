@@ -164,8 +164,13 @@ Keyboard/gamepad pointer movement takes over until the mouse moves again.
 New Wii entries default to Remote + Nunchuk; existing per-game choices persist.
 Unit tests cover mouse direction, bounds, click clearing and controller handoff;
 manual mouse tracking/click feel still needs user verification.
+The user's off-center overshoot report led to renderer aspect-ratio compensation
+and measured USA Mario Kart Wii mouse defaults (horizontal 0.75, vertical 0.96).
+Settings now stores independent per-game range overrides. Copied-session captures
+at right/up/diagonal points confirm the large overshoot is corrected; geometry
+regressions cover letterboxes, pillarboxes and Retina scaling.
 
-Feature tests: 147 pass, one optional SNES fixture test ignored; strict Clippy
+Feature tests: 148 pass, one optional SNES fixture test ignored; strict Clippy
 passes. Default packaging still uses the external launcher. Physical gamepad feel,
 additional players/rumble, extended Wii motion compatibility, Linux embedding,
 Android embedding and portable Dolphin packaging remain follow-up work. See the

@@ -43,6 +43,9 @@ def main():
     processes = subprocess.check_output(['ps', '-axo', 'command='], text=True).splitlines()
     if any(line.startswith(str(executable) + ' ') or line == str(executable) for line in processes):
         raise RuntimeError('Close this probe app before rebuilding it')
+    geometry_test = work / 'pointer-geometry-test'
+    run('c++', '-std=c++20', HERE / 'pointer_geometry_test.cpp', '-o', geometry_test)
+    run(geometry_test)
     source, build = work / 'source', work / 'build'
     if not source.exists():
         run('git', 'clone', '--depth', '1', '--branch', '2606a',

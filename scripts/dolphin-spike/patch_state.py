@@ -59,4 +59,5 @@ bool LoadAsChecked(Core::System& system, const std::string& filename)
         path = source / relative
         if path.read_text() not in (original, text):
             raise RuntimeError(f'{relative} has unrelated edits; use a fresh work directory')
-        path.write_text(text)
+        if path.read_text() != text:
+            path.write_text(text)

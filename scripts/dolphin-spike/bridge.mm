@@ -17,6 +17,7 @@
 #include "Core/State.h"
 #include "Core/HW/ProcessorInterface.h"
 #include "controls.inc"
+#include "pointer_geometry.h"
 
 static NSView* s_view;
 static std::atomic<bool> s_stop{false};
@@ -136,7 +137,14 @@ extern "C" unsigned int emulia_dolphin_pointer(double* xy) {
   const NSPoint point = [s_view convertPoint:[s_view.window mouseLocationOutsideOfEventStream] fromView:nil];
   const NSRect bounds = s_view.bounds;
   if (bounds.size.width <= 0 || bounds.size.height <= 0 || !NSPointInRect(point, bounds)) return 0;
-  xy[0] = 2.0 * (point.x - bounds.origin.x) / bounds.size.width - 1.0;
-  xy[1] = 2.0 * (point.y - bounds.origin.y) / bounds.size.height - 1.0;
+  // Match Quartz::KeyboardAndMouse: the presenter updates this atomic scale
+  // when the aspect ratio or surface changes. Whole-view normalization alone
+  // is correct at the center but drifts toward letterboxed/pillarboxed edges.
+  const auto scale = g_controller_interface.GetWindowInputScale();
+  const auto position = GamePointer(point.x - bounds.origin.x, point.y - bounds.origin.y,
+                                    bounds.size.width, bounds.size.height, scale.x, scale.y);
+  if (!position) return 0;
+  xy[0] = (*position)[0];
+  xy[1] = (*position)[1];
   return 0x80000000u | (static_cast<unsigned int>([NSEvent pressedMouseButtons]) & 3u);
 }
