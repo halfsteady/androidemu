@@ -22,9 +22,10 @@ use std::{
 };
 
 const HELP: &str = "Emulia desktop
-Usage: nes-desktop [rom.nes] [--data-dir <directory>] [--mute] [--frames <count>]
+Usage: nes-desktop [rom.nes|rom.sfc|rom.smc] [--data-dir <directory>] [--mute] [--frames <count>]
 With no ROM the shelf opens. A ROM path is added to the shelf and opened.
 Arrows: move   Z: B   X: A   Enter: Start   Right Shift: Select
+SNES: A key = Y, S key = X, Q/W = L/R; controller shoulders play L/R, triggers control time
 Escape or Space: pause menu   F11: full screen   F5 / F8: save / load slot 1
 Hold . or , to fast-forward or rewind (Shift for faster); Backspace jumps back 5 s (Shift: 15 s)
 --frames runs a finite number of frames without a window (also useful with SDL dummy drivers).
@@ -94,14 +95,14 @@ pub fn import(library: &Library, path: &Path) -> Result<Game, String> {
     library.add(&engine.id(), &title, &bytes)
 }
 
-pub fn open_audio(sdl: &sdl2::Sdl) -> Result<Box<dyn Audio>, String> {
+pub fn open_audio(sdl: &sdl2::Sdl, channels: u8) -> Result<Box<dyn Audio>, String> {
     let subsystem = sdl.audio()?;
     let queue = subsystem
         .open_queue::<f32, _>(
             None,
             &sdl2::audio::AudioSpecDesired {
                 freq: Some(48_000),
-                channels: Some(1),
+                channels: Some(channels),
                 samples: Some(512),
             },
         )
@@ -121,7 +122,7 @@ fn headless(options: &Options, frames: u64) -> Result<(), String> {
     let audio = if options.mute {
         None
     } else {
-        Some(open_audio(&sdl)?)
+        Some(open_audio(&sdl, game.audio_channels())?)
     };
     let (mut session, warnings) = Session::open(&library, game, audio)?;
     for warning in &warnings {
@@ -138,9 +139,12 @@ fn headless(options: &Options, frames: u64) -> Result<(), String> {
     let mut done = 0;
     while done < frames {
         done += session
-            .advance(nes_core::Buttons(0), nes_core::Buttons(0))
+            .advance(emulation_api::Buttons(0), emulation_api::Buttons(0))
             .frames as u64;
         if let Some(e) = session.take_error() {
+            if session.paused {
+                return Err(e);
+            }
             eprintln!("{e}");
         }
         std::thread::sleep(session.until_due().max(Duration::from_millis(1)));
@@ -160,6 +164,13 @@ fn run() -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
+    // Before SDL or any worker thread starts: match the installed desktop ID.
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("SDL_VIDEO_X11_WMCLASS", "com.bsteinfeld.emulia");
+        std::env::set_var("SDL_VIDEO_WAYLAND_WMCLASS", "com.bsteinfeld.emulia");
+    }
+    sdl2::hint::set("SDL_APP_NAME", "Emulia");
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

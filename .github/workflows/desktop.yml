@@ -2,9 +2,9 @@ name: Desktop portability
 
 on:
   push:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "cores/**", "emulation-api/**", "emulation-runtime/**", "vendor/jgenesis/**", "rust-toolchain.toml", "LICENSES/**", "scripts/build-desktop*.py", "docs/DESKTOP*.md", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
   pull_request:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "cores/**", "emulation-api/**", "emulation-runtime/**", "vendor/jgenesis/**", "rust-toolchain.toml", "LICENSES/**", "scripts/build-desktop*.py", "docs/DESKTOP*.md", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:
@@ -19,19 +19,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config build-essential libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config build-essential libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev dpkg-dev
       - name: Test core and runner
         run: cargo test --locked -p nes-core -p nes-runner
       - name: Build portable executables
         run: cargo build --release --locked -p nes-desktop -p nes-runner
       - name: Test desktop persistence
-        run: cargo test --locked -p nes-desktop
+        run: cargo test --locked -p nes-desktop -p snes-adapter -p nes-adapter -p emulation-runtime -p emulation-api
       - name: Lint core, runner and desktop
         run: cargo clippy --locked -p nes-core -p nes-runner -p nes-desktop --all-targets --no-deps -- -D warnings
       - name: Exercise SDL video and audio
@@ -48,12 +49,16 @@ jobs:
           name: accuracycoin-${{ runner.os }}-${{ runner.arch }}
           path: ${{ runner.temp }}/accuracycoin.json
           if-no-files-found: ignore
-      - name: Package
-        run: |
-          mkdir -p dist
-          cp target/release/nes-desktop target/release/nes-runner docs/DESKTOP.md dist/
-          tar -czf emulia-${{ runner.os }}-${{ runner.arch }}.tar.gz -C dist .
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: python3 scripts/build-desktop.py dmg --skip-build
+      - name: Package Debian app
+        if: runner.os == 'Linux'
+        run: python3 scripts/build-desktop.py deb --skip-build
       - uses: actions/upload-artifact@v4
         with:
           name: emulia-${{ runner.os }}-${{ runner.arch }}
-          path: emulia-*.tar.gz
+          path: target/packages/*

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Emulia
+GenericName=Console Emulator
+Comment=Play NES and SNES games from your library
+Exec=/opt/emulia/bin/Emulia %f
+TryExec=/opt/emulia/bin/Emulia %f
+Icon=com.bsteinfeld.emulia
+Terminal=false
+Categories=Game;Emulator;
+Keywords=NES;SNES;Nintendo;retro;games;emulator;
+StartupWMClass=com.bsteinfeld.emulia
+StartupNotify=false

@@ -135,7 +135,8 @@ impl App {
         if self.scrub_fraction != 0.0 {
             crate::scrub::speed(self.scrub_fraction)
         } else {
-            self.input.time_speed()
+            self.input
+                .game_time_speed(self.session.as_ref().is_some_and(|s| s.engine.is_snes()))
         }
     }
 
@@ -260,7 +261,7 @@ impl App {
     pub fn sample_source(&self) -> Vec<u8> {
         let standard = self.settings.palette == picture::PaletteChoice::Standard;
         if let Some(session) = &self.session {
-            if standard {
+            if standard || session.engine.is_snes() {
                 return session.engine.frame().to_vec();
             }
         } else if standard {
@@ -606,7 +607,7 @@ fn dropped(app: &App, path: PathBuf) -> Action {
 
 fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) {
     let name = profile.name.clone();
-    let keyboard = key == Profiles::KEYBOARD;
+    let keyboard = key == Profiles::KEYBOARD || key == "snes:keyboard";
     app.input.set_profile(key, profile);
     app.wizard = None;
     // The same way out as cancelling it: back to the pause panel over a game,
@@ -650,7 +651,7 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
     app.scrub_fraction = 0.0;
     app.input.clear();
     let audio = match sdl {
-        Some(sdl) => match crate::open_audio(sdl) {
+        Some(sdl) => match crate::open_audio(sdl, game.audio_channels()) {
             Ok(a) => Some(a),
             Err(e) => {
                 app.report("Sound couldn't be started.", &e);
@@ -771,7 +772,7 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         // the shelf is the only screen that raises either of these.
         Action::Import => {
             let picked = rfd::FileDialog::new()
-                .add_filter("NES game", &["nes"])
+                .add_filter("NES / SNES game", &["nes", "sfc", "smc"])
                 .set_title("Add a game")
                 .pick_file();
             if let Some(path) = picked {
@@ -922,11 +923,21 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             if let Some(session) = &mut app.session {
                 let frames = session.engine.frames_for(seconds);
                 let mut done = 0;
-                while done < frames && session.engine.rewind_step() {
-                    done += 1;
+                let mut failure = None;
+                while done < frames {
+                    match session.engine.rewind_step() {
+                        Ok(true) => done += 1,
+                        Ok(false) => break,
+                        Err(e) => {
+                            failure = Some(e);
+                            break;
+                        }
+                    }
                 }
                 app.frame_dirty |= done > 0;
-                if done < frames {
+                if let Some(e) = failure {
+                    app.report("Couldn’t rewind this game.", &e);
+                } else if done < frames {
                     app.notice(END_OF_TAPE);
                 }
             }
@@ -1048,7 +1059,9 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             }
         }
         Action::StartWizard => {
-            app.wizard = Some(Wizard::new());
+            app.wizard = Some(Wizard::for_system(
+                app.session.as_ref().is_some_and(|s| s.engine.is_snes()),
+            ));
             app.panel = Panel::Mapping;
             // Whatever is held down belongs to the game behind the panel, not
             // to the four presses about to be read.
@@ -1143,7 +1156,13 @@ fn handle_event(
                         if app.playing() {
                             app.actions.push(Action::JumpBack(seconds));
                         }
-                    } else if start_resumes(app) && app.input.is_start(None, &key_name(*scancode)) {
+                    } else if start_resumes(app)
+                        && app.input.game_is_start(
+                            None,
+                            &key_name(*scancode),
+                            app.session.as_ref().is_some_and(|s| s.engine.is_snes()),
+                        )
+                    {
                         app.actions.push(Action::Resume);
                     } else {
                         app.input.key(*scancode, true);
@@ -1196,7 +1215,13 @@ fn handle_event(
                 }
                 return;
             }
-            if start_resumes(app) && app.input.is_start(Some(*which), &physical) {
+            if start_resumes(app)
+                && app.input.game_is_start(
+                    Some(*which),
+                    &physical,
+                    app.session.as_ref().is_some_and(|s| s.engine.is_snes()),
+                )
+            {
                 app.actions.push(Action::Resume);
             }
             app.input.pad_button(*which, *button, true);
@@ -1248,6 +1273,17 @@ pub fn run(options: Options) -> Result<(), String> {
         .opengl()
         .build()
         .map_err(|e| e.to_string())?;
+    let mut icon = image::load_from_memory(include_bytes!("../packaging/icons/Emulia.png"))
+        .map_err(|e| format!("Cannot decode application icon: {e}"))?
+        .into_rgba8();
+    let surface = sdl2::surface::Surface::from_data(
+        icon.as_mut(),
+        512,
+        512,
+        512 * 4,
+        sdl2::pixels::PixelFormatEnum::RGBA32,
+    )?;
+    window.set_icon(surface);
     // The one thing this shell cannot do without, and the message has to say
     // which driver refused: "OpenGL 3.3 is needed" means nothing on its own to
     // somebody running under a software renderer or a remote desktop.
@@ -1388,15 +1424,15 @@ pub fn run(options: Options) -> Result<(), String> {
                 || app.busy
                 || app.wizard.is_some();
             let (p1, p2) = if session.paused {
-                (nes_core::Buttons(0), nes_core::Buttons(0))
+                (emulation_api::Buttons(0), emulation_api::Buttons(0))
             } else {
-                app.input.buttons()
+                app.input.game_buttons(session.engine.is_snes())
             };
             let advanced = session.advance(p1, p2);
             hit_end = advanced.hit_end;
             trouble = session
                 .take_error()
-                .map(|e| (session.game.title.clone(), e));
+                .map(|e| (session.game.title.clone(), e, session.paused));
             app.rewind_depth = session.engine.rewind_depth();
             queued_ms = session.audio_ms();
             app.frame_dirty |= advanced.frames > 0;
@@ -1408,8 +1444,13 @@ pub fn run(options: Options) -> Result<(), String> {
         if hit_end {
             app.notice(END_OF_TAPE);
         }
-        if let Some((title, detail)) = trouble {
-            app.library.log_problem(&title, &detail);
+        if let Some((title, detail, stopped)) = trouble {
+            if stopped {
+                app.panel = Panel::Pause;
+                app.report(&format!("{title}: playback stopped."), &detail);
+            } else {
+                app.library.log_problem(&title, &detail);
+            }
         }
         // 5. Picture and panels.
         let (dw, dh) = window.drawable_size();
@@ -1421,7 +1462,11 @@ pub fn run(options: Options) -> Result<(), String> {
         }
         if app.session.is_some() {
             let uploaded = match (&app.session, app.frame_dirty) {
-                (Some(session), true) => video.upload(session.engine.frame()),
+                (Some(session), true) => video.upload_frame(
+                    session.engine.frame(),
+                    session.engine.video_descriptor(),
+                    !session.engine.is_snes(),
+                ),
                 _ => Ok(()),
             };
             match uploaded {
@@ -1604,6 +1649,7 @@ mod tests {
         let dir = temp_dir("shell-wizard");
         let mut app = App::blank(&dir);
         let profile = crate::settings::Profile {
+            snes: Default::default(),
             name: "Keyboard".into(),
             a: "X".into(),
             b: "Z".into(),
@@ -2082,7 +2128,11 @@ mod tests {
         assert_eq!(app.time_speed(), crate::scrub::MAX);
         // Back in the middle, the keys have it again.
         app.scrub_fraction = 0.0;
-        assert_eq!(app.time_speed(), app.input.time_speed());
+        assert_eq!(
+            app.time_speed(),
+            app.input
+                .game_time_speed(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2213,7 +2263,13 @@ mod tests {
         let _ = std::fs::remove_file(&battery);
         focus_lost(&mut app);
         assert!(app.actions.is_empty(), "{:?}", app.actions);
-        assert_eq!(app.input.buttons().0 .0, 0);
+        assert_eq!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         assert!(!battery.exists());
         assert_eq!(app.message, None);
         app.panel = Panel::None;
@@ -2223,11 +2279,23 @@ mod tests {
         app.settings.pause_on_focus_loss = false;
         assert_eq!(on_focus_lost(&app), None);
         app.input.key(Scancode::X, true);
-        assert_ne!(app.input.buttons().0 .0, 0);
+        assert_ne!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         let _ = std::fs::remove_file(&battery);
         focus_lost(&mut app);
         assert!(app.actions.is_empty(), "{:?}", app.actions);
-        assert_eq!(app.input.buttons().0 .0, 0);
+        assert_eq!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         assert!(battery.exists());
         assert_eq!(app.message, None);
         // With it on, the pause is what does both, so nothing happens here
@@ -2236,7 +2304,13 @@ mod tests {
         app.input.key(Scancode::X, true);
         focus_lost(&mut app);
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::Pause]);
-        assert_eq!(app.input.buttons().0 .0, 0);
+        assert_eq!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -15,11 +15,43 @@ Do not replace the shell with the earlier Compose desktop frontend. Shared
 abstractions should serve necessary integration changes rather than force a rewrite
 of the already working NES path.
 
-The initial checkpoint recovers the earlier API/runtime/adapter crates, pinned
-jgenesis sources, isolated probes and research documents. They are not yet wired
-into this branch's workspace or desktop executable. PR #6's engine and GUI are
-unchanged at this checkpoint. Earlier Compose packages and their validation results
-below are historical; they do not validate the new PR #6 integration.
+## September 13: native desktop integration
+
+PR #7 targets `feat/desktop-shell` (PR #6), not main. The recovered API/runtime
+and adapters are now members of the Cargo workspace. The original NES engine
+is unchanged, moved to `desktop/src/engine/nes.rs`; an enum dispatches to it or
+the jgenesis SNES engine. No NES hardware code was changed.
+
+Implemented in the existing shell: SNES import with canonical copier-header
+identity; separate game.sfc storage; native frame dimensions/aspect; stereo audio;
+existing slots, thumbnails, screenshots, battery recovery and autosaves; bounded
+rewind; silent SNES fast-forward; separate 12-button keyboard/gamepad profiles
+through the existing wizard. SNES shoulders are gameplay inputs, triggers control
+time. NES palettes/overscan settings remain NES-specific.
+
+Native packaging replaces the earlier Compose packaging: macOS app/DMG,
+Debian and RPM, brand icon, X11/Wayland application ID, desktop entry, AppStream
+metadata, source archives and license notices. Build commands are in
+[DESKTOP-PACKAGING.md](DESKTOP-PACKAGING.md). Generated packages live under
+`target/packages/`; older ignored `desktop-ui/build` artifacts are obsolete.
+
+Verified locally: original 130-test desktop baseline; expanded desktop tests;
+strict desktop Clippy; shared runtime and adapter tests; Super Mario World
+first-level route, exact state replay, rewind and autosave reopening on macOS
+arm64; packaged NES/SNES executable smoke checks on macOS arm64 and Debian 12
+arm64; Debian installation, metadata, actual window/pause/settings rendering
+under Xvfb/Mesa, WM_CLASS and icon; macOS bundle signature and DMG integrity.
+RPM builds, but installation on an RPM distribution is not qualified. CI covers
+Linux/macOS arm64 and x64; remote status must be checked separately.
+
+See [SNES-SMW-QUALIFICATION.md](SNES-SMW-QUALIFICATION.md) for exact evidence and
+limits. Manual audio/input assessment, real in-game SRAM checkpoint, extended
+compatibility and physical desktop sessions remain acceptance work. Android
+integration from the earlier checkpoint has not yet been restored onto this
+branch; Android itself remains the PR #6 version. Physical tablet validation
+is deferred, not a blocker. Dolphin remains a separate subsequent milestone.
+Do not resurrect the shared Compose desktop: the user's explicit PR #6
+foundation decision supersedes that part of the original feasibility plan.
 
 All previous uncommitted work, including the interrupted Compose UI edits, is
 preserved in stash commit `d59231721ac68868d82dd2a10fb92a2ab6f87b26`, also retained by

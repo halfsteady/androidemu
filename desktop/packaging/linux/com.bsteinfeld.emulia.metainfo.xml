@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.bsteinfeld.emulia</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Emulia</name>
+  <summary>Play NES and SNES games from your library</summary>
+  <description>
+    <p>A local game library with save states, rewind, fast-forward and gamepad support. Bring your own game files; no games are included.</p>
+  </description>
+  <launchable type="desktop-id">com.bsteinfeld.emulia.desktop</launchable>
+  <url type="homepage">https://github.com/bsteinfeld/androidemu</url>
+  <url type="bugtracker">https://github.com/bsteinfeld/androidemu/issues</url>
+  <categories><category>Game</category><category>Emulator</category></categories>
+  <provides><binary>emulia</binary></provides>
+  <supports><control>pointing</control><control>keyboard</control><control>gamepad</control></supports>
+  <releases><release version="0.1.0" date="2026-09-13"/></releases>
+</component>

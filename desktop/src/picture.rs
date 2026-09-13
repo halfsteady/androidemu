@@ -64,7 +64,24 @@ pub fn trim_fraction(trim: bool) -> f32 {
 /// Television and hardware scale continuously; pixel-perfect drops to the next
 /// whole multiple, so it leaves a wider border rather than resample.
 pub fn layout(surface_width: i32, surface_height: i32, aspect: Aspect, trim: bool) -> Viewport {
-    let visible = visible_height(trim);
+    layout_frame(
+        surface_width,
+        surface_height,
+        aspect,
+        WIDTH as i32,
+        visible_height(trim),
+        PIXEL_ASPECT,
+    )
+}
+
+pub fn layout_frame(
+    surface_width: i32,
+    surface_height: i32,
+    aspect: Aspect,
+    cols: i32,
+    visible: i32,
+    pixel_aspect: f32,
+) -> Viewport {
     if surface_width <= 0 || surface_height <= 0 {
         return Viewport {
             x: 0,
@@ -75,16 +92,14 @@ pub fn layout(surface_width: i32, surface_height: i32, aspect: Aspect, trim: boo
     }
     let (width, height) = match aspect {
         Aspect::Pixels => {
-            let scale = (surface_width / WIDTH as i32)
-                .min(surface_height / visible)
-                .max(1);
-            (WIDTH as i32 * scale, visible * scale)
+            let scale = (surface_width / cols).min(surface_height / visible).max(1);
+            (cols * scale, visible * scale)
         }
         _ => {
             let target = if aspect == Aspect::Television {
                 4.0 / 3.0
             } else {
-                WIDTH as f32 * PIXEL_ASPECT / visible as f32
+                cols as f32 * pixel_aspect / visible as f32
             };
             let width = (surface_width as f32).min(surface_height as f32 * target);
             (width as i32, (width / target) as i32)
@@ -397,6 +412,17 @@ mod tests {
 
     fn aspect_of(v: Viewport) -> f32 {
         v.width as f32 / v.height as f32
+    }
+
+    #[test]
+    fn snes_hires_and_interlace_use_the_frame_geometry() {
+        let hires = layout_frame(1024, 896, Aspect::Pixels, 512, 224, 4.0 / 7.0);
+        assert_eq!((hires.width, hires.height), (1024, 448));
+        let interlace = layout_frame(1024, 896, Aspect::Pixels, 512, 448, 8.0 / 7.0);
+        assert_eq!((interlace.width, interlace.height), (1024, 896));
+        let low = layout_frame(1024, 896, Aspect::Hardware, 256, 224, 8.0 / 7.0);
+        let high = layout_frame(1024, 896, Aspect::Hardware, 512, 224, 4.0 / 7.0);
+        assert_eq!(low, high);
     }
 
     #[test]

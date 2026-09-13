@@ -1,61 +1,70 @@
-# Super Mario World: initial macOS qualification
+# Super Mario World qualification
 
-Tested September 13, 2026 on macOS arm64, using the user's local ROM. ROM data,
-rendered frames, states and battery data are kept outside the repository.
+Tested September 13, 2026 using the user's local ROM. ROM data, rendered frames,
+states and battery files remain outside the repository and distributable packages.
 
 - Canonical SHA256: `0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b`
-- Header title: `SUPER MARIOWORLD`; 524,288 bytes; LoROM; 2 KiB battery SRAM.
-- Adapter: `jgenesis-snes`, upstream `b1419eface3147568b2247d33b6bdb6695adfe06`.
-- Native frame rate: 60.098800 Hz; stereo output at 48 kHz; ESNS state version 1.
+- Header: `SUPER MARIOWORLD`; 524,288 bytes; LoROM; 2 KiB battery SRAM.
+- Adapter: jgenesis SNES at `b1419eface3147568b2247d33b6bdb6695adfe06`.
+- Timing: 60.098800 Hz; 48 kHz stereo; ESNS state version 1.
 
-## Observed results
+## Current PR #6 desktop-shell integration
+
+The authoritative frontend is the existing Rust/SDL/egui shell, on the
+`multisystem/desktop-shell` branch targeting `feat/desktop-shell` through PR #7.
+Earlier Compose screenshots and tests describe a superseded frontend.
 
 | Check | Evidence |
 |---|---|
-| Boot, menus, overworld, first level | Rendered checkpoints inspected; first-level image also captured from the Compose player |
-| Input | Scripted menu selection, overworld movement, level entry and right/jump change gameplay |
-| Restore/replay | 120 identical inputs reproduce the exact final state and every frame's video/audio hash |
-| Restored preview | Matches the saved frame immediately; transient audio clears |
-| Fresh-core restore | A newly constructed adapter accepts the disk checkpoint and reproduces its state |
-| Battery import/export | 2,048 bytes round-trip into a fresh adapter; this does **not** verify game progress saved at an in-game save point |
-| Rewind | 600 captured frames retained in the 64 MiB history budget in the sampled scene; exhaustion holds without advancing |
-| Fast-forward and recovery | Multi-frame batches deliver no audio to the host; normal single-frame playback produces audio after restore |
-| Stereo | Both channels contain finite, nonzero samples and differ during gameplay; this is not an audio-fidelity comparison |
-| Desktop lifecycle | Local-ROM Compose test loads a level checkpoint, renders, pauses on focus loss, resumes, writes an exact autosave and exits without audio initialization errors |
-| Regression | Seven desktop tests pass with the local-ROM test enabled; strict adapter/example Clippy passes |
+| Scripted first-level route | Local-ROM desktop session test reaches Yoshi's Island 1; saved thumbnail inspected |
+| State replay | Save slot load followed by 120 identical inputs reproduces the exact final serialized state |
+| Restored preview | Slot load immediately restores the saved RGBA frame |
+| Rewind | Reverses all 120 frames exactly to the saved checkpoint; exhaustion holds |
+| Autosave | Closing/reopening through the desktop library restores the same frame |
+| Actual Linux window | Installed Debian arm64 app renders the game, original pause panel and live settings preview under Xvfb/Mesa |
+| Stereo and persistence | Packaged macOS and Linux executable smoke tests use a generated SNES ROM with the real SDL audio queue; SRAM survives restart and copier-header import deduplicates |
+| Session parity | Generated SNES session test covers slots/thumbnails, reset retaining SRAM, rewind exhaustion, muted fast-forward and normal audio recovery |
+| Input | Keyboard mapping test covers all 12 controls and separate NES/SNES profiles; SDL virtual-controller test covers shoulders versus time triggers |
 
-The first-level adapter-only measurements captured 600 frames at approximately
-117 fps with history and approximately 120 fps in batches of four. These short
-samples are about 2× normal speed, not sustained 4× qualification or a Compose
-render/audio benchmark. Generated-ROM performance is not substituted for game data.
+The original PR #6 NES engine is byte-for-byte unchanged in
+`desktop/src/engine/nes.rs`. Existing desktop tests and the original NES executable
+smoke checks continue to pass. Linux desktop integration here is exercised in a
+Debian container, not a physical GNOME/KDE session or a Wayland compositor.
 
-## Reproduce locally
+## Reproduce
 
-Use the rustup Cargo proxy and Java 17. Provide your own ROM; the script contains
-only frame counts and input masks. It assumes a fresh power-on without a battery
-save. Checkpoints should be inspected when changing the ROM revision or core.
+Use the pinned Rust toolchain; no Java runtime is required for the desktop shell.
 
 ```sh
-SMW_ROM="$HOME/Downloads/Super Mario World (USA).sfc"
-cargo run --locked --release -p snes-adapter --example qualify -- \
-  "$SMW_ROM" /tmp/emulia-smw-check scripts/snes-smw-sequence.txt
+EMULIA_SMW_ROM='/path/to/Super Mario World (USA).sfc' \
+  cargo test --release --locked -p nes-desktop \
+  super_mario_world_desktop_session -- --ignored --nocapture
 
-EMULIA_SNES_ROM="$SMW_ROM" \
-EMULIA_SNES_STATE=/tmp/emulia-smw-check/level-start.state \
-EMULIA_SNES_SCREENSHOT=/tmp/emulia-smw-desktop.png \
-  ./android/gradlew -p android -PdesktopOnly :desktop-ui:test
+cargo run --release --locked -p nes-desktop -- '/path/to/Super Mario World (USA).sfc'
 ```
 
-The example also accepts an initial state after the script argument and
-`--capture-only` to inspect a shorter input sequence without running the assertions
-and timing samples. Outputs include PPM frames and ESNS states. The optional desktop
-test uses a temporary library and leaves the user's normal library untouched. Without
-`EMULIA_SNES_ROM`, that one test explicitly skips; generated-ROM tests still run.
+The optional test uses a separate temporary library and prints its artifact path.
+It is explicitly ignored in ordinary CI because the ROM is not distributed.
+
+The independent adapter probe remains available:
+
+```sh
+cargo run --locked --release -p snes-adapter --example qualify -- \
+  '/path/to/Super Mario World (USA).sfc' /tmp/emulia-smw-check scripts/snes-smw-sequence.txt
+```
+
+Earlier adapter measurements on macOS arm64 captured 600 first-level frames at
+about 117 fps with history and 120 fps in four-frame batches. These are short
+adapter samples, about 2× normal speed, not a sustained 4× desktop claim. The
+adapter probe also checks per-frame video/audio hashes, finite distinct stereo
+channels, fresh-core restore and battery byte round-tripping.
 
 ## Remaining acceptance
 
-Complete an in-game save and verify progress after a battery-only restart; exercise
-later levels, longer sessions and manual gameplay; listen for glitches and assess
-input latency. Linux runtime/package execution and sustained playback/performance
-qualification remain open. Enhancement chips remain gated. These results qualify
-an initial integration smoke test, not the entire game or the completed SNES milestone.
+Complete an in-game save and verify progress after a battery-only restart;
+exercise later levels, longer sessions and manual gameplay; listen for glitches
+and assess input latency. An SRAM byte round-trip is not proof of an in-game
+save checkpoint. Enhancement chips remain gated. Physical controllers, actual
+GNOME/KDE/Wayland sessions and macOS Intel are additional qualification targets.
+Android recovery from the previous checkpoint remains separate follow-up work;
+physical tablet checks stay deferred to the coworker.

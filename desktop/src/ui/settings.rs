@@ -56,14 +56,24 @@ fn refresh_preview(ctx: &egui::Context, app: &mut App, video: &mut Video) {
         return;
     }
     let source = app.sample_source();
-    let drawn = video.preview(
-        &source,
-        app.settings.look,
-        app.settings.aspect,
-        app.settings.trim_edges,
-        PREVIEW_WIDTH,
-        PREVIEW_HEIGHT,
-    );
+    let (descriptor, nes) = app
+        .session
+        .as_ref()
+        .filter(|session| {
+            session.engine.is_snes() || app.settings.palette == PaletteChoice::Standard
+        })
+        .map(|session| (session.engine.video_descriptor(), !session.engine.is_snes()))
+        .unwrap_or((crate::engine::nes_video_descriptor(), true));
+    let drawn = video.upload_frame(&source, descriptor, nes).and_then(|()| {
+        video.preview(
+            &source,
+            app.settings.look,
+            app.settings.aspect,
+            app.settings.trim_edges,
+            PREVIEW_WIDTH,
+            PREVIEW_HEIGHT,
+        )
+    });
     refreshed(app);
     match drawn {
         Ok(rgba) => {
@@ -144,39 +154,41 @@ fn settings(ctx: &egui::Context, app: &mut App) {
         }
         widgets::note(ui, settings.look.note());
 
-        widgets::section(ui, "Colours");
-        if let Some(p) = widgets::choice_row(
-            ui,
-            "colours",
-            &PaletteChoice::ALL,
-            settings.palette,
-            PaletteChoice::label,
-        ) {
-            // Choosing a file with no file imported asks for one rather than
-            // quietly selecting a palette that would fall back to Standard.
-            app.actions.push(if p == PaletteChoice::File && !has_file {
-                Action::ImportPalette
-            } else {
-                Action::SetPalette(p)
-            });
-        }
-        widgets::note(ui, settings.palette.note());
-        if settings.palette == PaletteChoice::File
-            && widgets::value_row(ui, "Palette file", "Load a different .pal file", "Replace")
-                .clicked()
-        {
-            app.actions.push(Action::ImportPalette);
-        }
+        if !app.session.as_ref().is_some_and(|s| s.engine.is_snes()) {
+            widgets::section(ui, "Colours");
+            if let Some(p) = widgets::choice_row(
+                ui,
+                "colours",
+                &PaletteChoice::ALL,
+                settings.palette,
+                PaletteChoice::label,
+            ) {
+                // Choosing a file with no file imported asks for one rather than
+                // quietly selecting a palette that would fall back to Standard.
+                app.actions.push(if p == PaletteChoice::File && !has_file {
+                    Action::ImportPalette
+                } else {
+                    Action::SetPalette(p)
+                });
+            }
+            widgets::note(ui, settings.palette.note());
+            if settings.palette == PaletteChoice::File
+                && widgets::value_row(ui, "Palette file", "Load a different .pal file", "Replace")
+                    .clicked()
+            {
+                app.actions.push(Action::ImportPalette);
+            }
 
-        widgets::section(ui, "Picture");
-        let mut trim = settings.trim_edges;
-        if widgets::switch_row(
-            ui,
-            "Trim the edges",
-            "Hides the 8 rows a television lost to overscan",
-            &mut trim,
-        ) {
-            app.actions.push(Action::SetTrim(trim));
+            widgets::section(ui, "Picture");
+            let mut trim = settings.trim_edges;
+            if widgets::switch_row(
+                ui,
+                "Trim the edges",
+                "Hides the 8 rows a television lost to overscan",
+                &mut trim,
+            ) {
+                app.actions.push(Action::SetTrim(trim));
+            }
         }
 
         widgets::section(ui, "Play");
@@ -194,7 +206,11 @@ fn settings(ctx: &egui::Context, app: &mut App) {
         if widgets::value_row(
             ui,
             "Controller buttons",
-            "Map A, B, Select and Start for a controller, or all eight keys for the keyboard",
+            if app.session.as_ref().is_some_and(|s| s.engine.is_snes()) {
+                "Map all SNES buttons; triggers control time"
+            } else {
+                "Map A, B, Select and Start for a controller, or all eight keys for the keyboard"
+            },
             "Set up",
         )
         .clicked()

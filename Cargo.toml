@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["core", "runner", "native", "desktop"]
+members = ["core", "runner", "native", "desktop", "emulation-api", "emulation-runtime", "cores/nes-adapter", "cores/snes-adapter", "cores/synthetic"]
+exclude = ["vendor/jgenesis"]
 default-members = ["core", "runner", "native"]
 
 [workspace.package]

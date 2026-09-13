@@ -26,6 +26,16 @@ pub struct Game {
     pub archived: bool,
 }
 
+impl Game {
+    pub fn audio_channels(&self) -> u8 {
+        if self.id.starts_with("snes-") {
+            2
+        } else {
+            1
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Auto,
@@ -193,7 +203,11 @@ impl Library {
     }
 
     pub fn rom_path(&self, id: &str) -> PathBuf {
-        self.folder(id).join("game.nes")
+        self.folder(id).join(if id.starts_with("snes-") {
+            "game.sfc"
+        } else {
+            "game.nes"
+        })
     }
     pub fn battery_path(&self, id: &str) -> PathBuf {
         self.folder(id).join("battery.sav")

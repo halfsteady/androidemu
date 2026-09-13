@@ -14,9 +14,43 @@ settings previewed by the real shader; and two controller ports with a mapping
 wizard. The saves and the folder layout are Android's, file for file. Colour
 emphasis remains a core limitation.
 
+## SNES in the existing shell
+
+The same shelf and session now select jgenesis for standard SNES LoROM/HiROM
+cartridges (`.sfc` or `.smc`, including copier headers). The NES implementation
+from PR #6 remains in `desktop/src/engine/nes.rs`, with its original identity,
+state format, palettes and rewind behavior. SNES uses a separate `snes-<SHA256>`
+identity and `game.sfc` file; existing NES index entries and save paths need no
+migration. Enhancement-chip cartridges remain explicitly unsupported.
+
+SNES frames use their native dimensions and pixel aspect; audio is stereo at
+48 kHz. Save slots, screenshots, autosaves, battery recovery and rewind use the
+existing shell. SNES fast-forward is silent, with normal audio resuming afterward.
+The speed control requests a frame batch, not a guaranteed performance multiplier.
+The composite look is a visual filter, not a qualification of SNES analog output.
+NES palette and eight-row trimming controls are hidden while playing SNES.
+
+Default keyboard: arrows, Z = B, X = A, A = Y, S = X, Q/W = L/R,
+Return = Start, Right Shift = Select. Gamepad face positions follow a SNES pad;
+shoulders are L/R and triggers retain time control. The existing mapping wizard
+asks for all SNES buttons while a SNES game is open and saves a separate profile.
+NES profiles are preserved. The shelf mapping action configures NES defaults.
+
+The user-supplied Super Mario World (USA) dump is checked locally, never included
+in source or packages. Run the optional desktop session qualification with:
+
+```sh
+EMULIA_SMW_ROM='/path/to/Super Mario World (USA).sfc' cargo test --release -p nes-desktop super_mario_world_desktop_session -- --ignored --nocapture
+```
+
+This checks the scripted first-level route, state replay, rewind and autosave
+reopening. It does not claim enhancement-chip compatibility or an actual in-game
+save checkpoint. See [native packaging](DESKTOP-PACKAGING.md) for macOS app/DMG
+and Debian/RPM build paths.
+
 ## Build
 
-Use current stable Rust, a C/C++ compiler and CMake. No Android SDK, NDK, Java or
+Use the Rust version pinned in `rust-toolchain.toml`, a C/C++ compiler and CMake. No Android SDK, NDK, Java or
 separately installed SDL is needed. SDL2 is built from the locked dependency's
 sources and statically linked (see [Rust-SDL2's build documentation](https://github.com/Rust-SDL2/rust-sdl2)).
 The repository's Cargo configuration supplies compatibility policies for CMake 4
