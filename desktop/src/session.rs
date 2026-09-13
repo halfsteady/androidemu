@@ -5,8 +5,7 @@
 use crate::engine::Engine;
 use crate::files::{read_optional, write_atomic, write_png};
 use crate::library::{Game, Library, Slot};
-use crate::picture::{HEIGHT, WIDTH};
-use nes_core::Buttons;
+use emulation_api::Buttons;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -39,7 +38,7 @@ impl Audio for sdl2::audio::AudioQueue<f32> {
         sdl2::audio::AudioQueue::resume(self)
     }
     fn queued_ms(&self) -> f32 {
-        self.size() as f32 / 4.0 / 48.0
+        self.size() as f32 / 4.0 / 48.0 / self.spec().channels as f32
     }
 }
 
@@ -146,7 +145,9 @@ impl Session {
             paused = true;
         }
         let frame_time = Duration::from_secs_f64(1.0 / engine.frame_rate());
-        let target_bytes = (48_000.0 * frame_time.as_secs_f64() * 2.0).ceil() as u32 * 4;
+        let target_bytes = (48_000.0 * frame_time.as_secs_f64() * 2.0).ceil() as u32
+            * 4
+            * engine.channels() as u32;
         let now = Instant::now();
         Ok((
             Session {
@@ -217,9 +218,17 @@ impl Session {
                 a.clear();
             }
             for _ in 0..-self.scrub {
-                if !self.engine.rewind_step() {
-                    result.hit_end = true;
-                    break;
+                match self.engine.rewind_step() {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        result.hit_end = true;
+                        break;
+                    }
+                    Err(e) => {
+                        self.error = Some(e);
+                        self.paused = true;
+                        break;
+                    }
                 }
                 result.frames += 1;
             }
@@ -228,8 +237,20 @@ impl Session {
         }
         if self.scrub > 0 {
             for _ in 0..self.scrub {
-                self.engine.step(p1, p2);
+                if let Err(e) = self.engine.step(p1, p2) {
+                    self.error = Some(e);
+                    self.paused = true;
+                    break;
+                }
                 result.frames += 1;
+            }
+            // Preserve NES scrubbing audio; SNES fast-forward is silent.
+            if self.engine.is_snes() {
+                if let Some(a) = &mut self.audio {
+                    a.clear();
+                }
+                self.deadline = Instant::now();
+                return result;
             }
             // Only the last frame is heard, and only if there is room for it.
             if let Some(a) = &mut self.audio {
@@ -246,7 +267,11 @@ impl Session {
         match &mut self.audio {
             Some(a) => {
                 while a.queued_bytes() < self.target_bytes && result.frames < MAX_CATCH_UP {
-                    self.engine.step(p1, p2);
+                    if let Err(e) = self.engine.step(p1, p2) {
+                        self.error = Some(e);
+                        self.paused = true;
+                        break;
+                    }
                     result.frames += 1;
                     if let Err(e) = a.queue(self.engine.samples()) {
                         self.error = Some(e);
@@ -257,7 +282,11 @@ impl Session {
             None => {
                 let now = Instant::now();
                 while now >= self.deadline && result.frames < MAX_CATCH_UP {
-                    self.engine.step(p1, p2);
+                    if let Err(e) = self.engine.step(p1, p2) {
+                        self.error = Some(e);
+                        self.paused = true;
+                        break;
+                    }
                     result.frames += 1;
                     self.deadline += self.frame_time;
                 }
@@ -302,13 +331,13 @@ impl Session {
         let library = self.library();
         write_atomic(
             &library.state_path(&self.game.id, slot),
-            &self.engine.save_state(),
+            &self.engine.save_state()?,
         )?;
         self.flush_battery()?;
         write_png(
             &library.thumbnail_path(&self.game.id, slot),
-            WIDTH as u32,
-            HEIGHT as u32,
+            self.engine.video_descriptor().width as u32,
+            self.engine.video_descriptor().height as u32,
             self.engine.frame(),
         )
     }
@@ -361,7 +390,12 @@ impl Session {
             .collect();
         let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M.%S");
         let path = folder.join(format!("{title} {stamp}.png"));
-        write_png(&path, WIDTH as u32, HEIGHT as u32, self.engine.frame())?;
+        write_png(
+            &path,
+            self.engine.video_descriptor().width as u32,
+            self.engine.video_descriptor().height as u32,
+            self.engine.frame(),
+        )?;
         Ok(path)
     }
 
@@ -424,6 +458,117 @@ mod tests {
         dir
     }
 
+    #[test]
+    fn snes_uses_the_existing_session_slots_rewind_and_stereo_queue() {
+        let dir = temp_dir("snes-shell-session");
+        let library = Library::open(&dir).unwrap();
+        let rom = crate::engine::tests::snes_rom(true);
+        let engine = Engine::new(&rom).unwrap();
+        let game = library.add(&engine.id(), "Generated SNES", &rom).unwrap();
+        assert_eq!(library.rom_path(&game.id).extension().unwrap(), "sfc");
+        let audio = FakeAudio::default();
+        let record = audio.0.clone();
+        let (mut session, warnings) =
+            Session::open(&library, game.clone(), Some(Box::new(audio))).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(session.engine.channels(), 2);
+        assert!(session.advance(Buttons(0), Buttons(0)).frames > 0);
+        assert!(record.borrow().queued > 0);
+        session.scrub = 4;
+        assert_eq!(
+            session
+                .advance(Buttons(Buttons::Y | Buttons::L), Buttons(0))
+                .frames,
+            4
+        );
+        assert_eq!(record.borrow().queued, 0);
+        session.save(Slot::Number(1)).unwrap();
+        let state = session.engine.save_state().unwrap();
+        let frame = session.engine.frame().to_vec();
+        let (w, h, image) =
+            crate::files::read_png(&library.thumbnail_path(&game.id, Slot::Number(1))).unwrap();
+        assert_eq!(
+            (w as usize, h as usize),
+            (
+                session.engine.video_descriptor().width,
+                session.engine.video_descriptor().height
+            )
+        );
+        assert_eq!(image, frame);
+        session.scrub = -1;
+        assert_eq!(session.advance(Buttons(0), Buttons(0)).frames, 1);
+        session.load(Slot::Number(1)).unwrap();
+        assert_eq!(session.engine.save_state().unwrap(), state);
+        assert_eq!(session.engine.frame(), frame);
+        assert_eq!(session.engine.rewind_depth(), 0);
+        assert!(session.advance(Buttons(0), Buttons(0)).hit_end);
+        session.scrub = 0;
+        session.paused = false;
+        session.advance(Buttons(0), Buttons(0));
+        assert!(record.borrow().queued > 0);
+        let battery = session.engine.battery_ram().unwrap().to_vec();
+        session.engine.reset().unwrap();
+        assert_eq!(session.engine.battery_ram().unwrap(), battery);
+        session.save(Slot::Auto).unwrap();
+        let state = session.engine.save_state().unwrap();
+        let (reopened, warnings) = Session::open(&library, game, None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(reopened.engine.save_state().unwrap(), state);
+        assert_eq!(reopened.engine.battery_ram().unwrap(), battery);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires EMULIA_SMW_ROM pointing to the user's local cartridge dump"]
+    fn super_mario_world_desktop_session() {
+        let rom_path = std::env::var_os("EMULIA_SMW_ROM").expect("set EMULIA_SMW_ROM");
+        let dir = temp_dir("smw-desktop-qualification");
+        let library = Library::open(&dir).unwrap();
+        let rom = fs::read(rom_path).unwrap();
+        let engine = Engine::new(&rom).unwrap();
+        let game = library
+            .add(&engine.id(), "Super Mario World", &rom)
+            .unwrap();
+        let (mut session, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert!(warnings.is_empty());
+        for line in include_str!("../../scripts/snes-smw-sequence.txt")
+            .lines()
+            .filter(|s| !s.starts_with('#') && !s.is_empty())
+        {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            let count: usize = fields[0].parse().unwrap();
+            let buttons: u16 = fields[1].parse().unwrap();
+            session.scrub = 1;
+            for _ in 0..count {
+                assert_eq!(session.advance(Buttons(buttons), Buttons(0)).frames, 1);
+                assert!(session.take_error().is_none());
+            }
+        }
+        session.save(Slot::Number(1)).unwrap();
+        let saved = session.engine.save_state().unwrap();
+        let picture = session.engine.frame().to_vec();
+        for _ in 0..120 {
+            session.engine.step(Buttons(0), Buttons(0)).unwrap();
+        }
+        let replay = session.engine.save_state().unwrap();
+        session.load(Slot::Number(1)).unwrap();
+        assert_eq!(session.engine.frame(), picture);
+        for _ in 0..120 {
+            session.engine.step(Buttons(0), Buttons(0)).unwrap();
+        }
+        assert_eq!(session.engine.save_state().unwrap(), replay);
+        for _ in 0..120 {
+            assert!(session.engine.rewind_step().unwrap());
+        }
+        assert_eq!(session.engine.save_state().unwrap(), saved);
+        assert!(!session.engine.rewind_step().unwrap());
+        session.save(Slot::Auto).unwrap();
+        let (reopened, warnings) = Session::open(&library, game, None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(reopened.engine.frame(), picture);
+        eprintln!("SMW desktop session artifacts: {}", dir.display());
+    }
+
     /// What an audio device was asked to do. Shared with the test, because the
     /// session owns the device once it is handed over.
     #[derive(Default)]
@@ -473,8 +618,9 @@ mod tests {
         let (library, game) = library_with_game(&dir);
         let (mut session, warnings) = Session::open(&library, game.clone(), None).unwrap();
         assert!(warnings.is_empty());
-        use nes_core::cpu::Bus;
-        session.engine.nes.bus.write(0x6000, 0x5a);
+        let mut battery = session.engine.battery_ram().unwrap().to_vec();
+        battery[0] = 0x5a;
+        session.engine.load_battery(&battery).unwrap();
         session.advance(Buttons(0), Buttons(0));
         session.close();
         assert!(library.has_autosave(&game.id));
@@ -533,8 +679,9 @@ mod tests {
         let record = audio.0.clone();
         let (mut session, _) =
             Session::open(&library, game.clone(), Some(Box::new(audio))).unwrap();
-        use nes_core::cpu::Bus;
-        session.engine.nes.bus.write(0x6000, 0x5a);
+        let mut battery = session.engine.battery_ram().unwrap().to_vec();
+        battery[0] = 0x5a;
+        session.engine.load_battery(&battery).unwrap();
         session.paused = true;
         let paused = session.advance(Buttons(0), Buttons(0));
         assert_eq!(paused.frames, 0);
@@ -650,7 +797,7 @@ mod tests {
             vec![0x5a; 8192],
         )
         .unwrap();
-        let state = engine.save_state();
+        let state = engine.save_state().unwrap();
         fs::write(dir.join(format!("{}.state", engine.identity())), &state).unwrap();
         let (session, warnings) = Session::open(&library, game.clone(), None).unwrap();
         assert!(warnings.is_empty());

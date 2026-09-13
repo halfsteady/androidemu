@@ -1,0 +1,63 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,12 +1,6 @@
+ [workspace]
+-members = [
+-    "common/*",
+-    "cpu/*",
+-    "config/*",
+-    "backend/*",
+-    "frontend/*",
+-]
+-default-members = ["frontend/jgenesis-gui"]
++members = ["backend/snes-core", "backend/snes-coprocessors", "common/jgenesis-common", "common/jgenesis-proc-macros", "common/dsp", "cpu/wdc65816-emu", "cpu/spc700-emu", "cpu/arm7tdmi-emu", "config/snes-config"]
++default-members = ["backend/snes-core"]
+ resolver = "3"
+ 
+ [workspace.package]
+--- a/backend/snes-core/src/api.rs
++++ b/backend/snes-core/src/api.rs
+@@ -233,6 +233,21 @@
+ 
+     #[inline]
+     #[must_use]
++    /// Emulia host bridge: obtain current SRAM without waiting for a frame callback.
++    pub fn battery_ram(&self) -> Option<&[u8]> {
++        if self.memory.has_battery_backed_sram() { self.memory.sram() } else { None }
++    }
++
++    /// Emulia qualification gate after upstream cartridge autodetection.
++    pub fn is_standard_cartridge(&self) -> bool {
++        self.memory.is_standard_cartridge()
++    }
++
++    /// Exact-length standard-cartridge import; rejected imports change nothing.
++    pub fn load_standard_battery_ram(&mut self, bytes: &[u8]) -> bool {
++        self.memory.has_battery_backed_sram() && self.memory.load_standard_sram(bytes)
++    }
++
+     pub fn has_sram(&self) -> bool {
+         self.memory.has_battery_backed_sram()
+     }
+--- a/backend/snes-core/src/memory.rs
++++ b/backend/snes-core/src/memory.rs
+@@ -162,6 +162,19 @@
+ 
+     pub fn take_rom_from(&mut self, other: &mut Self) {
+         self.cartridge.take_rom_from(&mut other.cartridge);
++    }
++
++    pub fn is_standard_cartridge(&self) -> bool {
++        matches!(self.cartridge, Cartridge::LoRom { .. } | Cartridge::HiRom { .. })
++    }
++
++    // Emulia host bridge: only standard cartridges are exposed by the adapter.
++    pub fn load_standard_sram(&mut self, bytes: &[u8]) -> bool {
++        match &mut self.cartridge {
++            Cartridge::LoRom { sram, .. } | Cartridge::HiRom { sram, .. }
++                if sram.len() == bytes.len() => { sram.copy_from_slice(bytes); true }
++            _ => false,
++        }
+     }
+ 
+     pub fn sram(&self) -> Option<&[u8]> {

@@ -103,7 +103,29 @@ def main():
         run([binary, str(path), "--frames", "0"], success=False)
         path.write_bytes(b"not a ROM")
         run(command, success=False)
-    print("Desktop smoke passed: audio, muted pacing, library import, SRAM persistence, autosave recovery and invalid inputs")
+        # A generated standard SNES cartridge also goes through the real stereo SDL queue.
+        snes = bytearray(32768)
+        code = bytes.fromhex("78 a9 0f 8d 00 21 a9 a7 8f 00 00 70 80 fa")
+        snes[:len(code)] = code
+        snes[0x7fc0:0x7fd5] = b"EMULIA GENERATED TEST"
+        snes[0x7fd5:0x7fda] = bytes([0x20, 2, 5, 1, 1])
+        snes[0x7fdc:0x7fde] = b"\xff\xff"
+        snes[0x7ffd] = 0x80
+        snes_path = root / "SNES test.sfc"
+        snes_path.write_bytes(snes)
+        snes_saves = root / "snes-saves"
+        run([binary, str(snes_path), "--data-dir", str(snes_saves), "--frames", "6"])
+        snes_save, = snes_saves.rglob("battery.sav")
+        assert len(snes_save.read_bytes()) == 2048 and snes_save.read_bytes()[0] == 0xa7
+        saved_snes_ram = snes_save.read_bytes()[:1] + b"\x5a" + snes_save.read_bytes()[2:]
+        snes_save.write_bytes(saved_snes_ram)
+        assert (snes_save.parent / "game.sfc").read_bytes() == snes
+        # Copier headers must dedupe to the same SNES entry and preserve SRAM.
+        snes_path.write_bytes(bytes(512) + snes)
+        run([binary, str(snes_path), "--data-dir", str(snes_saves), "--frames", "6", "--mute"])
+        assert len(json.loads((snes_saves / "library/index.json").read_text())) == 1
+        assert snes_save.read_bytes() == saved_snes_ram
+    print("Desktop smoke passed: NES/SNES audio, muted pacing, library import, SRAM persistence, autosave recovery and invalid inputs")
 
 
 if __name__ == "__main__":

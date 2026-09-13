@@ -12,6 +12,14 @@ See [desktop build instructions, controls and data layout](docs/DESKTOP.md):
 cargo run --release -p nes-desktop -- "/path/to/game.nes"
 ```
 
+The desktop shell also supports standard SNES LoROM/HiROM games through the
+pinned jgenesis core, with stereo audio, save slots, rewind and separate SNES
+controller mappings. Super Mario World is the first compatibility target;
+[qualification and limits](docs/SNES-SMW-QUALIFICATION.md) are recorded separately.
+The existing NES core remains original Rust code. The combined desktop app is
+GPL-3.0-only. Build native macOS app/DMG or Debian/RPM packages with the
+[desktop packaging commands](docs/DESKTOP-PACKAGING.md).
+
 Ships as **Emulia**, package `com.bsteinfeld.emulia`. `androidemu` is the
 repository, and `dev.androidemu` stays the Kotlin package because it is the JNI
 symbol prefix. The shipping name deliberately carries no third-party trademark.

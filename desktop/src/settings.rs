@@ -171,6 +171,9 @@ pub fn store_palette(dir: &Path, bytes: &[u8]) -> Result<[u32; 64], String> {
 /// being mapped.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Profile {
+    /// SNES X, Y, L, R; NES profiles leave these empty.
+    #[serde(default)]
+    pub snes: [String; 4],
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -427,6 +430,7 @@ mod tests {
             down: "S".into(),
             left: "A".into(),
             right: "D".into(),
+            ..Profile::default()
         };
         let (mut p, _) = Profiles::load(&dir);
         p.set(Profiles::KEYBOARD.into(), wasd.clone());

@@ -24,9 +24,37 @@ pub enum NesButton {
     Down,
     Left,
     Right,
+    X,
+    Y,
+    L,
+    R,
 }
 
 impl NesButton {
+    const SNES_FACE: [Self; 8] = [
+        Self::A,
+        Self::B,
+        Self::X,
+        Self::Y,
+        Self::L,
+        Self::R,
+        Self::Select,
+        Self::Start,
+    ];
+    const SNES_ORDER: [Self; 12] = [
+        Self::A,
+        Self::B,
+        Self::X,
+        Self::Y,
+        Self::L,
+        Self::R,
+        Self::Select,
+        Self::Start,
+        Self::Up,
+        Self::Down,
+        Self::Left,
+        Self::Right,
+    ];
     /// Every button the shell can be asked to learn, buttons first and then
     /// directions, because the first four are all a controller is asked for:
     /// `FACE` is that prefix, and the wizard hands out one or the other.
@@ -46,7 +74,7 @@ impl NesButton {
         NesButton::Select,
         NesButton::Start,
     ];
-    pub fn bit(self) -> u8 {
+    pub fn bit(self) -> u16 {
         match self {
             NesButton::A => 1,
             NesButton::B => 2,
@@ -56,6 +84,10 @@ impl NesButton {
             NesButton::Down => 32,
             NesButton::Left => 64,
             NesButton::Right => 128,
+            NesButton::X => 256,
+            NesButton::Y => 512,
+            NesButton::L => 1024,
+            NesButton::R => 2048,
         }
     }
     pub fn label(self) -> &'static str {
@@ -68,6 +100,10 @@ impl NesButton {
             NesButton::Down => "Down",
             NesButton::Left => "Left",
             NesButton::Right => "Right",
+            NesButton::X => "X",
+            NesButton::Y => "Y",
+            NesButton::L => "L",
+            NesButton::R => "R",
         }
     }
     /// The name a profile has saved for this button, empty when it has none.
@@ -81,6 +117,10 @@ impl NesButton {
             NesButton::Down => &profile.down,
             NesButton::Left => &profile.left,
             NesButton::Right => &profile.right,
+            NesButton::X => &profile.snes[0],
+            NesButton::Y => &profile.snes[1],
+            NesButton::L => &profile.snes[2],
+            NesButton::R => &profile.snes[3],
         }
     }
 }
@@ -119,6 +159,7 @@ pub fn keyboard_default() -> Profile {
         down: key_name(Scancode::Down),
         left: key_name(Scancode::Left),
         right: key_name(Scancode::Right),
+        ..Profile::default()
     }
 }
 
@@ -142,7 +183,7 @@ fn physical_bits(profile: &Profile, held: impl Fn(&str) -> bool) -> u8 {
     let mut bits = 0;
     for button in NesButton::FACE {
         if held(button.saved(profile)) {
-            bits |= button.bit();
+            bits |= button.bit() as u8;
         }
     }
     bits
@@ -162,7 +203,7 @@ pub fn keyboard_bits(profile: &Profile, keys: &HashSet<Scancode>) -> u8 {
             held(name)
         };
         if down {
-            bits |= button.bit();
+            bits |= button.bit() as u8;
         }
     }
     bits
@@ -291,7 +332,6 @@ impl Input {
         };
         if time != 0 {
             pad.shoulder_time = if pressed { time } else { 0 };
-            return;
         }
         if pressed {
             pad.pressed.insert(name);
@@ -349,13 +389,71 @@ impl Input {
         (Buttons(ports[0]), Buttons(ports[1]))
     }
 
+    fn snes_profile(&self, key: &str, name: &str) -> Profile {
+        self.profiles
+            .get(&format!("snes:{key}"))
+            .cloned()
+            .unwrap_or_else(|| {
+                let mut profile = if key == Profiles::KEYBOARD {
+                    keyboard_default()
+                } else {
+                    controller_default(name)
+                };
+                profile.snes = if key == Profiles::KEYBOARD {
+                    ["S", "A", "Q", "W"]
+                } else {
+                    ["y", "x", "leftshoulder", "rightshoulder"]
+                }
+                .map(String::from);
+                profile
+            })
+    }
+
+    pub fn game_buttons(&self, snes: bool) -> (emulation_api::Buttons, emulation_api::Buttons) {
+        use emulation_api::Buttons as B;
+        if !snes {
+            let (p1, p2) = self.buttons();
+            return (B(p1.0 as u16), B(p2.0 as u16));
+        }
+        let keyboard = self.snes_profile(Profiles::KEYBOARD, "Keyboard");
+        let mut ports = [keyboard_bits(&keyboard, &self.keys) as u16, 0];
+        for button in [NesButton::X, NesButton::Y, NesButton::L, NesButton::R] {
+            if Scancode::from_name(button.saved(&keyboard))
+                .is_some_and(|key| self.keys.contains(&key))
+            {
+                ports[0] |= button.bit();
+            }
+        }
+        for pad in &self.pads {
+            let profile = self.snes_profile(&pad.guid, &pad.name);
+            ports[pad.port] |= pad_bits(&profile, &pad.pressed, pad.dpad | pad.stick) as u16;
+            for button in [NesButton::X, NesButton::Y, NesButton::L, NesButton::R] {
+                if pad.pressed.contains(button.saved(&profile)) {
+                    ports[pad.port] |= button.bit();
+                }
+            }
+        }
+        (B(ports[0]), B(ports[1]))
+    }
+
     /// Shoulders and triggers, or `,` and `.` with Shift, held to apply.
     ///
     /// A pulled trigger wins over a held bumper, because the trigger is the
     /// deliberate "faster"; releasing either leaves the other still holding.
+    #[cfg(test)]
     pub fn time_speed(&self) -> i32 {
+        self.game_time_speed(false)
+    }
+
+    pub fn game_time_speed(&self, snes: bool) -> i32 {
         let held = |time: fn(&Pad) -> i32| self.pads.iter().map(time).find(|&t| t != 0);
-        if let Some(speed) = held(|p| p.trigger_time).or_else(|| held(|p| p.shoulder_time)) {
+        if let Some(speed) = held(|p| p.trigger_time).or_else(|| {
+            if snes {
+                None
+            } else {
+                held(|p| p.shoulder_time)
+            }
+        }) {
             return speed;
         }
         let shift = self.keys.contains(&Scancode::LShift) || self.keys.contains(&Scancode::RShift);
@@ -375,7 +473,19 @@ impl Input {
 
     /// Whether a press is Start, through the saved profile, so a remapped
     /// Start still resumes a paused game.
+    #[cfg(test)]
     pub fn is_start(&self, instance: Option<u32>, physical: &str) -> bool {
+        self.game_is_start(instance, physical, false)
+    }
+
+    pub fn game_is_start(&self, instance: Option<u32>, physical: &str, snes: bool) -> bool {
+        if snes {
+            let (key, name) = instance
+                .and_then(|i| self.pad(i))
+                .map(|pad| (pad.guid.as_str(), pad.name.as_str()))
+                .unwrap_or((Profiles::KEYBOARD, "Keyboard"));
+            return self.snes_profile(key, name).start == physical;
+        }
         let profile = match instance.and_then(|i| self.pad(i)) {
             Some(pad) => self.pad_profile(pad),
             None => self.keyboard_profile(),
@@ -399,6 +509,7 @@ pub enum WizardEvent {
 /// directions after them, because a keyboard has no d-pad to fall back on.
 #[derive(Default)]
 pub struct Wizard {
+    snes: bool,
     device: Option<(String, String)>,
     captured: Vec<(NesButton, String)>,
 }
@@ -406,6 +517,12 @@ pub struct Wizard {
 impl Wizard {
     pub fn new() -> Wizard {
         Wizard::default()
+    }
+    pub fn for_system(snes: bool) -> Self {
+        Self {
+            snes,
+            ..Self::new()
+        }
     }
     pub fn step(&self) -> usize {
         self.captured.len()
@@ -418,6 +535,12 @@ impl Wizard {
     /// that can be said for certain; the keyboard adds its directions to them
     /// on its first key.
     pub fn steps(&self) -> &'static [NesButton] {
+        if self.snes {
+            return match &self.device {
+                Some((key, _)) if key == Profiles::KEYBOARD => &NesButton::SNES_ORDER,
+                _ => &NesButton::SNES_FACE,
+            };
+        }
         match &self.device {
             Some((key, _)) if key == Profiles::KEYBOARD => &NesButton::ORDER,
             _ => &NesButton::FACE,
@@ -459,8 +582,13 @@ impl Wizard {
                 .unwrap_or_default()
         };
         WizardEvent::Done(
-            device_key.to_string(),
+            if self.snes {
+                format!("snes:{device_key}")
+            } else {
+                device_key.to_string()
+            },
             Box::new(Profile {
+                snes: [NesButton::X, NesButton::Y, NesButton::L, NesButton::R].map(find),
                 name: device_name.to_string(),
                 a: find(NesButton::A),
                 b: find(NesButton::B),
@@ -484,6 +612,78 @@ mod tests {
     /// the resting jitter as a sign of life and it never fades at all; ignore
     /// a held direction and it fades under the thumb holding it.
     #[test]
+    fn snes_shoulders_are_gameplay_and_triggers_still_control_time() {
+        use emulation_api::Buttons as B;
+        let sdl = sdl2::init().unwrap();
+        let controllers = sdl.game_controller().unwrap();
+        // SAFETY: SDL's controller subsystem is alive; no pointers cross this call.
+        let index = unsafe {
+            sdl2::sys::SDL_JoystickAttachVirtual(
+                sdl2::sys::SDL_JoystickType::SDL_JOYSTICK_TYPE_GAMECONTROLLER,
+                6,
+                21,
+                1,
+            )
+        };
+        assert!(index >= 0, "{}", sdl2::get_error());
+        let controller = controllers.open(index as u32).unwrap();
+        let instance = controller.instance_id();
+        let mut input = Input::new(Profiles::default());
+        input.pad_added(controller, "test-virtual".into());
+        input.pad_button(instance, Button::LeftShoulder, true);
+        input.pad_button(instance, Button::RightShoulder, true);
+        assert_eq!(input.game_buttons(true).0 .0, B::L | B::R);
+        assert_eq!(input.game_time_speed(true), 0);
+        assert_ne!(input.game_time_speed(false), 0);
+        input.pad_axis(instance, Axis::TriggerRight, i16::MAX);
+        assert_eq!(input.game_time_speed(true), TIME_FAST);
+        assert_eq!(input.game_buttons(true).0 .0, B::L | B::R);
+        input.pad_button(instance, Button::LeftShoulder, false);
+        assert_eq!(input.game_buttons(true).0 .0, B::R);
+        input.clear();
+        assert_eq!(input.game_buttons(true).0 .0, 0);
+        assert_eq!(input.game_time_speed(true), 0);
+        drop(input);
+        // SAFETY: the virtual controller was closed before detaching its device.
+        assert_eq!(unsafe { sdl2::sys::SDL_JoystickDetachVirtual(index) }, 0);
+    }
+
+    #[test]
+    fn snes_mapping_is_separate_and_includes_all_twelve_keys() {
+        use emulation_api::Buttons as B;
+        let mut input = Input::new(Profiles::default());
+        for key in [Scancode::A, Scancode::S, Scancode::Q, Scancode::W] {
+            input.key(key, true);
+        }
+        assert_eq!(input.game_buttons(true).0 .0, B::X | B::Y | B::L | B::R);
+        assert_eq!(input.game_buttons(false).0 .0, 0);
+        input.clear();
+        let mut wizard = Wizard::for_system(true);
+        let keys = [
+            "K", "J", "I", "U", "H", "L", "Tab", "Return", "Up", "Down", "Left", "Right",
+        ];
+        for (i, key) in keys.iter().enumerate() {
+            let event = wizard.press(Profiles::KEYBOARD, "Keyboard", key);
+            if i == keys.len() - 1 {
+                let WizardEvent::Done(key, profile) = event else {
+                    panic!("wizard did not complete");
+                };
+                assert_eq!(key, "snes:keyboard");
+                input.set_profile(key, *profile);
+            } else {
+                assert_eq!(event, WizardEvent::Advanced);
+            }
+        }
+        input.key(Scancode::U, true);
+        input.key(Scancode::H, true);
+        assert_eq!(input.game_buttons(true).0 .0, B::Y | B::L);
+        assert_eq!(input.game_buttons(false).0 .0, 0);
+        input.key(Scancode::X, true);
+        assert_eq!(input.game_buttons(false).0 .0, B::A);
+        assert_eq!(input.game_buttons(true).0 .0, B::Y | B::L);
+    }
+
+    #[test]
     fn a_stick_at_rest_is_not_somebody_at_the_controls() {
         for axis in [Axis::LeftX, Axis::LeftY, Axis::RightX, Axis::RightY] {
             assert!(!past_dead_zone(axis, 0), "{axis:?}");
@@ -504,7 +704,7 @@ mod tests {
     #[test]
     fn nes_button_bits_and_order_match_the_core() {
         assert_eq!(
-            NesButton::ORDER.map(|b| b.bit()),
+            NesButton::ORDER.map(|b| b.bit() as u8),
             [
                 Buttons::A,
                 Buttons::B,
@@ -547,6 +747,7 @@ mod tests {
     #[test]
     fn keyboard_directions_come_from_the_profile_and_fall_back_to_the_arrows() {
         let wasd = Profile {
+            snes: Default::default(),
             name: "Keyboard".into(),
             a: "X".into(),
             b: "Z".into(),
@@ -711,6 +912,7 @@ mod tests {
                 assert_eq!(
                     profile,
                     Profile {
+                        snes: Default::default(),
                         name: "Pad".into(),
                         a: "b".into(),
                         b: "a".into(),
@@ -763,6 +965,7 @@ mod tests {
                 assert_eq!(
                     *profile,
                     Profile {
+                        snes: Default::default(),
                         name: "Keyboard".into(),
                         a: "X".into(),
                         b: "Z".into(),

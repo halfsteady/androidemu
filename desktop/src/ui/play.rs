@@ -49,7 +49,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 /// stands down once nothing has happened for a while, and the shell hides the
 /// pointer on the same clock.
 fn chrome_up(app: &App) -> bool {
-    !app.fullscreen || Instant::now() < app.chrome_until
+    !app.fullscreen || app.playback_paused || Instant::now() < app.chrome_until
 }
 
 /// What the pill says: a notice while there is one, otherwise which way time
@@ -149,10 +149,10 @@ fn time_row(ui: &mut egui::Ui, app: &mut App, skips: [(u32, usize); 2]) {
                         app.actions.push(Action::JumpBack(seconds));
                     }
                 }
-                match scrubber(ui, app.scrub_fraction, track) {
+                match scrubber(ui, app.scrub_fraction, track, app.playback_paused) {
                     ScrubEvent::Dragged(fraction) => app.actions.push(Action::Scrub(fraction)),
                     ScrubEvent::Released => app.actions.push(Action::ScrubReleased),
-                    ScrubEvent::Tapped => app.actions.push(Action::Pause),
+                    ScrubEvent::Tapped => app.actions.push(Action::TogglePlayback),
                     ScrubEvent::None => {}
                 }
             });
@@ -291,6 +291,28 @@ mod tests {
                 std::mem::take(&mut app.actions),
                 vec![Action::Pause],
                 "{title}"
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn clicking_the_time_handle_toggles_playback() {
+        let dir = temp_dir("play-pause");
+        let ctx = egui::Context::default();
+        crate::ui::theme::apply(&ctx);
+        let mut app = App::blank(&dir);
+        open(&mut app);
+        let window = Vec2::new(700.0, 600.0);
+        let keys = time::SKIP * 2.0 + ctx.style_of(egui::Theme::Dark).spacing.item_spacing.x * 2.0;
+        let handle = egui::pos2((window.x + keys) / 2.0, window.y - TIME_ROW / 2.0);
+        for paused in [false, true] {
+            app.playback_paused = paused;
+            pass(&mut app, &ctx, window, Vec::new());
+            click(&mut app, &ctx, window, handle);
+            assert_eq!(
+                std::mem::take(&mut app.actions),
+                vec![Action::TogglePlayback]
             );
         }
         std::fs::remove_dir_all(dir).unwrap();

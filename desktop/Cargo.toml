@@ -2,10 +2,18 @@
 name = "nes-desktop"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-only"
 description = "Portable Emulia desktop player for macOS and Linux"
 
+[features]
+dolphin-embed-probe = ["dep:libloading"]
+
 [dependencies]
+libloading = { version = "0.8.9", optional = true }
+sha2 = "0.10"
+emulation-api = { path = "../emulation-api" }
+emulation-runtime = { path = "../emulation-runtime" }
+snes-adapter = { path = "../cores/snes-adapter" }
 nes-core = { path = "../core" }
 sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
 egui = "0.36"

@@ -6,9 +6,7 @@
 //! through it into an off-screen buffer, so what the preview shows is what the
 //! game will look like rather than a second implementation that drifts.
 
-use crate::picture::{
-    layout, trim_fraction, visible_height, Aspect, Look, Source, Viewport, HEIGHT, WIDTH,
-};
+use crate::picture::{layout_frame, trim_fraction, Aspect, Look, Source, Viewport, HEIGHT, WIDTH};
 use glow::HasContext;
 use std::sync::Arc;
 
@@ -45,6 +43,10 @@ struct Program {
 }
 
 pub struct Video {
+    width: usize,
+    height: usize,
+    pixel_aspect: f32,
+    nes: bool,
     gl: Arc<glow::Context>,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
@@ -191,6 +193,7 @@ fn vertex_bytes(vertices: &[f32; 16]) -> Vec<u8> {
 /// The upload rectangle is a fixed 256×240, so a slice shorter than that has
 /// the driver read past the end of it. GL is handed a pointer and never learns
 /// how much of it is ours, which makes this the last place that can tell.
+#[cfg(test)]
 fn frame_len_ok(len: usize) -> Result<(), String> {
     let want = WIDTH * HEIGHT * 4;
     if len == want {
@@ -204,6 +207,10 @@ fn frame_len_ok(len: usize) -> Result<(), String> {
 
 impl Video {
     pub fn new(gl: Arc<glow::Context>) -> Result<Video, String> {
+        Self::sized(gl, WIDTH, HEIGHT)
+    }
+
+    fn sized(gl: Arc<glow::Context>, width: usize, height: usize) -> Result<Video, String> {
         unsafe {
             let vao = gl.create_vertex_array()?;
             let vbo = gl.create_buffer()?;
@@ -215,22 +222,26 @@ impl Video {
             gl.enable_vertex_attrib_array(1);
             gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, 16, 8);
             gl.bind_vertex_array(None);
-            let frame = texture(&gl, WIDTH as i32, HEIGHT as i32, false, false)?;
+            let frame = texture(&gl, width as i32, height as i32, false, false)?;
             let mut smooth_textures = Vec::new();
             let mut smooth_buffers = Vec::new();
             for step in 0..SMOOTH_STEPS {
                 let scale = 2 << step;
                 let last = step == SMOOTH_STEPS - 1;
-                let t = texture(&gl, WIDTH as i32 * scale, HEIGHT as i32 * scale, last, last)?;
+                let t = texture(&gl, width as i32 * scale, height as i32 * scale, last, last)?;
                 smooth_buffers.push(framebuffer(&gl, t)?);
                 smooth_textures.push(t);
             }
             // Where the decoded picture lands: four samples to a console pixel,
             // which is what the subcarrier needs to be resolvable, and full
             // height because composite blurs along a scanline and not across.
-            let ntsc_texture = texture(&gl, WIDTH as i32 * SUBSAMPLES, HEIGHT as i32, true, false)?;
+            let ntsc_texture = texture(&gl, width as i32 * SUBSAMPLES, height as i32, true, false)?;
             let ntsc_buffer = framebuffer(&gl, ntsc_texture)?;
             Ok(Video {
+                width,
+                height,
+                pixel_aspect: 8.0 / 7.0,
+                nes: true,
                 present: link(&gl, PRESENT_FRAG)?,
                 smooth: link(&gl, SMOOTH_FRAG)?,
                 composite: link(&gl, COMPOSITE_FRAG)?,
@@ -259,12 +270,34 @@ impl Video {
         &self.gl
     }
 
-    /// Uploads one 256×240 RGBA frame. The framebuffer is always uploaded
-    /// whole; trimming moves the window the quad samples, which keeps this one
-    /// unconditional call. A frame of any other length is refused rather than
-    /// handed to the driver.
+    /// Validate frame geometry before resizing GPU storage or uploading pixels.
+    pub fn upload_frame(
+        &mut self,
+        rgba: &[u8],
+        descriptor: emulation_api::VideoDescriptor,
+        nes: bool,
+    ) -> Result<(), String> {
+        let want = descriptor.required_bytes().map_err(|e| e.to_string())?;
+        if descriptor.width > 1024
+            || descriptor.height > 1024
+            || descriptor.stride_bytes != descriptor.width * 4
+            || rgba.len() != want
+        {
+            return Err("Unsupported frame dimensions or buffer length".into());
+        }
+        if (self.width, self.height) != (descriptor.width, descriptor.height) {
+            let fresh = Self::sized(self.gl.clone(), descriptor.width, descriptor.height)?;
+            *self = fresh;
+        }
+        self.pixel_aspect = descriptor.pixel_aspect.0 as f32 / descriptor.pixel_aspect.1 as f32;
+        self.nes = nes;
+        self.upload(rgba)
+    }
+
     pub fn upload(&mut self, rgba: &[u8]) -> Result<(), String> {
-        frame_len_ok(rgba.len())?;
+        if rgba.len() != self.width * self.height * 4 {
+            return Err("Frame length does not match the texture".into());
+        }
         unsafe {
             self.gl.active_texture(glow::TEXTURE0);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(self.frame));
@@ -274,8 +307,8 @@ impl Video {
                 0,
                 0,
                 0,
-                WIDTH as i32,
-                HEIGHT as i32,
+                self.width as i32,
+                self.height as i32,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
                 glow::PixelUnpackData::Slice(Some(rgba)),
@@ -333,13 +366,18 @@ impl Video {
         for step in 0..SMOOTH_STEPS {
             let scale = 1 << step;
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.smooth_buffers[step]));
-            gl.viewport(0, 0, WIDTH as i32 * scale * 2, HEIGHT as i32 * scale * 2);
+            gl.viewport(
+                0,
+                0,
+                self.width as i32 * scale * 2,
+                self.height as i32 * scale * 2,
+            );
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(source));
             gl.uniform_2_i32(
                 self.smooth.src_size.as_ref(),
-                WIDTH as i32 * scale,
-                HEIGHT as i32 * scale,
+                self.width as i32 * scale,
+                self.height as i32 * scale,
             );
             self.quad(false);
             source = self.smooth_textures[step];
@@ -363,15 +401,15 @@ impl Video {
     ) -> glow::Texture {
         let gl = &self.gl;
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.ntsc_buffer));
-        gl.viewport(0, 0, WIDTH as i32 * SUBSAMPLES, HEIGHT as i32);
+        gl.viewport(0, 0, self.width as i32 * SUBSAMPLES, self.height as i32);
         gl.use_program(Some(self.composite.id));
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.frame));
         gl.uniform_1_i32(self.composite.src.as_ref(), 0);
         gl.uniform_2_i32(
             self.composite.src_size.as_ref(),
-            WIDTH as i32,
-            HEIGHT as i32,
+            self.width as i32,
+            self.height as i32,
         );
         // A frame advances the subcarrier by a third of a cycle, so the pattern
         // repeats every third frame. Kept as a whole number of thirds rather
@@ -397,7 +435,20 @@ impl Video {
         aspect: Aspect,
         trim: bool,
     ) {
-        let mut view = layout(area.width, area.height, aspect, trim);
+        let trim = trim && self.nes;
+        let visible = self.height as i32 - if trim { 2 * crate::picture::TRIM } else { 0 };
+        let mut view = if self.nes {
+            crate::picture::layout(area.width, area.height, aspect, trim)
+        } else {
+            layout_frame(
+                area.width,
+                area.height,
+                aspect,
+                self.width as i32,
+                visible,
+                self.pixel_aspect,
+            )
+        };
         view.x += area.x;
         view.y += area.y;
         let viewport = [view.x, view.y, view.width, view.height];
@@ -417,8 +468,8 @@ impl Video {
         gl.bind_texture(glow::TEXTURE_2D, Some(present));
         gl.uniform_1_i32(self.present.screen.as_ref(), 0);
         gl.uniform_1_i32(self.present.kind.as_ref(), look.id());
-        gl.uniform_1_f32(self.present.cols.as_ref(), WIDTH as f32);
-        gl.uniform_1_f32(self.present.rows.as_ref(), visible_height(trim) as f32);
+        gl.uniform_1_f32(self.present.cols.as_ref(), self.width as f32);
+        gl.uniform_1_f32(self.present.rows.as_ref(), visible as f32);
         // Where the visible rows sit inside the whole framebuffer, so effects
         // that work in picture space stay put when the edges are trimmed.
         let edge = trim_fraction(trim);

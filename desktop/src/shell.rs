@@ -55,13 +55,17 @@ pub const PALETTE_FELL_BACK: &str =
 /// value, passed to the panels by `&mut`, so there is no state hiding in the
 /// widgets between frames.
 pub struct App {
+    pub external: Option<crate::dolphin::Running>,
+    pub dolphin_label: String,
     pub data_dir: PathBuf,
     pub library: Library,
     pub settings: Settings,
     pub settings_dirty: bool,
     pub input: Input,
     pub session: Option<Session>,
+    pub embedded_game: Option<crate::library::Game>,
     pub panel: Panel,
+    pub playback_paused: bool,
     /// Where `ClosePanel` returns to when the problem log was opened from
     /// somewhere other than the shelf.
     pub panel_before: Panel,
@@ -117,6 +121,12 @@ pub struct App {
 }
 
 impl App {
+    pub fn active_game(&self) -> Option<&crate::library::Game> {
+        self.session
+            .as_ref()
+            .map(|s| &s.game)
+            .or(self.embedded_game.as_ref())
+    }
     /// Says what went wrong in one plain sentence and keeps the detail in the
     /// problem log, where someone helping can find it.
     pub fn report(&mut self, label: &str, detail: &str) {
@@ -132,11 +142,22 @@ impl App {
     /// otherwise whatever the keys and the triggers say. One answer, because
     /// the engine and the pill above it have to agree about it.
     pub fn time_speed(&self) -> i32 {
-        if self.scrub_fraction != 0.0 {
+        if self.playback_paused {
+            0
+        } else if self.scrub_fraction != 0.0 {
             crate::scrub::speed(self.scrub_fraction)
         } else {
-            self.input.time_speed()
+            self.input
+                .game_time_speed(self.session.as_ref().is_some_and(|s| s.engine.is_snes()))
         }
+    }
+
+    fn emulation_paused(&self) -> bool {
+        self.playback_paused
+            || self.panel != Panel::None
+            || self.dialog.is_some()
+            || self.busy
+            || self.wizard.is_some()
     }
 
     /// A game is running and nothing is in front of it.
@@ -260,7 +281,7 @@ impl App {
     pub fn sample_source(&self) -> Vec<u8> {
         let standard = self.settings.palette == picture::PaletteChoice::Standard;
         if let Some(session) = &self.session {
-            if standard {
+            if standard || session.engine.is_snes() {
                 return session.engine.frame().to_vec();
             }
         } else if standard {
@@ -289,7 +310,11 @@ impl App {
             settings_dirty: false,
             input: Input::new(Profiles::load(data_dir).0),
             session: None,
+            embedded_game: None,
+            external: None,
+            dolphin_label: "Automatic discovery".into(),
             panel: Panel::None,
+            playback_paused: false,
             panel_before: Panel::None,
             dialog: None,
             show_archive: false,
@@ -343,7 +368,7 @@ fn draw(ui: &mut egui::Ui, app: &mut App, video: &mut Video) {
 /// at all. The message is last because it is the one thing that has to be read
 /// before anything else is worth doing; it puts away itself and nothing else,
 /// so a question behind it is still waiting.
-fn over_everything(ctx: &egui::Context, app: &mut App) {
+pub(crate) fn over_everything(ctx: &egui::Context, app: &mut App) {
     if app.busy {
         crate::ui::widgets::busy(ctx);
     }
@@ -606,7 +631,7 @@ fn dropped(app: &App, path: PathBuf) -> Action {
 
 fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) {
     let name = profile.name.clone();
-    let keyboard = key == Profiles::KEYBOARD;
+    let keyboard = key == Profiles::KEYBOARD || key == "snes:keyboard";
     app.input.set_profile(key, profile);
     app.wizard = None;
     // The same way out as cancelling it: back to the pause panel over a game,
@@ -627,6 +652,7 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
 /// the shell forgets everything that was only true while it was open. Its own
 /// function so that leaving can be tested without a window.
 fn close_session(app: &mut App) {
+    app.playback_paused = false;
     if let Some(mut session) = app.session.take() {
         session.close();
     }
@@ -639,7 +665,69 @@ fn close_session(app: &mut App) {
     app.input.clear();
 }
 
+fn poll_external(app: &mut App) -> bool {
+    let exited = app.external.as_mut().and_then(|run| match run.poll() {
+        Ok(None) => None,
+        other => Some(other),
+    });
+    let Some(result) = exited else {
+        return false;
+    };
+    if let Some(run) = app.external.take() {
+        match result {
+            Ok(Some(status)) if status.success() => {
+                app.message = Some(format!("{}: Dolphin closed.", run.title))
+            }
+            other => app.report(
+                "Dolphin stopped unexpectedly. See the problem log.",
+                &format!("{other:?}\n{}", run.diagnostics()),
+            ),
+        }
+    }
+    true
+}
+
 fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
+    if app.external.is_some() {
+        app.report(
+            "Close Dolphin before opening another game.",
+            "The launched Dolphin process is still running.",
+        );
+        return;
+    }
+    if game.is_external() {
+        let result = (|| -> Result<crate::dolphin::Running, String> {
+            let profile = crate::dolphin::Profile::load(&app.data_dir)?;
+            let executable = profile.resolve()?;
+            let disc = app.library.disc(&game.id)?;
+            if !disc.path.is_file() {
+                return Err(format!(
+                    "{} is missing. Relink the disc from its shelf menu.",
+                    disc.path.display()
+                ));
+            }
+            if let Some(session) = &mut app.session {
+                session.save(Slot::Auto)?;
+            }
+            close_session(app);
+            crate::dolphin::Running::launch(&executable, &disc, &game.title)
+        })();
+        match result {
+            Ok(running) => {
+                app.external = Some(running);
+                if let Err(e) = app.library.record(&game.id, 0) {
+                    app.library.log_problem(&game.title, &e);
+                }
+                app.message =
+                    Some("Opened in Dolphin. Controls and saves are managed there.".into());
+            }
+            Err(e) => app.report(
+                "Dolphin couldn't start. Check Settings or relink the disc.",
+                &e,
+            ),
+        }
+        return;
+    }
     // Whatever is open is being put away, not abandoned: its autosave and its
     // playtime are written before the window belongs to something else. A
     // .nes dropped on a running game used to cost both.
@@ -647,10 +735,11 @@ fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
         open.close();
     }
     app.thumbs.clear();
+    app.playback_paused = false;
     app.scrub_fraction = 0.0;
     app.input.clear();
     let audio = match sdl {
-        Some(sdl) => match crate::open_audio(sdl) {
+        Some(sdl) => match crate::open_audio(sdl, game.audio_channels()) {
             Ok(a) => Some(a),
             Err(e) => {
                 app.report("Sound couldn't be started.", &e);
@@ -696,6 +785,7 @@ fn is_long(action: &Action) -> bool {
     matches!(
         action,
         Action::ImportFrom(_)
+            | Action::RelinkDisc(_)
             | Action::ChooseArtFrom(..)
             | Action::SaveConfirmed(_)
             | Action::Screenshot
@@ -753,6 +843,37 @@ fn act(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Opt
     }
 }
 
+fn pause_game(app: &mut App, menu: bool) {
+    if let Some(session) = &mut app.session {
+        session.paused = true;
+        session.record_playtime();
+        if let Err(e) = session.save(Slot::Auto) {
+            let title = session.game.title.clone();
+            app.report(
+                "Progress couldn't be saved automatically.",
+                &format!("{title}: {e}"),
+            );
+        }
+        app.thumbs.clear();
+        if menu {
+            app.panel = Panel::Pause;
+        }
+        app.input.clear();
+    }
+}
+
+fn toggle_playback(app: &mut App) {
+    if app.session.is_none() {
+        return;
+    }
+    app.playback_paused = !app.playback_paused;
+    app.scrub_fraction = 0.0;
+    app.input.clear();
+    if app.playback_paused {
+        pause_game(app, false);
+    }
+}
+
 fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: Option<&sdl2::Sdl>) {
     // Working the time controls is a sign of life even when the pointer has
     // not moved, and a drag the full-screen chrome fades out from under is a
@@ -769,9 +890,43 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         // drawing the window: the loop stops for as long as the dialog is up
         // and picks up again with the answer. Nothing is running behind it —
         // the shelf is the only screen that raises either of these.
+        Action::ChooseDolphin => {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title("Choose Dolphin.app or the Dolphin executable")
+                .pick_file()
+            {
+                match crate::dolphin::executable(&path).and_then(|_| {
+                    crate::dolphin::Profile {
+                        executable: Some(path),
+                    }
+                    .save(&app.data_dir)
+                }) {
+                    Ok(()) => {
+                        app.dolphin_label = crate::dolphin::Profile::load(&app.data_dir)
+                            .and_then(|p| p.resolve())
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|e| e);
+                        app.message = Some("Dolphin application saved.".into());
+                    }
+                    Err(e) => app.report("That Dolphin application couldn't be used.", &e),
+                }
+            }
+        }
+        Action::RelinkDisc(game) => {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Disc image", &["iso", "gcm"])
+                .set_title("Locate this game's disc image")
+                .pick_file()
+            {
+                match app.library.relink_disc(&game.id, &path) {
+                    Ok(()) => app.message = Some("Disc location updated.".into()),
+                    Err(e) => app.report("That disc couldn't be linked.", &e),
+                }
+            }
+        }
         Action::Import => {
             let picked = rfd::FileDialog::new()
-                .add_filter("NES game", &["nes"])
+                .add_filter("Game image", &["nes", "sfc", "smc", "iso", "gcm"])
                 .set_title("Add a game")
                 .pick_file();
             if let Some(path) = picked {
@@ -849,23 +1004,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             app.settings.shelf_list = !app.settings.shelf_list;
             app.settings_dirty = true;
         }
-        Action::Pause => {
-            if let Some(session) = &mut app.session {
-                session.paused = true;
-                session.record_playtime();
-                if let Err(e) = session.save(Slot::Auto) {
-                    let title = session.game.title.clone();
-                    app.report(
-                        "Progress couldn't be saved automatically.",
-                        &format!("{title}: {e}"),
-                    );
-                }
-                app.thumbs.clear();
-                app.panel = Panel::Pause;
-                app.input.clear();
-            }
-        }
+        Action::Pause => pause_game(app, true),
+        Action::TogglePlayback => toggle_playback(app),
         Action::Resume => {
+            app.playback_paused = false;
             app.panel = Panel::None;
             app.message = None;
         }
@@ -922,11 +1064,21 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             if let Some(session) = &mut app.session {
                 let frames = session.engine.frames_for(seconds);
                 let mut done = 0;
-                while done < frames && session.engine.rewind_step() {
-                    done += 1;
+                let mut failure = None;
+                while done < frames {
+                    match session.engine.rewind_step() {
+                        Ok(true) => done += 1,
+                        Ok(false) => break,
+                        Err(e) => {
+                            failure = Some(e);
+                            break;
+                        }
+                    }
                 }
                 app.frame_dirty |= done > 0;
-                if done < frames {
+                if let Some(e) = failure {
+                    app.report("Couldn’t rewind this game.", &e);
+                } else if done < frames {
                     app.notice(END_OF_TAPE);
                 }
             }
@@ -998,6 +1150,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         }
         Action::BackToShelf => close_session(app),
         Action::OpenSettings => {
+            app.dolphin_label = crate::dolphin::Profile::load(&app.data_dir)
+                .and_then(|p| p.resolve())
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|e| e);
             app.panel = Panel::Settings;
             // Both halves of the preview — the settings and the frame it is
             // drawn from — can have moved since the panel was last up, and so
@@ -1048,7 +1204,9 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             }
         }
         Action::StartWizard => {
-            app.wizard = Some(Wizard::new());
+            app.wizard = Some(Wizard::for_system(
+                app.session.as_ref().is_some_and(|s| s.engine.is_snes()),
+            ));
             app.panel = Panel::Mapping;
             // Whatever is held down belongs to the game behind the panel, not
             // to the four presses about to be read.
@@ -1143,7 +1301,13 @@ fn handle_event(
                         if app.playing() {
                             app.actions.push(Action::JumpBack(seconds));
                         }
-                    } else if start_resumes(app) && app.input.is_start(None, &key_name(*scancode)) {
+                    } else if start_resumes(app)
+                        && app.input.game_is_start(
+                            None,
+                            &key_name(*scancode),
+                            app.session.as_ref().is_some_and(|s| s.engine.is_snes()),
+                        )
+                    {
                         app.actions.push(Action::Resume);
                     } else {
                         app.input.key(*scancode, true);
@@ -1196,7 +1360,13 @@ fn handle_event(
                 }
                 return;
             }
-            if start_resumes(app) && app.input.is_start(Some(*which), &physical) {
+            if start_resumes(app)
+                && app.input.game_is_start(
+                    Some(*which),
+                    &physical,
+                    app.session.as_ref().is_some_and(|s| s.engine.is_snes()),
+                )
+            {
                 app.actions.push(Action::Resume);
             }
             app.input.pad_button(*which, *button, true);
@@ -1248,6 +1418,17 @@ pub fn run(options: Options) -> Result<(), String> {
         .opengl()
         .build()
         .map_err(|e| e.to_string())?;
+    let mut icon = image::load_from_memory(include_bytes!("../packaging/icons/Emulia.png"))
+        .map_err(|e| format!("Cannot decode application icon: {e}"))?
+        .into_rgba8();
+    let surface = sdl2::surface::Surface::from_data(
+        icon.as_mut(),
+        512,
+        512,
+        512 * 4,
+        sdl2::pixels::PixelFormatEnum::RGBA32,
+    )?;
+    window.set_icon(surface);
     // The one thing this shell cannot do without, and the message has to say
     // which driver refused: "OpenGL 3.3 is needed" means nothing on its own to
     // somebody running under a software renderer or a remote desktop.
@@ -1287,7 +1468,11 @@ pub fn run(options: Options) -> Result<(), String> {
         settings_dirty: false,
         input: Input::new(profiles),
         session: None,
+        embedded_game: None,
+        external: None,
+        dolphin_label: "Automatic discovery".into(),
         panel: Panel::None,
+        playback_paused: false,
         panel_before: Panel::None,
         dialog: None,
         show_archive: false,
@@ -1334,7 +1519,32 @@ pub fn run(options: Options) -> Result<(), String> {
             app.report("Full screen didn't work.", &e);
         }
     }
-    if let Some(rom) = &options.rom {
+    #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+    let mut probe = if crate::dolphin_embed_probe::Probe::requested() {
+        let rom = options
+            .rom
+            .as_ref()
+            .ok_or("The Dolphin probe needs a disc path")?;
+        let game = crate::import(&app.library, rom)?;
+        if !game.is_external() {
+            return Err("The Dolphin probe needs a GameCube/Wii disc".into());
+        }
+        app.embedded_game = Some(game.clone());
+        Some(crate::dolphin_embed_probe::Probe::start(
+            &window,
+            game,
+            &mut app,
+            &controllers,
+            true,
+        )?)
+    } else {
+        None
+    };
+    #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+    let probe_requested = probe.is_some();
+    #[cfg(not(all(target_os = "macos", feature = "dolphin-embed-probe")))]
+    let probe_requested = false;
+    if let Some(rom) = options.rom.as_ref().filter(|_| !probe_requested) {
         match crate::import(&app.library, rom) {
             Ok(game) => app.actions.push(Action::OpenGame(game)),
             Err(e) => app.report("That game file didn't work.", &e),
@@ -1351,6 +1561,33 @@ pub fn run(options: Options) -> Result<(), String> {
     let mut scrim_painted = false;
     while !app.quit {
         let started = Instant::now();
+        if poll_external(&mut app) {
+            window.raise();
+        }
+        #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+        if let Some(p) = &mut probe {
+            let running = p.pump(&mut app);
+            if !running || p.leaving {
+                let restart = p.restarting.then(|| p.game.clone());
+                p.finish(&mut app);
+                probe = None;
+                if let Some(game) = restart {
+                    match crate::dolphin_embed_probe::Probe::start(
+                        &window,
+                        game.clone(),
+                        &mut app,
+                        &controllers,
+                        false,
+                    ) {
+                        Ok(p) => {
+                            app.embedded_game = Some(game);
+                            probe = Some(p);
+                        }
+                        Err(e) => app.report("Dolphin couldn't restart.", &e),
+                    }
+                }
+            }
+        }
         // 0. The long job whose scrim is now on screen. Run through `apply`
         // rather than `act`, because this is what the waiting was for.
         if scrim_painted {
@@ -1361,11 +1598,23 @@ pub fn run(options: Options) -> Result<(), String> {
         // 1. Events.
         for event in events.poll_iter() {
             bridge.handle(&event);
+            #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+            if let Some(p) = &mut probe {
+                p.event(&event, &mut app, &controllers);
+                continue;
+            }
             handle_event(&mut app, &event, &bridge, &controllers, &joysticks);
         }
         // 2. UI. The pass ends here without painting: the actions it raised
         // have to be applied before the engine runs.
-        let (primitives, mut textures) = bridge.frame(&window, |ui| draw(ui, &mut app, &mut video));
+        let (primitives, mut textures) = bridge.frame(&window, |ui| {
+            #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+            if let Some(p) = &mut probe {
+                p.draw(ui, &mut app);
+                return;
+            }
+            draw(ui, &mut app, &mut video)
+        });
         // Taken before the actions below can raise a new scrim: what matters
         // is what the frame just built says, not what this iteration decides
         // afterwards.
@@ -1373,6 +1622,34 @@ pub fn run(options: Options) -> Result<(), String> {
         // 3. Actions.
         let actions = std::mem::take(&mut app.actions);
         for action in actions {
+            #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+            {
+                if let Some(p) = &mut probe {
+                    if p.action(&action, &mut app) {
+                        continue;
+                    }
+                } else if let Action::OpenGame(game) = &action {
+                    if game.is_external()
+                        && crate::dolphin_embed_probe::Probe::requested()
+                        && app.session.is_none()
+                    {
+                        match crate::dolphin_embed_probe::Probe::start(
+                            &window,
+                            game.clone(),
+                            &mut app,
+                            &controllers,
+                            true,
+                        ) {
+                            Ok(p) => {
+                                app.embedded_game = Some(game.clone());
+                                probe = Some(p);
+                            }
+                            Err(e) => app.report("Dolphin couldn't start.", &e),
+                        }
+                        continue;
+                    }
+                }
+            }
             act(&mut app, action, &mut window, audio_sdl.as_ref());
         }
         // 4. Emulation. What the tick has to say is collected here and said
@@ -1381,22 +1658,20 @@ pub fn run(options: Options) -> Result<(), String> {
         let mut trouble = None;
         let mut queued_ms = 0.0;
         let speed = app.time_speed();
+        let paused = app.emulation_paused();
         if let Some(session) = &mut app.session {
             session.scrub = speed;
-            session.paused = app.panel != Panel::None
-                || app.dialog.is_some()
-                || app.busy
-                || app.wizard.is_some();
+            session.paused = paused;
             let (p1, p2) = if session.paused {
-                (nes_core::Buttons(0), nes_core::Buttons(0))
+                (emulation_api::Buttons(0), emulation_api::Buttons(0))
             } else {
-                app.input.buttons()
+                app.input.game_buttons(session.engine.is_snes())
             };
             let advanced = session.advance(p1, p2);
             hit_end = advanced.hit_end;
             trouble = session
                 .take_error()
-                .map(|e| (session.game.title.clone(), e));
+                .map(|e| (session.game.title.clone(), e, session.paused));
             app.rewind_depth = session.engine.rewind_depth();
             queued_ms = session.audio_ms();
             app.frame_dirty |= advanced.frames > 0;
@@ -1408,8 +1683,13 @@ pub fn run(options: Options) -> Result<(), String> {
         if hit_end {
             app.notice(END_OF_TAPE);
         }
-        if let Some((title, detail)) = trouble {
-            app.library.log_problem(&title, &detail);
+        if let Some((title, detail, stopped)) = trouble {
+            if stopped {
+                app.panel = Panel::Pause;
+                app.report(&format!("{title}: playback stopped."), &detail);
+            } else {
+                app.library.log_problem(&title, &detail);
+            }
         }
         // 5. Picture and panels.
         let (dw, dh) = window.drawable_size();
@@ -1421,7 +1701,11 @@ pub fn run(options: Options) -> Result<(), String> {
         }
         if app.session.is_some() {
             let uploaded = match (&app.session, app.frame_dirty) {
-                (Some(session), true) => video.upload(session.engine.frame()),
+                (Some(session), true) => video.upload_frame(
+                    session.engine.frame(),
+                    session.engine.video_descriptor(),
+                    !session.engine.is_snes(),
+                ),
                 _ => Ok(()),
             };
             match uploaded {
@@ -1481,7 +1765,8 @@ pub fn run(options: Options) -> Result<(), String> {
             }
         }
         if app.fullscreen && app.session.is_some() {
-            sdl.mouse().show_cursor(Instant::now() < app.chrome_until);
+            sdl.mouse()
+                .show_cursor(app.playback_paused || Instant::now() < app.chrome_until);
         } else {
             sdl.mouse().show_cursor(true);
         }
@@ -1495,6 +1780,11 @@ pub fn run(options: Options) -> Result<(), String> {
     }
     if let Some(mut session) = app.session.take() {
         session.close();
+    }
+    #[cfg(all(target_os = "macos", feature = "dolphin-embed-probe"))]
+    if let Some(mut p) = probe {
+        p.finish(&mut app);
+        drop(p);
     }
     video.destroy();
     bridge.destroy();
@@ -1513,6 +1803,53 @@ mod tests {
         dir
     }
 
+    #[test]
+    fn slider_pause_freezes_both_cores_without_opening_a_panel() {
+        let dir = temp_dir("slider-pause");
+        for rom in [test_rom(), crate::engine::tests::snes_rom(false)] {
+            let mut app = App::blank(&dir);
+            let engine = crate::engine::Engine::new(&rom).unwrap();
+            let game = app.library.add(&engine.id(), "Pause test", &rom).unwrap();
+            open_game(&mut app, game, None);
+            toggle_playback(&mut app);
+            assert_eq!(app.panel, Panel::None);
+            assert!(app.emulation_paused());
+            assert_eq!(app.time_speed(), 0);
+            let paused = app.emulation_paused();
+            let session = app.session.as_mut().unwrap();
+            session.paused = paused;
+            let before = session.engine.save_state().unwrap();
+            for _ in 0..3 {
+                assert_eq!(
+                    session
+                        .advance(emulation_api::Buttons(0), emulation_api::Buttons(0))
+                        .frames,
+                    0
+                );
+            }
+            assert_eq!(session.engine.save_state().unwrap(), before);
+            assert!(app
+                .library
+                .has_autosave(&app.session.as_ref().unwrap().game.id));
+            assert_eq!(escape(&app), Action::Pause);
+            toggle_playback(&mut app);
+            assert!(!app.emulation_paused());
+            let session = app.session.as_mut().unwrap();
+            session.paused = false;
+            assert!(
+                session
+                    .advance(emulation_api::Buttons(0), emulation_api::Buttons(0))
+                    .frames
+                    > 0
+            );
+            pause_game(&mut app, true);
+            assert_eq!(app.panel, Panel::Pause);
+            close_session(&mut app);
+            assert!(!app.playback_paused);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// A texture handle to stand in for the preview. Nothing here looks at
     /// what is in it; what matters is whether it is still being held.
     fn fake_texture() -> egui::TextureHandle {
@@ -1527,6 +1864,53 @@ mod tests {
     /// and the way out of it has to lead back to the one you came in by.
     /// Everything else over a game goes back to the pause panel, and anything
     /// over the shelf goes back to the shelf.
+    #[test]
+    fn dolphin_handoff_saves_the_embedded_game_and_returns_to_the_shelf() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("dolphin-handoff");
+        let mut app = App::blank(&dir);
+        let rom = crate::engine::tests::test_rom();
+        let nes = crate::engine::Engine::new(&rom).unwrap();
+        let nes_game = app.library.add(&nes.id(), "NES", &rom).unwrap();
+        open_game(&mut app, nes_game.clone(), None);
+        let state = app.session.as_ref().unwrap().engine.save_state().unwrap();
+        let disc_path = dir.join("disc.iso");
+        let mut header = vec![0; 1024];
+        header[28..32].copy_from_slice(&[0xc2, 0x33, 0x9f, 0x3d]);
+        std::fs::write(&disc_path, header).unwrap();
+        let game = crate::import(&app.library, &disc_path).unwrap();
+        let executable = dir.join("fake-dolphin");
+        std::fs::write(&executable, "#!/bin/sh\nsleep 0.1\nexit 0\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::dolphin::Profile {
+            executable: Some(executable),
+        }
+        .save(&dir)
+        .unwrap();
+        open_game(&mut app, game.clone(), None);
+        assert!(app.session.is_none());
+        assert!(app.external.is_some());
+        assert_eq!(app.panel, Panel::None);
+        assert_eq!(
+            std::fs::read(app.library.state_path(&nes_game.id, Slot::Auto)).unwrap(),
+            state
+        );
+        open_game(&mut app, nes_game, None);
+        assert!(
+            app.session.is_none(),
+            "two emulators must not run audio together"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !poll_external(&mut app) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.external.is_none());
+        assert_eq!(app.library.find(&game.id).unwrap().seconds, 0);
+        assert!(app.message.as_deref().unwrap().contains("Dolphin closed"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn closing_a_panel_goes_back_to_wherever_it_was_opened_from() {
         let dir = temp_dir("shell-close");
@@ -1604,6 +1988,7 @@ mod tests {
         let dir = temp_dir("shell-wizard");
         let mut app = App::blank(&dir);
         let profile = crate::settings::Profile {
+            snes: Default::default(),
             name: "Keyboard".into(),
             a: "X".into(),
             b: "Z".into(),
@@ -2082,7 +2467,11 @@ mod tests {
         assert_eq!(app.time_speed(), crate::scrub::MAX);
         // Back in the middle, the keys have it again.
         app.scrub_fraction = 0.0;
-        assert_eq!(app.time_speed(), app.input.time_speed());
+        assert_eq!(
+            app.time_speed(),
+            app.input
+                .game_time_speed(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2213,7 +2602,13 @@ mod tests {
         let _ = std::fs::remove_file(&battery);
         focus_lost(&mut app);
         assert!(app.actions.is_empty(), "{:?}", app.actions);
-        assert_eq!(app.input.buttons().0 .0, 0);
+        assert_eq!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         assert!(!battery.exists());
         assert_eq!(app.message, None);
         app.panel = Panel::None;
@@ -2223,11 +2618,23 @@ mod tests {
         app.settings.pause_on_focus_loss = false;
         assert_eq!(on_focus_lost(&app), None);
         app.input.key(Scancode::X, true);
-        assert_ne!(app.input.buttons().0 .0, 0);
+        assert_ne!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         let _ = std::fs::remove_file(&battery);
         focus_lost(&mut app);
         assert!(app.actions.is_empty(), "{:?}", app.actions);
-        assert_eq!(app.input.buttons().0 .0, 0);
+        assert_eq!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         assert!(battery.exists());
         assert_eq!(app.message, None);
         // With it on, the pause is what does both, so nothing happens here
@@ -2236,7 +2643,13 @@ mod tests {
         app.input.key(Scancode::X, true);
         focus_lost(&mut app);
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::Pause]);
-        assert_eq!(app.input.buttons().0 .0, 0);
+        assert_eq!(
+            app.input
+                .game_buttons(app.session.as_ref().is_some_and(|s| s.engine.is_snes()))
+                .0
+                 .0,
+            0
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
