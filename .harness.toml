@@ -57,3 +57,8 @@
   task = "review-accuracy"
   tmux = "androidemu-fabkefixer"
   agent = "claude"
+
+[[terminal]]
+  name = "main-astra"
+  tmux = "androidemu-main-astra"
+  agent = "codex"
