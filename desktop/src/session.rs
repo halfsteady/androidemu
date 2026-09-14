@@ -64,6 +64,9 @@ pub struct Session {
     /// either. The only copy of it is still on disk, so this session writes no
     /// battery at all rather than replacing it with empty RAM.
     battery_unreadable: bool,
+    /// The autosave could not be restored or preserved elsewhere. A retry
+    /// must keep it aside before replacing it when the directory recovers.
+    auto_unreadable: bool,
     library_root: PathBuf,
     audio: Option<Box<dyn Audio>>,
     target_bytes: u32,
@@ -95,51 +98,53 @@ impl Session {
         let battery = library.battery_path(&game.id);
         let mut paused = false;
         let mut battery_unreadable = false;
+        let mut loaded_battery = None;
         if engine.battery_ram().is_some() {
             let failure = match read_optional(&battery) {
-                Ok(Some(bytes)) => engine
-                    .load_battery(&bytes)
-                    .err()
-                    .map(|e| format!("{}: {e}", battery.display())),
+                Ok(Some(bytes)) => match engine.load_battery(&bytes) {
+                    Ok(()) => {
+                        loaded_battery = Some(bytes);
+                        None
+                    }
+                    Err(e) => Some(format!("{}: {e}", battery.display())),
+                },
                 Ok(None) => None,
                 Err(e) => Some(e),
             };
             if let Some(detail) = failure {
-                // Those bytes are the only copy of someone's adventure. Move
-                // them out of the way before this session's empty RAM takes
-                // the name, and say where they went.
-                let kept = kept_aside(&battery);
-                match fs::rename(&battery, &kept) {
-                    Ok(()) => library.log_problem(
-                        &game.title,
-                        &format!("{detail}; kept as {}", kept.display()),
-                    ),
-                    Err(e) => {
-                        library.log_problem(
-                            &game.title,
-                            &format!(
-                                "{detail}; unreadable and cannot be moved to {}: {e}",
-                                kept.display()
-                            ),
-                        );
-                        battery_unreadable = true;
-                    }
-                }
+                battery_unreadable = !keep_save(library, &game, &battery, &detail);
                 warnings.push(START_EARLIER.to_string());
                 paused = true;
             }
         }
         let auto = library.state_path(&game.id, Slot::Auto);
+        let boot_state = engine.save_state();
+        let mut auto_unreadable = false;
         let failure = match read_optional(&auto) {
-            Ok(Some(bytes)) => engine
-                .load_state(&bytes)
-                .err()
-                .map(|e| format!("{}: {e}", auto.display())),
+            Ok(Some(bytes)) => match engine.load_state(&bytes) {
+                Ok(())
+                    if loaded_battery
+                        .as_deref()
+                        .is_some_and(|battery| engine.battery_ram() != Some(battery)) =>
+                {
+                    // Battery is committed before a state. A different battery
+                    // therefore belongs to later play (or an interrupted save).
+                    // Keep the old state recoverable and boot with the battery;
+                    // mixing that RAM into the old running machine is unsafe.
+                    engine.load_state(&boot_state)?;
+                    Some(format!(
+                        "{} conflicts with the saved battery; starting from battery RAM",
+                        auto.display()
+                    ))
+                }
+                Ok(()) => None,
+                Err(e) => Some(format!("{}: {e}", auto.display())),
+            },
             Ok(None) => None,
             Err(e) => Some(e),
         };
         if let Some(detail) = failure {
-            library.log_problem(&game.title, &detail);
+            auto_unreadable = !keep_save(library, &game, &auto, &detail);
             if warnings.is_empty() {
                 warnings.push(START_EARLIER.to_string());
             }
@@ -156,6 +161,7 @@ impl Session {
                 scrub: 0,
                 battery,
                 battery_unreadable,
+                auto_unreadable,
                 library_root: library.root().to_path_buf(),
                 audio,
                 target_bytes,
@@ -300,11 +306,28 @@ impl Session {
     /// The state, the battery RAM if any and a thumbnail, each atomically.
     pub fn save(&mut self, slot: Slot) -> Result<(), String> {
         let library = self.library();
+        // A committed state must never be newer than the battery it contains.
+        // Also try the battery even when the autosave path cannot be written.
+        self.flush_battery()?;
+        if slot == Slot::Auto && self.auto_unreadable {
+            let path = library.state_path(&self.game.id, slot);
+            if !keep_save(
+                &library,
+                &self.game,
+                &path,
+                "Autosave could not be restored",
+            ) {
+                return Err(format!(
+                    "{} is protected until it can be kept aside",
+                    path.display()
+                ));
+            }
+            self.auto_unreadable = false;
+        }
         write_atomic(
             &library.state_path(&self.game.id, slot),
             &self.engine.save_state(),
         )?;
-        self.flush_battery()?;
         write_png(
             &library.thumbnail_path(&self.game.id, slot),
             WIDTH as u32,
@@ -365,23 +388,50 @@ impl Session {
         Ok(path)
     }
 
-    /// Autosave, battery and playtime on the way out. Errors are logged, not returned.
-    pub fn close(&mut self) {
-        let library = self.library();
-        if let Err(e) = self.save(Slot::Auto) {
-            library.log_problem(&self.game.title, &e);
-        }
+    /// The caller retains this session if persistence fails, so it can retry.
+    pub fn close(&mut self) -> Result<(), String> {
+        self.save(Slot::Auto)?;
         self.record_playtime();
+        Ok(())
     }
 }
 
-/// `battery.sav.unreadable` beside the original, so bytes that would not load
-/// stay where someone can find them. An older one is replaced: a save that
-/// already failed once is worth less than the one that just did.
+/// Preserve every recovery copy, including files an older reader cannot load.
 fn kept_aside(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(".unreadable");
-    PathBuf::from(name)
+    let first = PathBuf::from(&name);
+    let mut kept = first.clone();
+    let mut number = 0;
+    while kept.symlink_metadata().is_ok() {
+        number += 1;
+        let mut next = first.as_os_str().to_os_string();
+        next.push(format!("-{number}"));
+        kept = PathBuf::from(next);
+    }
+    kept
+}
+
+/// False means the original still needs protection from every later write.
+fn keep_save(library: &Library, game: &Game, path: &Path, detail: &str) -> bool {
+    let kept = kept_aside(path);
+    match fs::rename(path, &kept) {
+        Ok(()) => {
+            library.log_problem(
+                &game.title,
+                &format!("{detail}; kept as {}", kept.display()),
+            );
+            true
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => {
+            library.log_problem(
+                &game.title,
+                &format!("{detail}; cannot be moved to {}: {e}", kept.display()),
+            );
+            false
+        }
+    }
 }
 
 /// The first desktop release keyed `<identity>.sav` and `<identity>.state` at
@@ -476,7 +526,7 @@ mod tests {
         use nes_core::cpu::Bus;
         session.engine.nes.bus.write(0x6000, 0x5a);
         session.advance(Buttons(0), Buttons(0));
-        session.close();
+        session.close().unwrap();
         assert!(library.has_autosave(&game.id));
         assert_eq!(fs::read(library.battery_path(&game.id)).unwrap()[0], 0x5a);
         let (session, warnings) = Session::open(&library, game.clone(), None).unwrap();
@@ -568,7 +618,7 @@ mod tests {
         session.paused = false;
         session.advance(Buttons(0), Buttons(0));
         session.advance(Buttons(0), Buttons(0));
-        session.close();
+        session.close().unwrap();
         assert_eq!(fs::read(&battery).unwrap().len(), 8192);
         assert_eq!(fs::read(&kept).unwrap(), b"not a battery save");
         fs::remove_dir_all(dir).unwrap();
@@ -677,6 +727,180 @@ mod tests {
             .starts_with("Test "));
         let (w, h, _) = crate::files::read_png(&path).unwrap();
         assert_eq!((w, h), (256, 240));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn regression_unreadable_valid_auto_survives_close_without_playing() {
+        use nes_core::cpu::Bus;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("review-unreadable-auto");
+        let (library, game) = library_with_game(&dir);
+        let (mut s, _) = Session::open(&library, game.clone(), None).unwrap();
+        s.engine.nes.bus.write(0x6000, 0x5a);
+        let original = s.engine.save_state();
+        let auto = library.state_path(&game.id, Slot::Auto);
+        fs::write(&auto, &original).unwrap();
+        fs::set_permissions(&auto, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(fs::read(&auto).is_err());
+        drop(s);
+        let (mut s, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert_eq!(warnings, vec![START_EARLIER.to_string()]);
+        assert!(s.paused);
+        s.close().unwrap();
+        let kept = PathBuf::from(format!("{}.unreadable", auto.display()));
+        fs::set_permissions(&kept, fs::Permissions::from_mode(0o600)).unwrap();
+        let saved = fs::read(&kept).unwrap();
+        let mut probe = Engine::new(&test_rom()).unwrap();
+        probe.load_state(&saved).unwrap();
+        eprintln!(
+            "Unreadable valid auto, close without playing: battery {} -> {}",
+            0x5a,
+            probe.battery_ram().unwrap()[0]
+        );
+        assert!(
+            saved == original,
+            "closing without playing destroyed the unreadable valid autosave"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn regression_newer_flushed_battery_survives_unclean_restart() {
+        use nes_core::cpu::Bus;
+        let dir = temp_dir("review-newer-battery");
+        let (library, game) = library_with_game(&dir);
+        let (mut s, _) = Session::open(&library, game.clone(), None).unwrap();
+        s.engine.nes.bus.write(0x6000, 0x11);
+        s.save(Slot::Auto).unwrap();
+        s.engine.nes.bus.write(0x6000, 0x77);
+        s.flush_battery().unwrap();
+        drop(s); // An exit without Session::close(), after a successful battery flush.
+        assert_eq!(fs::read(library.battery_path(&game.id)).unwrap()[0], 0x77);
+        let (mut s, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert_eq!(warnings, vec![START_EARLIER.to_string()]);
+        assert!(s.paused);
+        let restored = s.engine.battery_ram().unwrap()[0];
+        s.close().unwrap();
+        let on_disk = fs::read(library.battery_path(&game.id)).unwrap()[0];
+        eprintln!("Newer battery: disk before restart=119, restored={restored}, disk after close={on_disk}");
+        assert_eq!(
+            on_disk, 0x77,
+            "older autosave overwrote the successfully flushed battery"
+        );
+        assert_eq!(restored, 0x77);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn regression_rewind_to_migrated_start_keeps_loaded_battery() {
+        let dir = temp_dir("review-migrated-rewind");
+        let (library, game) = library_with_game(&dir);
+        let identity = Engine::new(&test_rom()).unwrap().identity();
+        fs::write(dir.join(format!("{identity}.sav")), vec![0x5a; 8192]).unwrap();
+        let (mut s, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(s.engine.battery_ram().unwrap()[0], 0x5a);
+        s.engine.step(Buttons(0), Buttons(0));
+        assert!(s.engine.rewind_step());
+        s.close().unwrap();
+        let on_disk = fs::read(library.battery_path(&game.id)).unwrap()[0];
+        eprintln!("Migrated battery after one step and one rewind: 90 -> {on_disk}");
+        assert_eq!(
+            on_disk, 0x5a,
+            "rewind returned to the pre-battery-load anchor"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn regression_close_attempts_battery_when_auto_write_fails() {
+        use nes_core::cpu::Bus;
+        let dir = temp_dir("review-close-auto-failure");
+        let (library, game) = library_with_game(&dir);
+        let (mut s, _) = Session::open(&library, game.clone(), None).unwrap();
+        s.engine.nes.bus.write(0x6000, 0x11);
+        s.flush_battery().unwrap();
+        s.engine.nes.bus.write(0x6000, 0x77);
+        let auto = library.state_path(&game.id, Slot::Auto);
+        fs::create_dir_all(&auto).unwrap(); // Only auto.state is blocked; battery.sav is writable.
+        assert!(s.close().is_err());
+        let on_disk = fs::read(library.battery_path(&game.id)).unwrap()[0];
+        eprintln!("Failed autosave on close: RAM=119, persisted battery={on_disk}");
+        assert_eq!(
+            on_disk, 0x77,
+            "auto error short-circuited the final battery flush"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn recovery_copies_are_not_replaced_by_another_failed_open() {
+        let dir = temp_dir("recovery-copies");
+        let (library, game) = library_with_game(&dir);
+        let auto = library.state_path(&game.id, Slot::Auto);
+        for bytes in [b"first failed state", b"other failed state"] {
+            fs::write(&auto, bytes).unwrap();
+            let (mut session, warnings) = Session::open(&library, game.clone(), None).unwrap();
+            assert_eq!(warnings, vec![START_EARLIER.to_string()]);
+            session.close().unwrap();
+        }
+        assert_eq!(
+            fs::read(auto.with_file_name("auto.state.unreadable")).unwrap(),
+            b"first failed state"
+        );
+        assert_eq!(
+            fs::read(auto.with_file_name("auto.state.unreadable-1")).unwrap(),
+            b"other failed state"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_autosave_is_kept_before_retrying_after_directory_recovers() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("protected-auto");
+        let (library, game) = library_with_game(&dir);
+        let auto = library.state_path(&game.id, Slot::Auto);
+        fs::write(&auto, b"recoverable state").unwrap();
+        let folder = library.directory(&game.id);
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+        let opened = Session::open(&library, game.clone(), None);
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+        let (mut session, _) = opened.unwrap();
+        assert!(session.auto_unreadable);
+        assert_eq!(fs::read(&auto).unwrap(), b"recoverable state");
+        session.close().unwrap();
+        assert_eq!(
+            fs::read(auto.with_file_name("auto.state.unreadable")).unwrap(),
+            b"recoverable state"
+        );
+        assert!(!session.auto_unreadable);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_battery_write_does_not_commit_a_newer_autosave() {
+        use nes_core::cpu::Bus;
+        let dir = temp_dir("battery-before-state");
+        let (library, game) = library_with_game(&dir);
+        let (mut session, _) = Session::open(&library, game.clone(), None).unwrap();
+        session.save(Slot::Auto).unwrap();
+        let auto = library.state_path(&game.id, Slot::Auto);
+        let original = fs::read(&auto).unwrap();
+        session.engine.nes.bus.write(0x6000, 0x5a);
+        let blocked = library
+            .battery_path(&game.id)
+            .with_extension(format!("tmp-{}", std::process::id()));
+        fs::write(&blocked, b"conflict").unwrap();
+        assert!(session.close().is_err());
+        assert_eq!(fs::read(&auto).unwrap(), original);
+        fs::remove_file(blocked).unwrap();
+        session.close().unwrap();
+        let (session, warnings) = Session::open(&library, game.clone(), None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(session.engine.battery_ram().unwrap()[0], 0x5a);
         fs::remove_dir_all(dir).unwrap();
     }
 }

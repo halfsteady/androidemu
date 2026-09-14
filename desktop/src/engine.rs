@@ -114,7 +114,11 @@ impl Engine {
         self.nes.battery_ram()
     }
     pub fn load_battery(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.nes.load_battery_ram(bytes).map_err(|e| e.to_string())
+        self.nes
+            .load_battery_ram(bytes)
+            .map_err(|e| e.to_string())?;
+        self.anchor();
+        Ok(())
     }
 
     /// A fresh machine from the same ROM with battery RAM carried across,

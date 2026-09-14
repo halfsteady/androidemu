@@ -433,6 +433,7 @@ fn on_focus_lost(app: &App) -> Option<Action> {
 /// written here rather than waiting for the next flush to come round.
 fn focus_lost(app: &mut App) {
     app.input.clear();
+    app.scrub_fraction = 0.0;
     if let Some(action) = on_focus_lost(app) {
         app.actions.push(action);
         return;
@@ -626,10 +627,18 @@ fn finish_wizard(app: &mut App, key: String, profile: crate::settings::Profile) 
 /// Putting the open game away: it writes its autosave and its playtime, and
 /// the shell forgets everything that was only true while it was open. Its own
 /// function so that leaving can be tested without a window.
-fn close_session(app: &mut App) {
-    if let Some(mut session) = app.session.take() {
-        session.close();
+fn close_session(app: &mut App) -> bool {
+    if let Some(session) = &mut app.session {
+        if let Err(e) = session.close() {
+            stop_after_save_error(
+                app,
+                "Progress couldn't be saved. Your game is still open.",
+                &e,
+            );
+            return false;
+        }
     }
+    app.session = None;
     app.panel = Panel::None;
     app.dialog = None;
     app.scrub_fraction = 0.0;
@@ -637,14 +646,35 @@ fn close_session(app: &mut App) {
     // audio queue, and the last game's figure is not it.
     app.audio_ms = 0.0;
     app.input.clear();
+    true
+}
+
+/// An accepted checkpoint must finish before exit. A failed write leaves the
+/// machine available for another save attempt instead of discarding its RAM.
+fn finish_quit(app: &mut App) -> bool {
+    app.quit && app.pending.is_empty() && close_session(app)
+}
+
+fn stop_after_save_error(app: &mut App, label: &str, detail: &str) {
+    // Later loads or game switches would discard the state that failed to save.
+    app.pending.clear();
+    app.busy = false;
+    app.quit = false;
+    app.panel = Panel::Pause;
+    app.scrub_fraction = 0.0;
+    app.input.clear();
+    if let Some(session) = &mut app.session {
+        session.paused = true;
+    }
+    app.report(label, detail);
 }
 
 fn open_game(app: &mut App, game: Game, sdl: Option<&sdl2::Sdl>) {
     // Whatever is open is being put away, not abandoned: its autosave and its
     // playtime are written before the window belongs to something else. A
     // .nes dropped on a running game used to cost both.
-    if let Some(mut open) = app.session.take() {
-        open.close();
+    if !close_session(app) {
+        return;
     }
     app.thumbs.clear();
     app.scrub_fraction = 0.0;
@@ -702,21 +732,11 @@ fn is_long(action: &Action) -> bool {
     )
 }
 
-/// Puts a long job off until the scrim it asks for has been painted, and
-/// hands back whatever should run now.
-///
-/// The order inside the loop is what makes this necessary: the frame is built
-/// before the actions it raised are applied, so a job that runs here runs
-/// under a frame that was drawn without the scrim in it. Raising the scrim and
-/// keeping the job until the next iteration has painted it costs a sixtieth of
-/// a second and is the difference between a window that says it is working and
-/// one that has died.
-///
-/// A second long job while one is waiting is run where it stands rather than
-/// dropped: one scrim is up either way, and losing somebody's import because
-/// they also asked for a screenshot would be worse than the freeze.
+/// A long job waits for its scrim. Everything requested after it waits too:
+/// otherwise an immediate load/reset/game switch can change what a queued
+/// save writes. `busy` pauses emulation, but cannot order collected actions.
 fn defer(app: &mut App, action: Action) -> Option<Action> {
-    if !is_long(&action) {
+    if !is_long(&action) && app.pending.is_empty() {
         return Some(action);
     }
     app.busy = true;
@@ -725,7 +745,12 @@ fn defer(app: &mut App, action: Action) -> Option<Action> {
     // to be, so that a question asked while something else is working can
     // still be read — and leaving "Replace slot 1?" up while the save it asked
     // for was waiting meant a second click saved a second time.
-    app.dialog = None;
+    if matches!(
+        action,
+        Action::SaveConfirmed(_) | Action::ResetConfirmed | Action::DeleteConfirmed(_)
+    ) {
+        app.dialog = None;
+    }
     app.pending.push_back(action);
     // Nothing more is needed to clear the input: `busy` pauses the session in
     // step 4 and zeroes both pads, so no button reaches the game while the
@@ -775,7 +800,10 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                 .set_title("Add a game")
                 .pick_file();
             if let Some(path) = picked {
-                act(app, Action::ImportFrom(path), window, sdl);
+                // The chosen file continues this action, ahead of jobs that
+                // were requested after the picker was opened.
+                app.pending.push_front(Action::ImportFrom(path));
+                app.busy = true;
             }
         }
         Action::ImportFrom(path) => match crate::import(&app.library, &path) {
@@ -788,7 +816,8 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
                 .set_title("Choose box art")
                 .pick_file();
             if let Some(path) = picked {
-                act(app, Action::ChooseArtFrom(game, path), window, sdl);
+                app.pending.push_front(Action::ChooseArtFrom(game, path));
+                app.busy = true;
             }
         }
         // The cached texture goes with the file it was made from: a new
@@ -901,7 +930,11 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
         Action::SaveConfirmed(n) => {
             if let Some(session) = &mut app.session {
                 if let Err(e) = session.save(Slot::Number(n)) {
-                    app.report("That save didn't work.", &e);
+                    stop_after_save_error(
+                        app,
+                        "That save didn't work. Your game is paused; try saving again.",
+                        &e,
+                    );
                 }
                 app.thumbs.remove(&n);
             }
@@ -996,7 +1029,9 @@ fn apply(app: &mut App, action: Action, window: &mut sdl2::video::Window, sdl: O
             }
             app.panel = Panel::Problems;
         }
-        Action::BackToShelf => close_session(app),
+        Action::BackToShelf => {
+            close_session(app);
+        }
         Action::OpenSettings => {
             app.panel = Panel::Settings;
             // Both halves of the preview — the settings and the frame it is
@@ -1349,7 +1384,7 @@ pub fn run(options: Options) -> Result<(), String> {
     // Whether the frame that is about to be painted has the busy scrim in it.
     // The job that scrim belongs to waits for it: see `defer`.
     let mut scrim_painted = false;
-    while !app.quit {
+    loop {
         let started = Instant::now();
         // 0. The long job whose scrim is now on screen. Run through `apply`
         // rather than `act`, because this is what the waiting was for.
@@ -1386,6 +1421,7 @@ pub fn run(options: Options) -> Result<(), String> {
             session.paused = app.panel != Panel::None
                 || app.dialog.is_some()
                 || app.busy
+                || app.quit
                 || app.wizard.is_some();
             let (p1, p2) = if session.paused {
                 (nes_core::Buttons(0), nes_core::Buttons(0))
@@ -1492,9 +1528,9 @@ pub fn run(options: Options) -> Result<(), String> {
         if !vsync {
             std::thread::sleep(pace(frame_time(&app), started.elapsed()));
         }
-    }
-    if let Some(mut session) = app.session.take() {
-        session.close();
+        if finish_quit(&mut app) {
+            break;
+        }
     }
     video.destroy();
     bridge.destroy();
@@ -2237,6 +2273,130 @@ mod tests {
         focus_lost(&mut app);
         assert_eq!(std::mem::take(&mut app.actions), vec![Action::Pause]);
         assert_eq!(app.input.buttons().0 .0, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn regression_load_cannot_overtake_an_earlier_confirmed_save() {
+        use nes_core::cpu::Bus;
+        std::env::set_var("SDL_VIDEODRIVER", "dummy");
+        let sdl = sdl2::init().unwrap();
+        let video = sdl.video().unwrap();
+        let mut window = video.window("review", 64, 64).hidden().build().unwrap();
+        let dir = temp_dir("review-save-load-order");
+        let mut app = App::blank(&dir);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (mut s, _) = Session::open(&app.library, game.clone(), None).unwrap();
+        s.engine.nes.bus.write(0x6000, 0x11);
+        s.save(Slot::Number(0)).unwrap();
+        s.engine.nes.bus.write(0x6000, 0x77);
+        app.session = Some(s);
+        // Both F5 and F8 pass app.playing() during the same event poll.
+        assert!(app.playing());
+        let actions = [Action::SaveConfirmed(0), Action::Load(0)];
+        for action in actions {
+            act(&mut app, action, &mut window, None);
+        }
+        while let Some(pending) = take_pending(&mut app) {
+            apply(&mut app, pending, &mut window, None);
+        }
+        let bytes = std::fs::read(app.library.state_path(&game.id, Slot::Number(0))).unwrap();
+        let mut probe = crate::engine::Engine::new(&test_rom()).unwrap();
+        probe.load_state(&bytes).unwrap();
+        eprintln!(
+            "F5 then F8 in one event batch: wanted battery=119, saved battery={}",
+            probe.battery_ram().unwrap()[0]
+        );
+        assert_eq!(probe.battery_ram().unwrap()[0], 0x77);
+        assert_eq!(
+            app.session.as_ref().unwrap().engine.battery_ram().unwrap()[0],
+            0x77
+        );
+        // A failed save must not let the queued load discard the unsaved state.
+        app.session
+            .as_mut()
+            .unwrap()
+            .engine
+            .nes
+            .bus
+            .write(0x6000, 0x99);
+        let slot = app.library.state_path(&game.id, Slot::Number(0));
+        let blocked = slot.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::write(&blocked, b"conflict").unwrap();
+        for action in [Action::SaveConfirmed(0), Action::Load(0)] {
+            act(&mut app, action, &mut window, None);
+        }
+        app.quit = true;
+        while let Some(pending) = take_pending(&mut app) {
+            apply(&mut app, pending, &mut window, None);
+        }
+        assert!(!app.quit);
+        assert_eq!(app.panel, Panel::Pause);
+        assert!(app.message.is_some());
+        assert_eq!(
+            app.session.as_ref().unwrap().engine.battery_ram().unwrap()[0],
+            0x99
+        );
+        probe.load_state(&std::fs::read(&slot).unwrap()).unwrap();
+        assert_eq!(probe.battery_ram().unwrap()[0], 0x77);
+        std::fs::remove_file(blocked).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn quitting_waits_for_the_confirmed_checkpoint_before_closing() {
+        let dir = temp_dir("quit-checkpoint");
+        let mut app = App::blank(&dir);
+        let game = app.library.add("aaaa", "Test", &test_rom()).unwrap();
+        let (session, _) = Session::open(&app.library, game.clone(), None).unwrap();
+        let expected = session.engine.save_state();
+        app.session = Some(session);
+        defer(&mut app, Action::SaveConfirmed(2));
+        app.quit = true;
+        assert!(!finish_quit(&mut app));
+        assert!(app.session.is_some());
+        let Action::SaveConfirmed(n) = take_pending(&mut app).unwrap() else {
+            panic!("wrong pending action")
+        };
+        app.session.as_mut().unwrap().save(Slot::Number(n)).unwrap();
+        assert!(finish_quit(&mut app));
+        assert!(app.session.is_none());
+        assert_eq!(
+            std::fs::read(app.library.state_path(&game.id, Slot::Number(2))).unwrap(),
+            expected
+        );
+        assert!(app.library.has_autosave(&game.id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_close_keeps_the_game_for_retry_and_blocks_game_switches() {
+        use nes_core::cpu::Bus;
+        let dir = temp_dir("close-retry");
+        let mut app = App::blank(&dir);
+        let game = app.library.add("aaaa", "First", &test_rom()).unwrap();
+        let other = app.library.add("bbbb", "Second", &test_rom()).unwrap();
+        let (mut session, _) = Session::open(&app.library, game.clone(), None).unwrap();
+        session.engine.nes.bus.write(0x6000, 0x5a);
+        let expected = session.engine.save_state();
+        app.session = Some(session);
+        let auto = app.library.state_path(&game.id, Slot::Auto);
+        std::fs::create_dir(&auto).unwrap();
+        app.quit = true;
+        assert!(!finish_quit(&mut app));
+        assert!(!app.quit);
+        assert_eq!(app.panel, Panel::Pause);
+        assert!(app.message.is_some());
+        assert_eq!(app.session.as_ref().unwrap().engine.save_state(), expected);
+        assert_eq!(
+            std::fs::read(app.library.battery_path(&game.id)).unwrap()[0],
+            0x5a
+        );
+        open_game(&mut app, other, None);
+        assert_eq!(app.session.as_ref().unwrap().game.id, game.id);
+        std::fs::remove_dir(&auto).unwrap();
+        app.quit = true;
+        assert!(finish_quit(&mut app));
+        assert_eq!(std::fs::read(&auto).unwrap(), expected);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
