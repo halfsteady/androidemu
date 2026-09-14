@@ -24,7 +24,7 @@ and a macOS 11 deployment target; either environment default can be overridden.
 
 On macOS, install Xcode Command Line Tools (`xcode-select --install`) and CMake
 (`brew install cmake` if using Homebrew). Both Apple Silicon and Intel builds
-are covered by the CI workflow.
+are available through the CI workflow's manual hosted-platform option.
 
 On Ubuntu/Debian, install the build and desktop development packages:
 
@@ -53,8 +53,12 @@ file or a picture onto the window does the same job.
 
 The executable can be copied out of the repository and run directly. Linux
 still needs the system C runtime and display/audio services; it is not a fully
-static executable for arbitrary distributions. CI builds on Ubuntu 22.04 for
-x86-64 and ARM64, and macOS 15 for Apple Silicon and Intel. Build from source on
+static executable for arbitrary distributions. Automatic CI builds on the organization's Ubuntu 24.04 x86-64 runner. The
+manual `hosted_platforms` option additionally checks Ubuntu 22.04 for x86-64
+and ARM64, and macOS 15 for Apple Silicon and Intel. Those optional jobs use
+GitHub-hosted minutes. Local x86-64 artifacts therefore require a compatible
+Ubuntu 24.04-era C runtime; use the optional Ubuntu 22.04 artifact for that
+older baseline. Build from source on
 older systems. The workflow uploads tar archives containing the two executables
 and these instructions. These are terminal-launched binaries, not signed macOS
 application bundles. No ROMs are included.
@@ -249,8 +253,13 @@ CI runs and on stable 1.95.
 The smoke test creates its own NROM, runs the real executable headlessly
 through `--frames` with SDL's dummy video and audio drivers, and checks audio
 pacing, muted pacing, the library import and its deduplication, SRAM
-persistence, autosave recovery and invalid inputs. CI runs it on Ubuntu 22.04
-and macOS 15, x86-64 and ARM64. `check-shaders.py` compiles the desktop GLSL in
+persistence, autosave recovery and invalid inputs. CI runs it on the
+`halfsteady-linux-x64` local runner for every relevant push and same-repository
+pull request; fork pull requests do not use that runner. Ubuntu 22.04 x64/ARM64
+and macOS Apple Silicon/Intel are covered when Desktop portability is dispatched
+manually with `hosted_platforms`, which spends hosted minutes. See
+[CI-RUNNERS.md](CI-RUNNERS.md). `check-shaders.py` is not part of either job; run
+it by hand. It compiles the desktop GLSL in
 `desktop/src/shaders` as well as Android's, using `glslangValidator` from
 `PATH` or the Android SDK's emulator, and skips when neither is present.
 

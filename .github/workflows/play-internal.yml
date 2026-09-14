@@ -20,7 +20,8 @@ permissions:
 
 jobs:
   publish-internal:
-    runs-on: ubuntu-latest
+    if: github.repository_owner == 'halfsteady' && github.event.repository.private == true
+    runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
     timeout-minutes: 15
     concurrency:
       group: play-com.bsteinfeld.emulia

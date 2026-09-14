@@ -23,16 +23,23 @@ on:
       - ".github/workflows/publish-site.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: publish-site
   cancel-in-progress: false
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    if: github.repository_owner == 'halfsteady' && github.event.repository.private == true
+    timeout-minutes: 15
+    runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
     steps:
       - name: Check out androidemu
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # The site has no build step, so nothing else would ever notice a renamed
       # screenshot or a mistyped href before it 404s on the live page.
@@ -88,3 +95,7 @@ jobs:
           fi
           git commit -m "Sync site from androidemu@${GITHUB_SHA::7}"
           git push
+
+      - name: Remove deploy key
+        if: always()
+        run: rm -f -- "$HOME/.ssh/id_ed25519"
