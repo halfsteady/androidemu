@@ -80,7 +80,13 @@ jobs:
           workspaces: ". -> target"
 
       - name: Test the core
-        run: cargo test --workspace --locked
+        # Default members only: core, runner and native, which are what the
+        # Android app is built from. `--workspace` also drags in nes-desktop,
+        # and that builds SDL2 from source -- on this 4-CPU/8-GiB runner it
+        # killed v0.3.0 twice, once as a crashed Gradle daemon and once as a
+        # gcc segfault inside sdl2-sys. The desktop crate is already tested by
+        # desktop.yml on the same runner, so nothing here is lost.
+        run: cargo test --locked
 
       - name: AccuracyCoin regression
         run: |
