@@ -6,9 +6,12 @@ Linux x64 and Android jobs select the `halfsteady-linux-x64` local runner:
 runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
 ```
 
-The service is initially registered to this repository while GitHub CLI
-organization authorization is pending. The selector stays the same when it is
-switched to the halfsteady organization.
+The service is registered to the halfsteady organization in the
+`homelab-private` runner group. Organization registration was activated on
+2026-09-13; the temporary repository registration has been removed.
+The [organization verification run](https://github.com/halfsteady/androidemu/actions/runs/34793740024)
+passed the desktop tests, build, lint, SDL smoke, AccuracyCoin, and artifact
+upload on this group, with hosted platforms skipped.
 
 The host service supplies a fresh non-root container for each job, limited to
 4 CPUs and 8 GiB RAM. Workspaces, SDKs, and job credentials disappear when the
@@ -32,9 +35,9 @@ baseline. The checks themselves are shared in `desktop-checks.yml`.
 
 One runner handles one job at a time; other jobs queue until its replacement
 registers. Do not change a job to `ubuntu-latest` to bypass a queue: that selects
-paid/included GitHub-hosted capacity. Once organization activation is authorized, the runner group will admit all
-private repos in halfsteady, including newly transferred repos, but each
-workflow must use the selector above. Public repositories are excluded. Repositories needing
+paid/included GitHub-hosted capacity. The runner group admits all private repos
+in halfsteady, including newly transferred repos, but each workflow must use
+the selector above. Public repositories are excluded. Repositories needing
 other tools, container jobs, macOS, ARM64, or hardware devices need another
 runner profile.
 
