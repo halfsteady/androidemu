@@ -204,14 +204,33 @@ paused (losing the window's focus pauses it unless Settings → Play says
 otherwise, in which case the focus loss writes it without pausing), whenever a
 slot is saved, on the way back to the shelf and on quit. Leaving and quitting
 also write the automatic save, which is what the game resumes from next time.
-Force-quitting can still lose the few seconds since the last flush.
+Force-quitting can lose battery changes since the last flush and the running
+machine state since the last automatic save. If battery RAM differs from the
+automatic save on reopening, the game opens paused from the battery save and
+keeps the conflicting automatic save separately for recovery. It does not mix
+new battery RAM into an older running machine. Saves commit battery RAM before
+the state so an interrupted write cannot leave a newer state ahead of its battery.
 
 A battery save that will not load is never written over: it is renamed
 `battery.sav.unreadable` beside itself, the reason goes in the problem log, and
 the game opens paused saying it had to start from an earlier point. If it
 cannot even be renamed, the session writes no battery at all rather than
-replacing someone's adventure with empty RAM. An autosave that will not load is
-reported the same way and the game starts from the battery instead.
+replacing someone's adventure with empty RAM. An autosave that will not load,
+or conflicts with the battery, is kept as `auto.state.unreadable` and the game
+starts from the battery instead. Existing recovery copies are retained with
+numbered suffixes (`.unreadable-1`, `.unreadable-2`, and so on). An autosave that
+cannot be moved is protected until it can be kept aside on a later save attempt.
+Closing without resuming does not discard any of these recovery files.
+To try a retained automatic state, copy it to an unused `slot-N.state` while
+the game is closed, then load that slot. The `.unreadable` name also covers
+valid states kept because their battery RAM differed from the current save.
+
+Accepted saves finish before later loads, resets or game switches, including
+when the window is closed while a save is waiting. If a save fails, later
+waiting actions are cancelled and the game stays open and paused so the save
+can be retried. Final save failures also keep the game open; details appear in
+the problem log. A blocked automatic save does not prevent the final battery
+flush when the battery path is writable.
 
 A `settings.json` or `controllers.json` that will not parse is never written
 over: the shell runs on the usual choices, says so, and names the file in the

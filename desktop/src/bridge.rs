@@ -42,6 +42,7 @@ pub struct Bridge {
 struct Feed {
     events: Vec<Event>,
     modifiers: Modifiers,
+    buttons: Vec<PointerButton>,
     /// Whether the window has the keyboard. egui dims what it draws and drops
     /// held keys when it does not.
     focused: bool,
@@ -115,6 +116,7 @@ impl Feed {
         Feed {
             events: Vec::new(),
             modifiers: Modifiers::default(),
+            buttons: Vec::new(),
             focused: true,
         }
     }
@@ -142,6 +144,10 @@ impl Feed {
             } => {
                 if let Some(button) = button(*mouse_btn) {
                     let pressed = matches!(event, SdlEvent::MouseButtonDown { .. });
+                    self.buttons.retain(|held| *held != button);
+                    if pressed {
+                        self.buttons.push(button);
+                    }
                     self.events.push(Event::PointerButton {
                         pos: Pos2::new(*x as f32, *y as f32),
                         button,
@@ -223,6 +229,22 @@ impl Feed {
                 self.events
                     .push(Event::ModifiersChanged(Modifiers::default()));
                 self.events.push(Event::WindowFocused(false));
+                // PointerGone does not release buttons in egui. SDL relinquishes
+                // mouse capture on focus loss, so the real release may never
+                // arrive. Release outside the window to cancel without clicking
+                // the control that was held when focus moved away.
+                if !self.buttons.is_empty() {
+                    let outside = Pos2::new(-10_000.0, -10_000.0);
+                    self.events.push(Event::PointerMoved(outside));
+                    for button in self.buttons.drain(..) {
+                        self.events.push(Event::PointerButton {
+                            pos: outside,
+                            button,
+                            pressed: false,
+                            modifiers: Modifiers::default(),
+                        });
+                    }
+                }
                 self.events.push(Event::PointerGone);
             }
             SdlEvent::Window {
@@ -477,6 +499,144 @@ mod tests {
                 .any(|e| matches!(e, Event::Text(t) if t == "x")),
             "{:?}",
             feed.events
+        );
+    }
+    #[test]
+    fn regression_focus_loss_releases_the_egui_mouse_button() {
+        let ctx = egui::Context::default();
+        let mut feed = Feed::new();
+        let pass = |feed: &mut Feed| {
+            ctx.run_ui(
+                egui::RawInput {
+                    events: std::mem::take(&mut feed.events),
+                    focused: feed.focused,
+                    ..Default::default()
+                },
+                |_| {},
+            )
+            .textures_delta
+            .clear();
+        };
+        feed.handle(
+            &SdlEvent::MouseButtonDown {
+                timestamp: 0,
+                window_id: 1,
+                which: 0,
+                mouse_btn: MouseButton::Left,
+                clicks: 1,
+                x: 100,
+                y: 100,
+            },
+            false,
+        );
+        pass(&mut feed);
+        assert!(ctx.input(|i| i.pointer.primary_down()));
+        feed.handle(
+            &SdlEvent::Window {
+                timestamp: 1,
+                window_id: 1,
+                win_event: WindowEvent::FocusLost,
+            },
+            false,
+        );
+        pass(&mut feed);
+        feed.handle(
+            &SdlEvent::Window {
+                timestamp: 2,
+                window_id: 1,
+                win_event: WindowEvent::FocusGained,
+            },
+            false,
+        );
+        pass(&mut feed);
+        eprintln!(
+            "egui primary_down after focus loss/gain with no release={}",
+            ctx.input(|i| i.pointer.primary_down())
+        );
+        assert!(
+            !ctx.input(|i| i.pointer.primary_down()),
+            "held pointer survives focus loss"
+        );
+    }
+
+    #[test]
+    fn focus_loss_cancels_a_press_without_clicking_the_button() {
+        let ctx = egui::Context::default();
+        let mut feed = Feed::new();
+        let pass = |feed: &mut Feed| {
+            let mut clicked = false;
+            ctx.run_ui(
+                RawInput {
+                    events: std::mem::take(&mut feed.events),
+                    focused: feed.focused,
+                    ..Default::default()
+                },
+                |ui| {
+                    clicked |= ui
+                        .put(
+                            Rect::from_min_size(Pos2::new(80.0, 80.0), Vec2::splat(40.0)),
+                            egui::Button::new("Save"),
+                        )
+                        .clicked();
+                },
+            )
+            .textures_delta
+            .clear();
+            clicked
+        };
+        for _ in 0..3 {
+            assert!(!pass(&mut feed));
+        }
+        let mouse = |pressed| {
+            if pressed {
+                SdlEvent::MouseButtonDown {
+                    timestamp: 0,
+                    window_id: 1,
+                    which: 0,
+                    mouse_btn: MouseButton::Left,
+                    clicks: 1,
+                    x: 100,
+                    y: 100,
+                }
+            } else {
+                SdlEvent::MouseButtonUp {
+                    timestamp: 0,
+                    window_id: 1,
+                    which: 0,
+                    mouse_btn: MouseButton::Left,
+                    clicks: 1,
+                    x: 100,
+                    y: 100,
+                }
+            }
+        };
+        feed.handle(&mouse(true), false);
+        assert!(!pass(&mut feed));
+        feed.handle(
+            &SdlEvent::Window {
+                timestamp: 1,
+                window_id: 1,
+                win_event: WindowEvent::FocusLost,
+            },
+            false,
+        );
+        assert!(!pass(&mut feed), "a cancelled press clicked Save");
+        assert!(!ctx.input(|i| i.pointer.any_down()));
+        feed.handle(
+            &SdlEvent::Window {
+                timestamp: 2,
+                window_id: 1,
+                win_event: WindowEvent::FocusGained,
+            },
+            false,
+        );
+        pass(&mut feed);
+        feed.handle(&mouse(true), false);
+        pass(&mut feed);
+        feed.handle(&mouse(false), false);
+        assert!(
+            pass(&mut feed),
+            "a normal click after focus returned was lost"
         );
     }
 }
