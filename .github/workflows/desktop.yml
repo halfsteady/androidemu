@@ -34,7 +34,13 @@ jobs:
       artifact_name: local-linux-x64
 
   hosted-platforms:
-    if: github.event_name == 'workflow_dispatch' && inputs.hosted_platforms
+    # Dispatch asks for these; a stable tag needs them, because a release's
+    # desktop binaries are built here and nowhere else. macOS cannot be built
+    # on the local Linux runner at all, and the local image is Ubuntu 24.04, so
+    # its Linux binary demands a newer glibc than one built on ubuntu-22.04.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.hosted_platforms)
+      || (github.ref_type == 'tag' && !contains(github.ref_name, '-'))
     strategy:
       fail-fast: false
       matrix:
@@ -44,3 +50,70 @@ jobs:
       runs_on: ${{ toJSON(matrix.os) }}
       artifact_name: ${{ matrix.os }}
       install_linux_dependencies: true
+
+  # v0.2.5's release carried four desktop tarballs and every release since has
+  # carried none. Nothing regressed: no workflow ever attached them. They went
+  # up by hand two minutes after the Android job published that release, and
+  # nobody did it again. This is that step, automated.
+  #
+  # Stable tags only. Release candidates exist to put an Android build in front
+  # of testers, and four hosted jobs per candidate is a bill for binaries
+  # nobody asked for. Drop the `contains` test to include them.
+  release-desktop:
+    if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+    needs: hosted-platforms
+    runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: emulia-*
+          path: incoming
+
+      - name: Name the builds after the release and check them
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          name="${TAG#v}"
+          mkdir -p dist
+          # Everything except the local runner's Linux build. That image is
+          # Ubuntu 24.04, so its binary wants a newer glibc than the
+          # ubuntu-22.04 one built beside it, and both are called
+          # emulia-Linux-X64.tar.gz -- so it would also quietly win the name.
+          for dir in incoming/*/; do
+            if [ "$(basename "$dir")" = "emulia-local-linux-x64" ]; then
+              continue
+            fi
+            for f in "$dir"emulia-*.tar.gz; do
+              cp "$f" "dist/emulia-${name}-${f##*/emulia-}"
+            done
+          done
+          # Four platforms or the release is wrong; say so here rather than
+          # letting a half-set go out looking complete.
+          count=$(ls dist/*.tar.gz | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "::error::expected 4 desktop tarballs, collected $count"
+            ls -l dist; exit 1
+          fi
+          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS-desktop.txt)
+          ls -l dist
+
+      - name: Attach them to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          files="$(ls dist/emulia-*.tar.gz dist/SHA256SUMS-desktop.txt)"
+          # Whichever release workflow arrives first creates the release and
+          # the other uploads into it; android-release.yml does the same, so
+          # the order of the two does not matter.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $files --clobber
+          else
+            gh release create "$TAG" $files --title "$TAG" --generate-notes
+          fi

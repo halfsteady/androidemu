@@ -32,6 +32,25 @@ The tag push builds, tests, signs, and publishes a GitHub Release carrying
 artifacts without cutting a release, run the workflow manually from the Actions
 tab; they attach to the run instead.
 
+A **stable** tag also puts the desktop player on the same release:
+`emulia-<version>-Linux-X64.tar.gz`, `-Linux-ARM64`, `-macOS-ARM64`,
+`-macOS-X64` and `SHA256SUMS-desktop.txt`. Those come from
+[`desktop.yml`](../.github/workflows/desktop.yml)'s `release-desktop` job,
+which is why a stable tag runs the hosted matrix: macOS cannot be built on the
+local Linux runner, and the local image is Ubuntu 24.04, so its Linux binary
+needs a newer glibc than the ubuntu-22.04 build handed to everyone else. That
+costs four hosted jobs per stable release, which is the trade for shipping
+binaries people can actually run.
+
+Release candidates deliberately do not get them: an `-rc` tag exists to put an
+Android build in front of testers, and the desktop tarballs would be a bill
+nobody asked for. Whichever of the two workflows reaches the release first
+creates it and the other uploads into it, so their order does not matter.
+
+This was done by hand for v0.2.5 and by nobody at all for v0.2.6, v0.2.7-rc1
+and v0.3.0, which shipped without any desktop binaries. v0.3.1 is the first
+release where it is automatic.
+
 Before signing, the workflow runs the workspace tests, the pinned AccuracyCoin
 regression gate, and the Android unit tests against the real host JNI library.
 It rejects any lost recorded pass, unfinished test, incorrect ROM hash or timeout.
