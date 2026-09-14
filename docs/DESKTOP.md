@@ -21,7 +21,7 @@ and a macOS 11 deployment target; either environment default can be overridden.
 
 On macOS, install Xcode Command Line Tools (`xcode-select --install`) and CMake
 (`brew install cmake` if using Homebrew). Both Apple Silicon and Intel builds
-are covered by the CI workflow.
+are available through the CI workflow's manual hosted-platform option.
 
 On Ubuntu/Debian, install the build and desktop development packages:
 
@@ -44,8 +44,12 @@ compiled backends as well as exercising the dummy drivers.
 
 The executable can be copied out of the repository and run directly. Linux
 still needs the system C runtime and display/audio services; it is not a fully
-static executable for arbitrary distributions. CI builds on Ubuntu 22.04 for
-x86-64 and ARM64, and macOS 15 for Apple Silicon and Intel. Build from source on
+static executable for arbitrary distributions. Automatic CI builds on the organization's Ubuntu 24.04 x86-64 runner. The
+manual `hosted_platforms` option additionally checks Ubuntu 22.04 for x86-64
+and ARM64, and macOS 15 for Apple Silicon and Intel. Those optional jobs use
+GitHub-hosted minutes. Local x86-64 artifacts therefore require a compatible
+Ubuntu 24.04-era C runtime; use the optional Ubuntu 22.04 artifact for that
+older baseline. Build from source on
 older systems. The workflow uploads tar archives containing the two executables
 and these instructions. These are terminal-launched binaries, not signed macOS
 application bundles. No ROMs are included.
@@ -100,7 +104,9 @@ python3 scripts/check-desktop.py target/release/nes-desktop --require-native-dri
 
 The smoke test creates its own NROM, runs the real frontend with SDL dummy video
 and audio drivers, and checks SRAM persistence and invalid-input handling. CI
-runs this on each OS/architecture above. Dummy drivers cannot verify physical
+runs this locally on each relevant push and same-repository PR, and on the
+other OS/architectures when manually requested. Fork PRs do not use the local
+runner. See [CI-RUNNERS.md](CI-RUNNERS.md). Dummy drivers cannot verify physical
 keyboard behavior, audible output or GPU presentation; check those interactively
 with a ROM you own. The separate external ROM accuracy suite requires the files
 described in `core/tests/roms/README.md`; its absence is not an accuracy pass.

@@ -1,5 +1,8 @@
 # Releasing Emulia
 
+Linux jobs use the halfsteady organization runner. See [CI-RUNNERS.md](CI-RUNNERS.md)
+for the runner profile, manual desktop platform checks, and repository transfer.
+
 One workflow produces everything: `.github/workflows/android-release.yml` builds
 a signed **AAB** (what Play Console wants) and a signed **APK** (what you
 sideload onto the tablet) from the same commit, so the two can never disagree.

@@ -2,58 +2,45 @@ name: Desktop portability
 
 on:
   push:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml", ".github/workflows/desktop-checks.yml"]
   pull_request:
-    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml"]
+    paths: ["core/**", "runner/**", "desktop/**", "Cargo.*", ".cargo/**", "scripts/check-desktop.py", "scripts/check-accuracycoin.py", "scripts/test-accuracycoin.py", "docs/accuracycoin-results.json", ".github/workflows/desktop.yml", ".github/workflows/desktop-checks.yml"]
   workflow_dispatch:
+    inputs:
+      hosted_platforms:
+        description: Also test Ubuntu 22.04 x64/ARM64 and macOS on GitHub-hosted runners (uses hosted minutes)
+        type: boolean
+        default: false
+
 
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   desktop:
+    # A same-repository PR is trusted code from a maintainer. A fork cannot
+    # select the local runner simply by opening a pull request.
+    if: >-
+      github.repository_owner == 'halfsteady'
+      && github.event.repository.private == true
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    uses: ./.github/workflows/desktop-checks.yml
+    with:
+      runs_on: '["self-hosted", "Linux", "X64", "halfsteady-linux-x64"]'
+      artifact_name: local-linux-x64
+
+  hosted-platforms:
+    if: github.event_name == 'workflow_dispatch' && inputs.hosted_platforms
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Linux build dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config build-essential libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev
-      - name: Test core and runner
-        run: cargo test --locked -p nes-core -p nes-runner
-      - name: Build portable executables
-        run: cargo build --release --locked -p nes-desktop -p nes-runner
-      - name: Test desktop persistence
-        run: cargo test --locked -p nes-desktop
-      - name: Lint core, runner and desktop
-        run: cargo clippy --locked -p nes-core -p nes-runner -p nes-desktop --all-targets --no-deps -- -D warnings
-      - name: Exercise SDL video and audio
-        run: python3 scripts/check-desktop.py target/release/nes-desktop --require-native-drivers
-      - name: AccuracyCoin regression
-        run: |
-          python3 scripts/test-accuracycoin.py
-          curl --fail --location --output "$RUNNER_TEMP/AccuracyCoin.nes" https://raw.githubusercontent.com/100thCoin/AccuracyCoin/affc643aa771028510c4427451ecf5bba5e54592/AccuracyCoin.nes
-          python3 scripts/check-accuracycoin.py "$RUNNER_TEMP/AccuracyCoin.nes" --report "$RUNNER_TEMP/accuracycoin.json"
-      - name: Upload accuracy results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: accuracycoin-${{ runner.os }}-${{ runner.arch }}
-          path: ${{ runner.temp }}/accuracycoin.json
-          if-no-files-found: ignore
-      - name: Package
-        run: |
-          mkdir -p dist
-          cp target/release/nes-desktop target/release/nes-runner docs/DESKTOP.md dist/
-          tar -czf emulia-${{ runner.os }}-${{ runner.arch }}.tar.gz -C dist .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: emulia-${{ runner.os }}-${{ runner.arch }}
-          path: emulia-*.tar.gz
+    uses: ./.github/workflows/desktop-checks.yml
+    with:
+      runs_on: ${{ toJSON(matrix.os) }}
+      artifact_name: ${{ matrix.os }}
+      install_linux_dependencies: true

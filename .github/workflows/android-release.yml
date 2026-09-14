@@ -40,7 +40,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    if: github.repository_owner == 'halfsteady' && github.event.repository.private == true
+    timeout-minutes: 90
+    runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
     outputs:
       name: ${{ steps.ver.outputs.name }}
       track: ${{ steps.track.outputs.track }}
@@ -50,6 +52,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
@@ -94,7 +98,7 @@ jobs:
 
       - name: Test Android and JNI bridge
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain --max-workers=4
 
       - name: Upload Android test results
         if: always()
@@ -107,10 +111,17 @@ jobs:
       - name: Decode upload keystore
         env:
           KEYSTORE_B64: ${{ secrets.ANDROIDEMU_UPLOAD_KEYSTORE_BASE64 }}
-        run: printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+        run: |
+          test -n "$KEYSTORE_B64" || { echo '::error::Upload keystore secret is missing'; exit 1; }
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
 
       - name: Derive version
         id: ver
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           # The same chronological rule android/app/build.gradle.kts uses for an
           # unstamped build: days since the project epoch, shifted four places,
@@ -120,10 +131,10 @@ jobs:
           # refuses it. The run number is not usable here: it starts at 1.
           day=$(( $(date -u +%s) / 86400 - $(date -u -d 2018-07-09 +%s) / 86400 ))
           code=$(( day * 10000 + 10#$(date -u +%H%M) ))
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            name="${{ github.ref_name }}"; name="${name#v}"
+          if [ "$REF_TYPE" = "tag" ]; then
+            name="$REF_NAME"; name="${name#v}"
           else
-            name="0.1.0-ci.${{ github.run_number }}"
+            name="0.1.0-ci.$RUN_NUMBER"
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
@@ -144,15 +155,18 @@ jobs:
           # a red run for a step that was never going to work.
           PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           PLAY_PRODUCTION_ENABLED: ${{ vars.PLAY_PRODUCTION_ENABLED }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
         run: |
           if [ -n "$PLAY_JSON" ]; then configured=true; else configured=false; fi
           echo "configured=$configured" >> "$GITHUB_OUTPUT"
           if [ "$configured" != "true" ]; then
             echo "::notice::PLAY_SERVICE_ACCOUNT_JSON is not set; skipping the Play upload."
           fi
-          if [ "${{ github.ref_type }}" != "tag" ]; then
+          if [ "$REF_TYPE" != "tag" ]; then
             track=none; status=none
-          elif printf '%s' "${{ github.ref_name }}" | grep -Eq -- '-rc[0-9]+$'; then
+          elif printf '%s' "$REF_NAME" | grep -Eq -- '-rc[0-9]+$'; then
             track=internal; status=completed
           elif [ "$PLAY_PRODUCTION_ENABLED" != "true" ]; then
             track=internal; status=completed
@@ -172,11 +186,11 @@ jobs:
           # release notes. An annotated tag's subject is a sentence somebody
           # wrote about the release, which is exactly what this field wants.
           note=""
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            note=$(git for-each-ref "refs/tags/${{ github.ref_name }}" \
+          if [ "$REF_TYPE" = "tag" ]; then
+            note=$(git for-each-ref "refs/tags/$REF_NAME" \
                      --format='%(contents:subject)' 2>/dev/null || true)
           fi
-          [ -n "$note" ] || note="Emulia ${{ steps.ver.outputs.name }}"
+          [ -n "$note" ] || note="Emulia $VERSION_NAME"
           echo "note=$note" >> "$GITHUB_OUTPUT"
           echo "note=$note"
 
@@ -189,15 +203,17 @@ jobs:
           ANDROIDEMU_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROIDEMU_UPLOAD_KEY_PASSWORD }}
           ANDROIDEMU_VERSION_CODE: ${{ steps.ver.outputs.code }}
           ANDROIDEMU_VERSION_NAME: ${{ steps.ver.outputs.name }}
-        run: ./gradlew :app:bundleRelease :app:assembleRelease lint --no-daemon --console=plain
+        run: ./gradlew :app:bundleRelease :app:assembleRelease lint --no-daemon --console=plain --max-workers=4
 
       - name: Collect artifacts
+        env:
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
         run: |
           mkdir -p dist
           cp android/app/build/outputs/bundle/release/app-release.aab \
-             "dist/emulia-${{ steps.ver.outputs.name }}.aab"
+             "dist/emulia-$VERSION_NAME.aab"
           cp android/app/build/outputs/apk/release/app-release.apk \
-             "dist/emulia-${{ steps.ver.outputs.name }}.apk"
+             "dist/emulia-$VERSION_NAME.apk"
           (cd dist && sha256sum ./* > SHA256SUMS.txt)
           ls -lh dist
 
@@ -207,15 +223,16 @@ jobs:
       # supposed to require editing this line.
       - name: Verify signer (upload key, not debug)
         env:
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
           EXPECTED: 75fdccb5302705abcc12cf628de634cfb61cd57f735d33393984978dc31a0fd5
         run: |
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort | tail -1)
           apk_digest=$("$apksigner" verify --print-certs \
-            "dist/emulia-${{ steps.ver.outputs.name }}.apk" \
+            "dist/emulia-$VERSION_NAME.apk" \
             | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
           # An AAB is JAR-signed, so keytool is the tool that reads it.
           aab_digest=$("$JAVA_HOME/bin/keytool" -printcert -jarfile \
-            "dist/emulia-${{ steps.ver.outputs.name }}.aab" \
+            "dist/emulia-$VERSION_NAME.aab" \
             | sed -n 's/.*SHA256: //p' | head -1 | tr -d ': ' | tr 'A-Z' 'a-z')
           echo "apk $apk_digest"
           echo "aab $aab_digest"
@@ -225,6 +242,10 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/upload-keystore.jks"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
@@ -274,7 +295,8 @@ jobs:
   publish-internal:
     needs: build
     if: needs.build.outputs.track == 'internal' && needs.build.outputs.configured == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
+    timeout-minutes: 20
     concurrency:
       group: play-com.bsteinfeld.emulia
       cancel-in-progress: false
@@ -321,7 +343,8 @@ jobs:
       needs.build.outputs.track == 'production'
       && needs.build.outputs.configured == 'true'
       && vars.PLAY_PRODUCTION_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
+    timeout-minutes: 20
     concurrency:
       group: play-com.bsteinfeld.emulia
       cancel-in-progress: false
