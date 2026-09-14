@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real SDL frontend with a generated NROM, no external ROMs needed."""
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -49,13 +50,17 @@ def main():
                 assert video & {"x11", "wayland"}, "SDL has no desktop display backend:\n" + drivers
                 assert audio & {"alsa", "pulseaudio", "pipewire", "jack"}, "SDL has no desktop audio backend:\n" + drivers
         run(command)  # Includes SDL audio creation, queuing and playback.
-        save, = saves.glob("*.sav")
+        save, = saves.rglob("battery.sav")
+        index = json.loads((saves / "library" / "index.json").read_text())
+        assert len(index) == 1 and index[0]["title"] == "test game", index
+        assert (save.parent / "game.nes").read_bytes() == rom
         data = save.read_bytes()
         assert len(data) == 8192 and data[0] == 0x5A
         # A byte the program does not touch must survive a second invocation.
         data = data[:1] + b"\xa5" + data[2:]
         save.write_bytes(data)
         run(command + ["--mute"])
+        assert len(json.loads((saves / "library" / "index.json").read_text())) == 1, "a second import must dedupe"
         assert save.read_bytes() == data
         # A temporary autosave failure must leave the game running with its RAM
         # intact. Recover the directory before clean exit, then check the save.
@@ -90,14 +95,15 @@ def main():
             process.stdout.close()
             process.stderr.close()
             blocked.unlink(missing_ok=True)
-        # Refuse malformed saves without overwriting them.
+        # Refuse malformed saves: keep the bytes aside, write nothing over them.
         save.write_bytes(b"bad save")
         run(command, success=False)
-        assert save.read_bytes() == b"bad save"
+        assert save.with_name("battery.sav.unreadable").read_bytes() == b"bad save"
+        assert not save.exists(), "a session that lost progress must not write a fresh save"
         run([binary, str(path), "--frames", "0"], success=False)
         path.write_bytes(b"not a ROM")
         run(command, success=False)
-    print("Desktop smoke passed: video, audio, muted pacing, SRAM persistence, autosave recovery and invalid inputs")
+    print("Desktop smoke passed: audio, muted pacing, library import, SRAM persistence, autosave recovery and invalid inputs")
 
 
 if __name__ == "__main__":

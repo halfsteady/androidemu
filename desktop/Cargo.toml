@@ -8,6 +8,15 @@ description = "Portable Emulia desktop player for macOS and Linux"
 [dependencies]
 nes-core = { path = "../core" }
 sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
+egui = "0.36"
+egui_glow = "0.36"
+glow = "0.17"
+rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+png = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+chrono = "0.4"
 
 [build-dependencies]
 cc = "1"
