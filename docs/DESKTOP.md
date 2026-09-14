@@ -258,10 +258,10 @@ persistence, autosave recovery and invalid inputs. CI runs it on the
 pull request; fork pull requests do not use that runner. Ubuntu 22.04 x64/ARM64
 and macOS Apple Silicon/Intel are covered when Desktop portability is dispatched
 manually with `hosted_platforms`, which spends hosted minutes. See
-[CI-RUNNERS.md](CI-RUNNERS.md). `check-shaders.py` is not part of either job; run
-it by hand. It compiles the desktop GLSL in
-`desktop/src/shaders` as well as Android's, using `glslangValidator` from
-`PATH` or the Android SDK's emulator, and skips when neither is present.
+[CI-RUNNERS.md](CI-RUNNERS.md). `check-shaders.py` is in neither job, so run it
+by hand: it compiles the desktop GLSL in `desktop/src/shaders` as well as
+Android's, using `glslangValidator` from `PATH` or the Android SDK's emulator,
+and skips when neither is present.
 
 Dummy drivers cannot verify a window, physical keys, a controller, audible
 sound or GPU presentation. Those need a person, a ROM they own and one
