@@ -30,3 +30,6 @@ android/keystore.properties
 # Python bytecode from the scripts in scripts/ and brand/tools/.
 __pycache__/
 *.pyc
+
+# Local Controlplaine task and terminal state
+.harness.toml
