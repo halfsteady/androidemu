@@ -22,11 +22,16 @@ name: Android release build
 #                                      the Play upload is skipped with a notice.
 # See docs/RELEASING.md for the one-time `gh secret set` commands.
 #
-# Where a tag goes, once PLAY_SERVICE_ACCOUNT_JSON exists:
+# Where a tag goes, once PLAY_SERVICE_ACCOUNT_JSON exists AND the repository
+# variable PLAY_UPLOAD_ENABLED is `true`:
 #   v0.2.3-rc1  ->  Play internal testing, live to testers
 #   v0.2.3      ->  Play internal testing while production is disabled;
 #                   production as a DRAFT once PLAY_PRODUCTION_ENABLED is `true`
 #   manual run  ->  nowhere
+# With PLAY_UPLOAD_ENABLED unset or false, every tag still builds and publishes
+# its GitHub Release and simply does not reach Play. It is off because
+# com.halfsteady.emulia is a new Play app whose first bundle has to be uploaded
+# in the console by hand -- see the "Route to a Play track" step.
 # Recover a missed internal upload with the "Publish existing release to Play
 # internal testing" workflow; it uses the published AAB without rebuilding it.
 
@@ -163,6 +168,7 @@ jobs:
           # otherwise every tag pushed before the service account exists ends in
           # a red run for a step that was never going to work.
           PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_UPLOAD_ENABLED: ${{ vars.PLAY_UPLOAD_ENABLED }}
           PLAY_PRODUCTION_ENABLED: ${{ vars.PLAY_PRODUCTION_ENABLED }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
@@ -185,6 +191,26 @@ jobs:
             # console to be looked at rather than going live off a git push.
             track=production; status=draft
           fi
+
+          # Google requires the FIRST bundle for a package to be uploaded
+          # through the Play Console by hand; the Developer API cannot make an
+          # app or seed it. com.halfsteady.emulia is a new app (the rename off
+          # com.bsteinfeld.emulia), so until that one manual upload has
+          # happened every API upload can only fail. While this master switch
+          # is off a tag still builds, verifies its signer and publishes its
+          # GitHub Release -- it just stops short of Play, instead of ending in
+          # a red job for a step that was never going to work.
+          #
+          # Turn it on by setting the repository VARIABLE (not secret)
+          # PLAY_UPLOAD_ENABLED to `true`, once the first AAB is in the console
+          # AND the service account has access to the new app. From then on
+          # every tag reaches Play on its own, and this switch should never
+          # need touching again.
+          if [ "$track" != "none" ] && [ "$PLAY_UPLOAD_ENABLED" != "true" ]; then
+            echo "::notice::PLAY_UPLOAD_ENABLED is not 'true'; the signed AAB is on the GitHub Release but was not uploaded to Play. Upload the first com.halfsteady.emulia bundle in the console by hand, grant the service account access, then set the variable."
+            track=none; status=none
+          fi
+
           echo "track=$track" >> "$GITHUB_OUTPUT"
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "track=$track status=$status play-configured=$configured"
@@ -307,7 +333,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
     timeout-minutes: 20
     concurrency:
-      group: play-com.bsteinfeld.emulia
+      group: play-com.halfsteady.emulia
       cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v7
@@ -329,7 +355,7 @@ jobs:
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.bsteinfeld.emulia
+          packageName: com.halfsteady.emulia
           releaseFiles: dist/emulia-${{ needs.build.outputs.name }}.aab
           tracks: internal
           status: ${{ needs.build.outputs.status }}
@@ -355,7 +381,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
     timeout-minutes: 20
     concurrency:
-      group: play-com.bsteinfeld.emulia
+      group: play-com.halfsteady.emulia
       cancel-in-progress: false
     environment: play-production
     steps:
@@ -368,7 +394,7 @@ jobs:
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.bsteinfeld.emulia
+          packageName: com.halfsteady.emulia
           releaseFiles: dist/emulia-${{ needs.build.outputs.name }}.aab
           tracks: production
           # draft: it waits in the console. Going live is still a human clicking

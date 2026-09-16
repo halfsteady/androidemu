@@ -8,8 +8,12 @@ a signed **AAB** (what Play Console wants) and a signed **APK** (what you
 sideload onto the tablet) from the same commit, so the two can never disagree.
 
 - **App name:** Emulia
-- **Package (`applicationId`):** `com.bsteinfeld.emulia`
-- **Dev builds** install alongside it as `com.bsteinfeld.emulia.debug`.
+- **Package (`applicationId`):** `com.halfsteady.emulia`
+- **Dev builds** install alongside it as `com.halfsteady.emulia.debug`.
+- Renamed from `com.bsteinfeld.emulia` in 0.3.2. Android identifies an app by
+  this string, so the new build does not update the old one — it installs beside
+  it. Anything sideloaded before 0.3.2 should be uninstalled by hand, and its
+  saves do not carry over.
 
 The name carries no third-party trademark, which is the point: "NES" is
 Nintendo's, and using it as a store name is the most common way an emulator
@@ -78,6 +82,18 @@ the internal testers who installed the candidates.
 | `v0.2.3`, production disabled (default) | internal testing | live to testers |
 | `v0.2.3`, `PLAY_PRODUCTION_ENABLED=true` | production | a **draft**, waiting in the console |
 | manual run | nowhere | artifacts on the run only |
+
+**All of that is gated on one master switch, `PLAY_UPLOAD_ENABLED`, and it is
+currently off.** The app was renamed from `com.bsteinfeld.emulia` to
+`com.halfsteady.emulia`, and as far as Play is concerned that is not a rename
+but a *new app*: a new listing, a new signing-key enrolment, a fresh version
+code space, and — the part that blocks CI — a first bundle that Google will only
+accept through the console by hand. The Developer API cannot seed a package it
+has never seen. Until that upload happens, a tag builds, tests, signs, verifies
+its signer and publishes its GitHub Release, then stops, with a notice in the
+log saying why. Turn it on with `gh variable set PLAY_UPLOAD_ENABLED --body
+true` once the first AAB is in the console and the service account has access to
+the new app; after that every tag reaches Play on its own.
 
 The upload is a **separate job** from the build, so a Play API failure — a
 permission still propagating, a rejected version code, an expired key — costs
@@ -160,8 +176,12 @@ independent of Play publishing.
    origin v0.2.4-rc1`, then watch the `publish-internal` job and check the
    release appears on the internal track.
 
-The first upload for a package has to be made by hand, and that is already
-satisfied — internal testing is Active and has carried releases up to 0.2.3-rc5.
+The first upload for a package has to be made by hand. That was satisfied for
+`com.bsteinfeld.emulia`, which carried internal releases up to 0.3.2-rc2, but
+**it is not satisfied for `com.halfsteady.emulia`** — the app exists in the
+console with no releases. Download the AAB from the GitHub Release and upload it
+there once; then set `PLAY_UPLOAD_ENABLED`. Step 2's app access also has to be
+granted again, on the new app: the old grant does not follow the rename.
 
 ### Version codes and candidates
 

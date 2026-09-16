@@ -12,7 +12,7 @@ See [desktop build instructions, controls and data layout](docs/DESKTOP.md):
 cargo run --release -p nes-desktop -- "/path/to/game.nes"
 ```
 
-Ships as **Emulia**, package `com.bsteinfeld.emulia`. `androidemu` is the
+Ships as **Emulia**, package `com.halfsteady.emulia`. `androidemu` is the
 repository, and `dev.androidemu` stays the Kotlin package because it is the JNI
 symbol prefix. The shipping name deliberately carries no third-party trademark.
 
@@ -80,7 +80,7 @@ export ANDROID_HOME="$HOME/Android/Sdk"
 Gradle builds and packages Rust automatically. The release APK and AAB are the
 shipping artifacts, signed with the upload key when `android/keystore.properties`
 is present and with the debug key otherwise. `app-debug.apk` installs alongside
-them as `com.bsteinfeld.emulia.debug` and carries x86_64 for emulators.
+them as `com.halfsteady.emulia.debug` and carries x86_64 for emulators.
 Outputs are under `android/app/build/outputs/`. Set
 `-PbuildNumber=<integer> -PbuildLabel=<version>` to stamp a build by hand;
 otherwise the version code is derived from the date so it always increases.
