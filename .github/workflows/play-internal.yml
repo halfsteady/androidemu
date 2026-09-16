@@ -24,7 +24,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, halfsteady-linux-x64]
     timeout-minutes: 15
     concurrency:
-      group: play-com.bsteinfeld.emulia
+      group: play-com.halfsteady.emulia
       cancel-in-progress: false
     steps:
       - name: Check publishing configuration
@@ -99,7 +99,7 @@ jobs:
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.bsteinfeld.emulia
+          packageName: com.halfsteady.emulia
           releaseFiles: dist/emulia-${{ steps.release.outputs.name }}.aab
           tracks: internal
           status: completed
