@@ -16,6 +16,7 @@ import android.graphics.Matrix
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -125,7 +126,7 @@ class MainActivity : ComponentActivity() {
     /** Frames the rewind chain holds, polled while a game is open. */
     private var rewindDepth by mutableIntStateOf(0)
     private fun applyScrub(speed: Int) {
-        if (scrub == speed || game == null) return
+        if (scrub == speed || game == null || (speed < 0 && !settings.rewindHistory)) return
         val wasSilent = scrub != 0
         scrub = speed
         // Rewinding must not carry a held button into the past. Fast-forward must
@@ -143,11 +144,22 @@ class MainActivity : ComponentActivity() {
      * short to honour it.
      */
     private fun skipBack(seconds: Int) {
-        if (game == null || busy) return
+        if (game == null || busy || !settings.rewindHistory) return
         rewindAtStart = false
         surface.skipBack(surface.framesFor(seconds)) { stepped ->
             rewindDepth = surface.depth
             if (stepped == 0) rewindAtStart = true
+        }
+    }
+    private fun setRewindHistory(enabled: Boolean) {
+        if (scrub < 0) applyScrub(0)
+        settings.rewindHistory = enabled
+        rewindAtStart = false
+        rewindDepth = 0
+        surface.task {
+            Native.setRewindEnabled(enabled)
+            surface.depth = Native.rewindDepth()
+            runOnUiThread { rewindDepth = surface.depth }
         }
     }
     private var fullscreen by mutableStateOf(false)
@@ -169,7 +181,13 @@ class MainActivity : ComponentActivity() {
     private fun showOverlays() { overlays = true; touched() }
     private var mapping by mutableStateOf(false)
     private var mappingStep by mutableStateOf(0)
-    private var mappingName by mutableStateOf("")
+    private var showControllers by mutableStateOf(false)
+    private var selectedController by mutableStateOf<Int?>(null)
+    private var controllerRevision by mutableIntStateOf(0)
+    private var controllerNotice by mutableStateOf<String?>(null)
+    private var mappingTarget by mutableStateOf<ConnectedController?>(null)
+    private var mappingHint by mutableStateOf<String?>(null)
+    private var mappingRelease: KeyEvent? = null
     private val mappedKeys = mutableListOf<Pair<KeyEvent, Int>>()
     private val mapButtons = listOf("A" to 1, "B" to 2, "Select" to 4, "Start" to 8)
     private fun applyFullscreen(value: Boolean) {
@@ -179,7 +197,23 @@ class MainActivity : ComponentActivity() {
         bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (value) bars.hide(WindowInsetsCompat.Type.systemBars()) else bars.show(WindowInsetsCompat.Type.systemBars())
     }
-    private fun startMapping() { if (game != null && !paused) pause(); mappedKeys.clear(); mappingStep = 0; mappingName = ""; mapping = true; input.clear() }
+    private fun openControllers() {
+        if (game != null && !paused) pause()
+        closeSettings(); input.clear()
+        surface.clearFocus(); surface.isFocusable = false
+        selectedController = null; controllerNotice = null; showControllers = true
+    }
+    private fun backFromControllers() {
+        if (selectedController != null) selectedController = null else showControllers = false
+        controllerNotice = null
+    }
+    private fun startMapping(controller: ConnectedController) {
+        mappedKeys.clear(); mappingStep = 0; mappingTarget = controller; mappingHint = null
+        controllerNotice = null; mapping = true; input.clear()
+    }
+    private fun cancelMapping() { mapping = false; input.clear(); mappingHint = null }
+    private fun sameButton(a: KeyEvent, b: KeyEvent) = a.deviceId == b.deviceId &&
+        (if (a.scanCode != 0 || b.scanCode != 0) a.scanCode == b.scanCode else a.keyCode == b.keyCode)
     private var overwrite by mutableStateOf<Int?>(null)
     // What the settings preview draws, and the result. The sample is a whole
     // framebuffer; the image is that framebuffer through the current shader.
@@ -354,8 +388,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         library = Library(this)
         settings = Settings(this)
-        input = ControllerInput(this) { if (game != null) pause(); message = "Controller disconnected. Your game is paused." }
+        input = ControllerInput(this) {
+            if (game != null) { pause(); message = "Controller disconnected. Your game is paused." }
+        }
+        input.devicesChanged = {
+            controllerRevision++
+            if (selectedController != null && selectedController !in InputDevice.getDeviceIds().toList()) {
+                cancelMapping(); selectedController = null
+                controllerNotice = "The selected controller disconnected. Reconnect it to continue."
+            }
+        }
         surface = GameSurface(this, input::buttons, { rewindAtStart = true }) { detail -> report("This game stopped.", detail); paused = true; busy = false }
+        surface.task { Native.setRewindEnabled(settings.rewindHistory) }
         runCatching { refreshLibrary() }.onFailure { report("Your shelf couldn't be opened.", it.message) }
         ContextCompat.registerReceiver(this, batteryLow, IntentFilter(Intent.ACTION_BATTERY_LOW), ContextCompat.RECEIVER_NOT_EXPORTED)
         // The scheme lives in Ui, with the rest of the colour.
@@ -406,7 +450,7 @@ class MainActivity : ComponentActivity() {
         catch (e: Exception) { runOnUiThread { game = null }; throw e }
     }
     private fun resumeGame() {
-        showSlots = false; showSettings = false; paused = false
+        showSlots = false; showSettings = false; showControllers = false; paused = false
         surface.isFocusableInTouchMode = true; surface.requestFocus()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         playingSince = SystemClock.elapsedRealtime()
@@ -533,14 +577,32 @@ class MainActivity : ComponentActivity() {
             event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
             event.keyCode == KeyEvent.KEYCODE_VOLUME_MUTE ||
             event.keyCode == KeyEvent.KEYCODE_POWER
+        mappingRelease?.let { last ->
+            if (sameButton(last, event)) {
+                if (event.action == KeyEvent.ACTION_UP) mappingRelease = null
+                return true
+            }
+        }
         if (mapping && !systemKey) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
-                (mappedKeys.isEmpty() || mappedKeys.first().first.deviceId == event.deviceId)) {
-                if (mappedKeys.none { it.first.keyCode == event.keyCode && it.first.scanCode == event.scanCode }) {
+            if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                if (event.action == KeyEvent.ACTION_DOWN) { mappingRelease = KeyEvent(event); cancelMapping() }
+                return true
+            }
+            // Other devices can navigate to Cancel, but cannot supply a mapping.
+            if (event.deviceId != mappingTarget?.id) return super.dispatchKeyEvent(event)
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                if (event.keyCode in listOf(KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_L2,
+                        KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_R2)) {
+                    mappingHint = "Shoulder buttons control rewind and fast-forward. Choose another button."
+                } else if (mappedKeys.any { sameButton(it.first, event) }) {
+                    mappingHint = "That button is already used. Choose a different button."
+                } else {
                     mappedKeys.add(KeyEvent(event) to mapButtons[mappingStep].second)
-                    mappingName = event.device?.name ?: "Keyboard"
-                    mappingStep++
-                    if (mappingStep == mapButtons.size) { input.saveMapping(mappedKeys); mapping = false; message = "Buttons saved for $mappingName. The directional pad and stick work automatically." }
+                    mappingHint = null; mappingStep++
+                    if (mappingStep == mapButtons.size) {
+                        input.saveMapping(mappedKeys); mappingRelease = KeyEvent(event); mapping = false
+                        controllerNotice = "Buttons saved for ${mappingTarget?.name} · ${mappingTarget?.playerLabel}."
+                    }
                 }
             }
             return true
@@ -557,13 +619,15 @@ class MainActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_BUTTON_L2 -> -6
                 else -> 0
             }
-            if (speed != 0) { applyScrub(if (held) speed else 0); return true }
+            if (speed != 0 && input.accepts(event)) { applyScrub(if (held) speed else 0); return true }
         }
         if (game != null && !paused && input.key(event)) return true
         // Start resumes from the pause panel, so a session driven entirely from
         // the controller never has to reach for the screen. It reads through the
         // saved profile, so a remapped Start still works.
-        if (game != null && paused && !busy && event.action == KeyEvent.ACTION_DOWN && input.bitFor(event) == 8) {
+        if (game != null && paused && !busy && !showControllers && !showSettings && !showSlots &&
+            message == null && !showProblems && event.action == KeyEvent.ACTION_DOWN &&
+            input.bitFor(event) == 8 && input.accepts(event)) {
             resumeGame()
             return true
         }
@@ -572,8 +636,10 @@ class MainActivity : ComponentActivity() {
     override fun onGenericMotionEvent(event: MotionEvent) = if (game != null && !paused && input.motion(event)) true else super.onGenericMotionEvent(event)
 
     @Composable private fun App() {
-        BackHandler(game != null || showSettings || showProblems || showArchive) {
+        BackHandler(game != null || showSettings || showControllers || showProblems || showArchive) {
             when {
+                mapping -> cancelMapping()
+                showControllers -> backFromControllers()
                 showProblems -> showProblems = false
                 showSettings -> closeSettings()
                 showArchive -> showArchive = false
@@ -626,7 +692,7 @@ class MainActivity : ComponentActivity() {
                 // in the menu, and reaching it always paused the game first —
                 // which is what Menu does, so it was the same two taps wearing
                 // one extra button.
-                if (game != null && !fullscreen) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (game != null && !fullscreen && !showControllers) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(game!!.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1)
                     BarButton(ENTER_FULLSCREEN, "Full screen", !busy) { applyFullscreen(true) }
                     BarButton(MENU, "Menu", !busy) { pause() }
@@ -642,7 +708,7 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-                if (game != null && (!fullscreen || fullscreenTouch)) TouchControls()
+                if (game != null && !showControllers && (!fullscreen || fullscreenTouch)) TouchControls()
             }
             // A rounded pill on the app's own scrim, so the chrome over the
             // picture is recognisably the same bar as the one above it rather
@@ -667,15 +733,25 @@ class MainActivity : ComponentActivity() {
                 SkipBack(5, 46); SkipBack(15, 46)
                 TimeScrubber(Modifier.width(240.dp), 52)
             }
-            if (game == null) Shelf()
+            if (game == null && !showControllers) Shelf()
             // One panel, one job: the pause menu offers places to go, and save
             // states is one of them rather than the same panel with a different
             // title and a button that toggles between the two.
-            if (game != null && paused) if (showSlots) SlotsPanel() else PausePanel()
+            if (game != null && paused && !showControllers) if (showSlots) SlotsPanel() else PausePanel()
             // Drawn here, inside the activity's window, rather than as a
             // dialog: a dialog has its own window and its own key dispatch, so
             // dispatchKeyEvent never sees the button the wizard is asking for.
-            if (mapping) MappingPanel()
+            if (showControllers) {
+                val controllers = remember(controllerRevision, showControllers) { input.controllers() }
+                val selected = controllers.firstOrNull { it.id == selectedController }
+                if (mapping) MappingPanel() else ControllersPanel(
+                    controllers, selected, controllerNotice,
+                    onSelect = { selectedController = it; controllerNotice = null },
+                    onPlayer = { player -> selected?.let { input.setPlayer(it.id, player) }; controllerNotice = null },
+                    onMap = { selected?.let(::startMapping) },
+                    onBack = ::backFromControllers,
+                )
+            }
             if (showSettings) SettingsPanel()
             // Said once when a time control runs out or is running, so a picture
             // that isn't following the buttons still explains itself.
@@ -768,7 +844,7 @@ class MainActivity : ComponentActivity() {
         }
         BoxWithConstraints(
             modifier.height(side.dp).clip(RoundedCornerShape((side / 2).dp)).background(Ui.well)
-                .pointerInput(game) {
+                .pointerInput(game, settings.rewindHistory) {
                     // The handle carries a pause glyph, so it pauses: a press on
                     // it that never turns into a drag is a tap on that button.
                     // Anywhere else on the track is a scrub from the first touch,
@@ -784,8 +860,8 @@ class MainActivity : ComponentActivity() {
                                 if (kotlin.math.abs(x - down.position.x) > viewConfiguration.touchSlop) dragged = true
                                 if (dragged || !onHandle) {
                                     val f = ((x / size.width) * 2f - 1f).coerceIn(-1f, 1f)
-                                    fraction = f
-                                    applyScrub(Scrub.speed(f))
+                                    fraction = if (settings.rewindHistory) f else f.coerceAtLeast(0f)
+                                    applyScrub(Scrub.speed(fraction))
                                 }
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -800,13 +876,14 @@ class MainActivity : ComponentActivity() {
                 }
                 .semantics {
                     role = Role.Button
-                    contentDescription = "Time control. Drag left to rewind, right to fast-forward — the further from the middle, the faster. Tap the handle to pause."
+                    contentDescription = if (settings.rewindHistory) "Time control. Drag left to rewind, right to fast-forward — the further from the middle, the faster. Tap the handle to pause."
+                        else "Time control. Drag right to fast-forward. Tap the handle to pause. Rewind history is off in Settings."
                     stateDescription = Scrub.label(speed)
-                    customActions = listOf(
-                        CustomAccessibilityAction("Pause") { pause(); true },
-                        CustomAccessibilityAction("Back five seconds") { skipBack(5); true },
-                        CustomAccessibilityAction("Back fifteen seconds") { skipBack(15); true },
-                    )
+                    customActions = listOf(CustomAccessibilityAction("Pause") { pause(); true }) +
+                        if (settings.rewindHistory) listOf(
+                            CustomAccessibilityAction("Back five seconds") { skipBack(5); true },
+                            CustomAccessibilityAction("Back fifteen seconds") { skipBack(15); true },
+                        ) else emptyList()
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -815,7 +892,7 @@ class MainActivity : ComponentActivity() {
             // sample: this way the drag re-runs layout rather than recomposition.
             val travel = with(LocalDensity.current) { ((maxWidth - thumb) / 2).toPx() }
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("◀◀", color = Ui.wellMark, fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
+                Text("◀◀", color = if (settings.rewindHistory) Ui.wellMark else Ui.keyDimGlyph, fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 Text("▶▶", color = Ui.wellMark, fontSize = (side * 0.19f).sp, fontWeight = FontWeight.Bold)
             }
@@ -841,7 +918,7 @@ class MainActivity : ComponentActivity() {
      * a promise the rewind buffer cannot keep.
      */
     @Composable private fun SkipBack(seconds: Int, side: Int) {
-        val ready = !busy && rewindDepth >= surface.framesFor(seconds)
+        val ready = settings.rewindHistory && !busy && rewindDepth >= surface.framesFor(seconds)
         Surface(
             onClick = { skipBack(seconds) },
             enabled = ready,
@@ -871,8 +948,8 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun MappingPanel() {
         Panel(
-            "Set up your controller",
-            if (mappingName.isEmpty()) "Use the controller you want to play with." else mappingName,
+            "Set buttons · ${mappingTarget?.playerLabel}",
+            mappingTarget?.name,
             maxWidth = 560.dp,
         ) {
             Column(
@@ -900,10 +977,11 @@ class MainActivity : ComponentActivity() {
                 "Step ${minOf(mappingStep + 1, mapButtons.size)} of ${mapButtons.size}. Use a different button for each one. " +
                     "Directions come from the pad or stick, so they are not part of this. " +
                     "Shoulder buttons stay on rewind and fast-forward. " +
-                    "What you choose is remembered for this controller.",
+                    "Only ${mappingTarget?.name} can supply these buttons. Press Esc or choose Cancel to leave.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            SecondaryAction("Cancel", Modifier.fillMaxWidth()) { mapping = false; input.clear() }
+            mappingHint?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            SecondaryAction("Cancel", Modifier.fillMaxWidth(), onClick = ::cancelMapping)
         }
     }
     /**
@@ -951,24 +1029,35 @@ class MainActivity : ComponentActivity() {
                 settings.trimEdges = !settings.trimEdges
             }
             SectionLabel("Controls")
-            ValueRow("Controller buttons", "Set up", "Map A, B, Select and Start for a controller") { closeSettings(); startMapping() }
+            ValueRow("Controllers", "Set up", "Assign Player 1 and Player 2, then set each device’s buttons", onClick = ::openControllers)
+            SectionLabel("Performance")
+            SwitchRow("Rewind history", settings.rewindHistory,
+                "Turn off to reduce CPU and memory use. Clears rewind history; game accuracy and save files stay the same.") {
+                setRewindHistory(!settings.rewindHistory)
+            }
+            ChoiceNote("For lighter graphics, choose Off under Look. Audio buffering adapts to this device automatically.")
             SectionLabel("This device")
             // Polled only while the panel is open. The plan asks for a
             // measurable audio figure rather than a claim, so it is on
             // screen where it can be read off the tablet.
-            var audio by remember { mutableStateOf(FloatArray(5)) }
+            var audio by remember { mutableStateOf(FloatArray(6)) }
             LaunchedEffect(showSettings) {
                 while (showSettings) {
-                    audio = runCatching { Native.audioStats() }.getOrDefault(FloatArray(5))
+                    audio = runCatching { Native.audioStats() }.getOrDefault(FloatArray(6))
                     delay(500)
                 }
             }
+            val audioPlaying = !paused && game != null && !busy && scrub == 0
             InfoRow(
-                "Audio delay",
-                if (audio[2] <= 0f) "—" else "%.1f ms".format(audio[2]),
-                "%.1f ms queued + %.1f ms in the device, holding %.1f ms · %d underruns"
-                    .format(audio[0], audio[1], audio[3], audio[4].toInt()),
+                "Audio buffering",
+                if (audioPlaying && audio[2] > 0f) "%.1f ms".format(audio[2]) else "Paused",
+                if (audioPlaying) ("%.1f ms queued + %.1f ms output buffer; queue target %.1f ms. " +
+                    "Device and TV delay is additional.").format(audio[0], audio[1], audio[3])
+                else ("No game audio is playing. Last output buffer: %.1f ms; queue target: %.1f ms. " +
+                    "These are buffer settings, not measured sound delay.").format(audio[1], audio[3]),
             )
+            InfoRow("Audio gaps", "%d source · %d output".format(audio[4].toInt(), audio[5].toInt()),
+                "Counts since playback last started, not gaps per second. Source means game samples ran short; output means Android's buffer ran short.")
             InfoRow("Version", BuildConfig.VERSION_NAME, "Emulia, on this device")
             ValueRow("Problem log", "Open", "What went wrong, and why") { showProblems = true }
             Spacer(Modifier.height(8.dp))
@@ -1255,6 +1344,7 @@ class MainActivity : ComponentActivity() {
                 ActionTile(TUNE, "Settings", Modifier.weight(1f).fillMaxHeight(), !busy) { openSettings() }
             }
             Spacer(Modifier.height(2.dp))
+            SecondaryAction("Controllers", Modifier.fillMaxWidth(), enabled = !busy, onClick = ::openControllers)
             SecondaryAction("Reset game", Modifier.fillMaxWidth(), enabled = !busy) { resetting = game }
             SecondaryAction("Back to your shelf", Modifier.fillMaxWidth(), SHELF, !busy) {
                 applyFullscreen(false); game = null; showSlots = false

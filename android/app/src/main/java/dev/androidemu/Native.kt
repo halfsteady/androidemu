@@ -27,13 +27,15 @@ object Native {
     /** Steps one frame back and paints it. False once there is nothing left to undo. */
     external fun rewind(buffer: ByteBuffer): Boolean
     external fun rewindDepth(): Int
+    /** Release history and stop recording it, or start a fresh chain at this frame. */
+    external fun setRewindEnabled(enabled: Boolean)
     external fun snapshot(battery: Boolean): ByteArray
     external fun restore(bytes: ByteArray, battery: Boolean)
     external fun audio(playing: Boolean)
     /**
-     * Where the audio latency is, in milliseconds: the queue, the device ring,
-     * the two added, the target the controller settled on, and then the underrun
-     * count. A number rather than a claim — see docs/AUDIO.md.
+     * Buffer estimates in milliseconds: source queue, AAudio buffer, their sum,
+     * target, source underruns, and platform underruns. Additional mixer, driver
+     * and TV latency is not included. See docs/AUDIO.md.
      */
     external fun audioStats(): FloatArray
 }

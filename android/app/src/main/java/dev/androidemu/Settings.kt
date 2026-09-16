@@ -17,6 +17,11 @@ import androidx.core.content.edit
 class Settings(context: Context) {
     private val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    private val rewindState = mutableStateOf(preferences.getBoolean(REWIND_HISTORY, true))
+    var rewindHistory: Boolean
+        get() = rewindState.value
+        set(value) { rewindState.value = value; preferences.edit { putBoolean(REWIND_HISTORY, value) } }
+
     private val aspectState = mutableStateOf(
         Aspect.entries.getOrElse(preferences.getInt(ASPECT, 0)) { Aspect.Television }
     )
@@ -101,6 +106,7 @@ class Settings(context: Context) {
     }
 
     private companion object {
+        const val REWIND_HISTORY = "rewindHistory"
         const val ASPECT = "aspect"
         const val PALETTE = "palette"
         const val IMPORTED_PALETTE = "importedPalette"
