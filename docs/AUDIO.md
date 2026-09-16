@@ -1,98 +1,114 @@
-# Audio latency
+# Audio buffering and latency
 
-PLAN.md §2 asks for a 5-10 ms audio buffer. This records what the latency actually
-is, where it comes from, and why the sub-10 ms figure is **not met** — because the
-reason is structural rather than a constant somebody set too high.
+The small-buffer target assumes the device actually grants low-latency output.
+The Raspberry Pi 5 investigation found that a successful AAudio open can instead
+return a normal shared mixer, with much larger batches and delay. See the
+[device measurements and reproduction](RASPBERRY-PI.md).
 
-## Where the milliseconds are
+## What the app measures
 
-Two buffers sit between the APU and the speaker.
+Two buffers are visible to Emulia:
 
-**The device ring.** AAudio's own buffer, opened in low-latency exclusive mode
-(shared as a fallback) and sized to two bursts. On a modern tablet a burst is
-96-192 frames at 48 kHz, so this is roughly **4-8 ms**. One burst would be
-smaller but leaves the callback no slack at all for a late wake-up.
+- **Source queue:** samples waiting between emulation and the audio callback.
+- **AAudio output buffer:** the usable buffer size granted by AAudio, divided by
+  its sample rate. On a legacy stream this is an AudioTrack buffer, not the
+  entire hardware pipeline.
 
-**The queue.** A bounded lock-free ring between the emulator and the callback.
-This is the big one, and its size is forced by *when* samples arrive rather than
-by any choice made in `audio.rs`.
+Their sum is a buffering estimate. Additional mixing, driver queues and TV or
+headphone processing are not included. The earlier **Audio delay** label and
+claim of 12–14 ms end-to-end were too strong. Settings now says **Audio buffering**.
+On suitable low-latency hardware, roughly 12–14 ms remains an estimate for these
+two buffers only, not a measured guarantee.
 
-`Native_frame` pushes a whole frame of audio in one call, because it is called
-once per displayed frame:
+`Native.audioStats()` returns six floats: source queue ms, AAudio buffer ms,
+their sum, source target ms, source underruns and platform underruns.
 
-```rust
-if advance {
-    nes.run_frame();
-    audio::push(nes.bus.apu.samples());   // ~800 samples, all at once
-}
-```
+The gap counts describe different failures:
 
-So at NTSC rates 798 samples land in a single instant every 16.7 ms, and then
-nothing arrives until the next frame. The queue drains smoothly at 48 kHz between
-deliveries, so its level sawtooths across a **full frame's worth of samples**. For
-the trough of that sawtooth to stay above empty, the mean level cannot go below
-about half a frame — **8.3 ms** — plus margin for the display's own jitter.
+- **Source gaps:** callbacks exhausted the samples produced by emulation.
+- **Output gaps:** AAudio's own `getXRunCount()` reports underruns downstream.
+  A source queue can be full while an undersized output buffer repeatedly fails.
 
-Queue floor plus device ring is therefore about **12-14 ms**, and that is what the
-target now aims at. It was 20.8 ms before: the old controller held the queue at a
-fixed 1000 samples with no reference to the frame size at all.
+Both should remain zero during steady playback. Output counts are retained on
+close so pausing to inspect Settings does not discard them; both counters reset
+when a new stream starts. Initial queue priming outputs silence before consuming
+game samples and is not counted as an underrun.
 
-## Why sub-10 ms needs an architectural change, not a smaller number
+## Low-latency output
 
-The sawtooth exists because audio production is driven by the **display clock**.
-Splitting the push into quarter-frames would not help: the whole frame is emulated
-in one burst of CPU on the render thread, so all four pieces would still arrive at
-the same instant of wall time. What matters is not how many `push` calls happen
-but how they are spread across real time.
+The backend requests low-latency exclusive output, uses the device's natural
+sample rate, marks its usage as a game, and fills samples through a lock-free
+callback. It checks the **granted performance mode** before shrinking the output
+buffer to two bursts.
 
-Getting under 10 ms means pacing emulation against the **audio** clock instead —
-either running the core on its own thread against a timer, or letting audio
-consumption drive it. Both are real changes, and both interact with frame pacing,
-which is currently Choreographer-driven and is what keeps video smooth and input
-latency low. That trade is not worth making blind; it wants the input-to-photon
-measurement first (PLAN.md §2, still outstanding).
+Emulation produces about 798 samples all at once every 16.64 ms for NTSC, or 960
+every 20 ms for PAL. The source queue drains between deliveries, so it needs room
+for this sawtooth. Its target starts at three quarters of a frame, rises by a
+quarter frame on starvation up to two frames, and slowly falls toward half a
+frame after long clean runs. Dynamic rate correction is bounded to ±0.3%.
 
-## What the controller does now
+A truly sub-10 ms pipeline would require emulation paced against the audio clock,
+or another way to spread sample production over wall time. Splitting a frame
+into multiple push calls without spreading the work out does not accomplish it.
 
-- **The target is measured in frames of audio**, from the region's frame rate, so
-  PAL's 960 samples per frame get a proportionally larger target than NTSC's 798
-  instead of sharing one hardcoded constant.
-- **It starts at three quarters of a frame** and adapts. On any callback that runs
-  the queue dry it rises by a quarter frame, up to two frames: the floor is a
-  property of the device's scheduling, so it is found from evidence rather than
-  assumed.
-- **It creeps back down** by a thirty-second of a frame after a long clean run,
-  never below half a frame. Probing below the sawtooth's real floor would trade a
-  millisecond for a click every few seconds, which is the wrong way round.
-- **Dynamic rate control** nudges the resample ratio to hold the level, clamped to
-  ±0.3 %. That is inaudible as pitch, and anything fast enough to correct an error
-  in under a second is not.
-- **An underrun holds the last sample** rather than writing zero. A click is far
-  more audible than a briefly held level.
+## Normal-mixer fallback
 
-## Reading the number off the tablet
+If AAudio declines low-latency mode, the callback burst is not a safe measure of
+the downstream mixer's consumption quantum. On Pi 5 LineageOS, bursts are 960
+frames but the mixer consumes 4096 frames at a time. Reducing the output buffer
+to 1920 frames caused 139 platform underruns in a 12-second silence-only test.
+Keeping its 8196-frame default produced zero.
 
-Settings shows it live, which is what makes this a measurement rather than a
-claim:
+The backend therefore retains the platform's default buffer on this path and
+uses its duration as a conservative window for the source queue's adaptive
+controller. It primes the source queue before consuming game samples. The ring
+has 32768 samples, with the window capped at a quarter of that capacity, leaving
+room for the two-window adaptive ceiling and incoming NES frames.
 
-```
-Audio delay                                        13.4 ms
-  8.9 ms queued + 4.5 ms in the device, holding 12.5 ms · 0 underruns
-```
+The larger buffers prevent gaps but cannot remove latency in the platform.
+Reducing that latency requires further device/OS work; this code does not change
+system audio policy, restart services, or claim a low-latency route exists.
 
-The same five figures come out of `Native.audioStats()`: queue ms, device ms,
-total, current target, underrun count.
+## Still to measure
 
-**The underrun count is the one to watch.** It should stay at zero through a long
-session, including across output-route changes (headphones in and out) and while
-the tablet is thermally throttling. If it climbs, the target will climb with it,
-and the reported delay is then telling you what this device actually needs.
+- Sustained gameplay and remaining cutouts/delay on the Pi. Bradley's initial
+  comparison of the installed test build was "much better"; duration and residual
+  issues were not quantified.
+- Long sessions and output-route changes on the OnePlus Pad 3.
+- Physical input-to-sound and input-to-photon latency; queue sizes alone do not
+  measure either.
 
-## Still outstanding
+The [Android audio guidance](https://developer.android.com/games/sdk/oboe/low-latency-audio)
+covers mode requests, game usage, callbacks, buffer sizing and platform underruns.
 
-- [ ] Read the figure on the OnePlus Pad 3 over a long session, and across route
-  changes, and record it. That closes the Phase 1 gate.
-- [ ] Decide whether sub-10 ms is worth decoupling audio production from the
-  display clock, once input-to-photon latency has been measured.
-- [ ] The nonlinear mixer and the 1024-tap FIR run per frame on the emulation
-  thread; neither has been profiled on the tablet.
+## Scope and performance controls
+
+This is the shared Android backend, packaged in the regular release APK/AAB for
+supported phones, tablets and Android-based Pi installations. There is no Pi
+flavor or model-name switch. AAudio's granted performance mode chooses the buffer
+policy each time output opens. Low-latency output still requests two bursts;
+normal output keeps Android's default buffer. The SDL desktop backend is separate.
+
+Compared with 0.3.1, the static audio queue reserves an additional **96 KiB**.
+The CPU/PPU/APU core and per-sample synthesis are unchanged. Larger fallback
+buffers improve continuity at the cost of sound arriving later. They do not
+speed up emulation or establish an end-to-end latency measurement. We have not
+measured every Android device's scheduling or audio path.
+
+Settings now labels the queue **target** explicitly. When playback is paused,
+it says **Paused** and shows the last buffer settings rather than presenting
+the output-buffer size as live sound latency. Source/output gap counts are
+cumulative since playback last started, not gaps per second.
+
+The **Performance → Rewind history** switch defaults on. Turning it off frees
+the in-memory rewind chain and skips per-frame snapshot recording. It preserves
+emulation timing, audio synthesis, manual states, autosave and battery saves;
+turning it back on starts fresh history at the current frame. The Pi's earlier
+600-frame runs measured about 0.46 ms/frame for rewind recording (roughly 5% of
+those core+rewind runs). This is a modest CPU saving, not a remedy for HDMI delay.
+**Look → Off** is the existing option to avoid extra picture-filter work.
+
+AccuracyCoin's 144 tests run during development/CI, not inside gameplay. There
+is no runtime test workload to disable. This release keeps the accurate core
+behavior and offers the independent rewind control instead of a less accurate
+emulation mode.

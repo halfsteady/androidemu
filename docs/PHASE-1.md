@@ -2,8 +2,8 @@
 
 The first installable preview is implemented and confirmed playing on the tablet
 by hand on 2026-09-07. Phase 1 is **not yet signed off**: the gates below that ask
-for a number are still unmeasured, and controllers and the PAL/Dendy paths have not
-been walked through deliberately.
+for a number are still unmeasured; broader controller hardware coverage and the
+PAL/Dendy paths still need deliberate walkthroughs.
 
 ## Implemented
 
@@ -23,7 +23,9 @@ been walked through deliberately.
 - Compose game shelf, single-file SAF import into private storage, GLES 3 rendering,
   Choreographer scheduling, a region-derived surface frame rate, touch controls and
   standard Android USB/Bluetooth/keyboard input for two players. Portrait controls
-  reflow. A guided four-step wizard maps A/B/Select/Start per controller, saved by
+  reflow. The Controllers screen lists connected devices and saves explicit
+  Player 1/Player 2 assignments; keyboards share P1 by default without taking
+  a gamepad port. A guided four-step wizard maps A/B/Select/Start per controller, saved by
   vendor/product/descriptor and applied by scan code, which is what makes cheap USB
   adapters usable; Start also resumes from the pause panel through that mapping.
   Full screen hides the system bars, with touch controls optional while in it.
@@ -76,7 +78,10 @@ a number, plus the paths that need particular hardware or particular ROMs.
 - [ ] Confirm real USB adapters, Bluetooth reconnects, two-player assignments and
   absence of stuck buttons after unplug, backgrounding and touch cancellation.
   Run the mapping wizard on each adapter and confirm the profile survives a
-  replug and a restart, and that Start resumes from the pause panel.
+  replug and a restart, and that Start resumes from the pause panel. The Pi’s
+  K830 keyboard/0810:e501 USB adapter path now has device routing and UI coverage
+  (see [Pi validation](RASPBERRY-PI.md)); physical reconnects, Bluetooth and
+  sustained play with two physical gamepads remain to be checked.
 - [ ] Play a PAL and a Dendy game end to end. Region timing passes in the core,
   but the 50 Hz surface request and audio rate correction are unmeasured on the
   panel, and no region-specific ROM suite is run.
@@ -87,7 +92,10 @@ a number, plus the paths that need particular hardware or particular ROMs.
 - [ ] Measure underruns/output latency, test output-route changes and long sessions.
   The figure is now on screen in Settings and comes out of `Native.audioStats()`,
   so this gate is down to reading it off the tablet. The queue target adapts and
-  is measured in frames of audio: about 12-14 ms end to end, down from 20.8 ms.
+  is measured in frames of audio: about 12-14 ms of estimated buffering on a
+  low-latency stream, down from 20.8 ms. This is not end-to-end latency; the
+  [Pi investigation](RASPBERRY-PI.md) found additional platform delay and a
+  normal-mixer fallback that requires substantially larger buffers.
   The sub-10 ms target is **not achieved**, and [the audio note](AUDIO.md) records
   why it needs emulation paced against the audio clock rather than a smaller
   constant.

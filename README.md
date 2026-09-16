@@ -32,9 +32,9 @@ is built, tested, signed and published by GitHub Actions — see
 | Cartridges | iNES/NES 2.0, payload identity, header repair and override table, mappers 0/1/2/3/4/7/9/10/11/66/69/71, battery RAM |
 | PPU | Background/sprite pixels, scrolling, clipping, priority, sprite 0 hit, NTSC/PAL/Dendy timing |
 | APU | Five channels, nonlinear mixer, FIR anti-aliasing, 48 kHz samples |
-| Audio out | AAudio low-latency, adaptive queue target, dynamic rate control, latency shown in Settings (~12–14 ms; [why not less](docs/AUDIO.md)) |
+| Audio out | AAudio with adaptive buffering, normal-mixer fallback, rate control and separate source/output gap counts; [buffer estimates and limits](docs/AUDIO.md), [Pi 5 measurements](docs/RASPBERRY-PI.md) |
 | Persistence | Versioned deterministic states, validated transactional restore, SRAM, rewind |
-| Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and two controller ports with a mapping wizard, one design system for colour, shape and buttons |
+| Android | Box-art shelf, ROM import, GLES video, AAudio, full screen, touch and [two controller ports with explicit device/player setup](docs/CONTROLLERS.md), one design system for colour, shape and buttons |
 | Identity | One mark on the launcher, the round and themed icons, the splash and the empty shelf, generated from [`brand/`](brand/) and measured against eight checks |
 | Time controls | One draggable control for rewind and fast-forward, further from centre is faster, plus 5 s / 15 s jumps back; shoulder buttons drive it too |
 | Picture | 4:3 / 8:7 / pixel-perfect shapes, overscan trim, ten looks from scanlines to a cel-shaded Cartoon, and a separate choice of colours with `.pal` import — previewed in settings by the real shader |

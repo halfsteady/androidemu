@@ -5,20 +5,43 @@ use jni::{
     JNIEnv,
 };
 use nes_core::{rewind::Rewind, Buttons, Nes};
-use std::sync::Mutex;
+use std::sync::{atomic::{AtomicBool, Ordering}, Mutex};
 static MACHINE: Mutex<Option<Nes>> = Mutex::new(None);
 /// Bounded in bytes rather than frames: see `nes_core::rewind`. 64 MB buys
 /// roughly a minute of a mostly still screen and rather less of a scrolling
 /// one, which is the trade worth making automatically.
 const REWIND_BUDGET: usize = 64 * 1024 * 1024;
 static REWIND: Mutex<Option<Rewind>> = Mutex::new(None);
+static REWIND_ENABLED: AtomicBool = AtomicBool::new(true);
 /// Start a fresh chain anchored on where the machine is now. The anchor is
 /// always the machine's current state, so one pop is exactly one frame back.
 fn rewind_reset(nes: &Nes) {
+    if !REWIND_ENABLED.load(Ordering::Relaxed) {
+        *REWIND.lock().unwrap() = None;
+        return;
+    }
     let mut chain = Rewind::new(REWIND_BUDGET);
     chain.push(&nes.save_state());
     *REWIND.lock().unwrap() = Some(chain);
 }
+/// Disabling releases the chain and bypasses per-frame snapshots. Enabling
+/// anchors a fresh chain at the current frame; save files and timing are unchanged.
+#[no_mangle]
+pub extern "system" fn Java_dev_androidemu_Native_setRewindEnabled(
+    _: JNIEnv,
+    _: JClass,
+    enabled: jboolean,
+) {
+    let machine = MACHINE.lock().unwrap();
+    let enabled = enabled != 0;
+    if REWIND_ENABLED.swap(enabled, Ordering::Relaxed) == enabled { return; }
+    if let Some(nes) = machine.as_ref() {
+        rewind_reset(nes);
+    } else {
+        *REWIND.lock().unwrap() = None;
+    }
+}
+
 /// Paint the current framebuffer into a caller-owned direct buffer.
 ///
 /// # Safety
@@ -382,7 +405,11 @@ pub extern "system" fn Java_dev_androidemu_Native_audioStats(
     };
     #[cfg(not(target_os = "android"))]
     let (queue, buffer, underruns, target) = (0.0f32, 0.0f32, 0u32, 0.0f32);
-    let values = [queue, buffer, queue + buffer, target, underruns as f32];
+    #[cfg(target_os = "android")]
+    let output_underruns = audio::output_underruns();
+    #[cfg(not(target_os = "android"))]
+    let output_underruns = 0;
+    let values = [queue, buffer, queue + buffer, target, underruns as f32, output_underruns as f32];
     match env.new_float_array(values.len() as i32) {
         Ok(array) => {
             let _ = env.set_float_array_region(&array, 0, &values);

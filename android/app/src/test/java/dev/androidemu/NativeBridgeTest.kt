@@ -2,10 +2,12 @@ package dev.androidemu
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.After
 import java.nio.ByteBuffer
 
 /** Exercises the real Kotlin/JNI bridge against the host build of the Rust core. */
 class NativeBridgeTest {
+    @After fun restoreRewindDefault() { Native.setRewindEnabled(true) }
     private fun rom(): ByteArray = ByteArray(16 + 16384).apply {
         byteArrayOf(0x4e, 0x45, 0x53, 0x1a).copyInto(this)
         this[4] = 1; this[6] = 2
@@ -57,6 +59,54 @@ class NativeBridgeTest {
         assertEquals(0, Native.rewindDepth())
         assertFalse(Native.rewind(buffer))
     }
+    @Test fun disablingRewindKeepsEmulationAndManualSavesIdentical() {
+        val buffer = ByteBuffer.allocateDirect(256 * 240 * 4)
+        Native.load(rom())
+        val initial = Native.snapshot(false)
+        repeat(20) { Native.frame(buffer, it * 7, it * 3, true) }
+        val expected = Native.snapshot(false)
+        val battery = Native.snapshot(true)
+        assertEquals(20, Native.rewindDepth())
+
+        Native.setRewindEnabled(false)
+        assertEquals(0, Native.rewindDepth())
+        assertArrayEquals(expected, Native.snapshot(false))
+        Native.restore(initial, false)
+        repeat(20) { Native.frame(buffer, it * 7, it * 3, true) }
+        assertArrayEquals(expected, Native.snapshot(false))
+        assertArrayEquals(battery, Native.snapshot(true))
+        assertEquals(0, Native.rewindDepth())
+        assertFalse(Native.rewind(buffer))
+
+        Native.setRewindEnabled(true)
+        assertEquals(0, Native.rewindDepth())
+        Native.frame(buffer, 0, 0, true)
+        assertEquals(1, Native.rewindDepth())
+        assertTrue(Native.rewind(buffer))
+        assertArrayEquals(expected, Native.snapshot(false))
+    }
+
+    @Test fun disabledRewindStaysDisabledAcrossLoadResetAndRestore() {
+        Native.setRewindEnabled(false)
+        val bytes = rom()
+        Native.load(bytes)
+        val buffer = ByteBuffer.allocateDirect(256 * 240 * 4)
+        val initial = Native.snapshot(false)
+        repeat(3) { Native.frame(buffer, 0, 0, true) }
+        assertEquals(0, Native.rewindDepth())
+        Native.reset(bytes)
+        Native.frame(buffer, 0, 0, true)
+        assertEquals(0, Native.rewindDepth())
+        Native.restore(initial, false)
+        Native.frame(buffer, 0, 0, true)
+        assertEquals(0, Native.rewindDepth())
+        Native.setRewindEnabled(true)
+        Native.frame(buffer, 0, 0, true)
+        assertEquals(1, Native.rewindDepth())
+        Native.setRewindEnabled(true) // Reapplying the preference must retain the chain.
+        assertEquals(1, Native.rewindDepth())
+    }
+
     @Test fun errorsBecomeExceptionsAndPreserveTheSession() {
         Native.load(rom()); val saved = Native.snapshot(false)
         fun rejects(block: () -> Unit) {
